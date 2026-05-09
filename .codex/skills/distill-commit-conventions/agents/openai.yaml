@@ -1,0 +1,4 @@
+interface:
+  display_name: "Distill Commit Conventions"
+  short_description: "Extract commit rules from mature OSS projects"
+  default_prompt: "Use $distill-commit-conventions to study mature open-source commit history and propose this repo's commit convention."

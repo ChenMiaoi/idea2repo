@@ -1,0 +1,4 @@
+interface:
+  display_name: "Audit Codebase Health"
+  short_description: "Find legacy, bloat, duplication, and risk"
+  default_prompt: "Use $audit-codebase-health to audit this repository for stale legacy code, redundant paths, inconsistencies, hardcoded values, bloat, and future risks."
