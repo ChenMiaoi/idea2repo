@@ -9,6 +9,7 @@ from datetime import date
 from io import StringIO
 from pathlib import Path
 
+from .evidence import EvidenceGate, evidence_gate_markdown, evaluate_evidence_gate
 from .literature import PaperRecord, literature_tasks_md, references_bib, related_work_csv
 from .permissions import Operation, PermissionPolicy, default_policy
 from .providers import provider_schema_json, safe_provider_report
@@ -39,6 +40,10 @@ def generate_research_repo(
     permission_policy: PermissionPolicy | None = None,
     verified_papers: list[PaperRecord] | None = None,
     literature_tasks: list[str] | None = None,
+    baselines: list[str] | None = None,
+    datasets: list[str] | None = None,
+    metrics: list[str] | None = None,
+    claim_evidence_rows: list[dict[str, str]] | None = None,
 ) -> GeneratedProject:
     """Generate a CCF-A readiness repository for a raw research idea."""
 
@@ -56,7 +61,22 @@ def generate_research_repo(
     permission_policy.require(Operation.WRITE, str(root))
 
     created_at = created_at or date.today().isoformat()
-    diagnosis = diagnose_idea(idea, requested_domains=requested_domains)
+    evidence_gate = evaluate_evidence_gate(
+        verified_papers,
+        baselines=baselines,
+        datasets=datasets,
+        metrics=metrics,
+        claim_evidence_rows=claim_evidence_rows,
+    )
+    diagnosis = diagnose_idea(
+        idea,
+        requested_domains=requested_domains,
+        verified_papers=verified_papers,
+        baselines=baselines,
+        datasets=datasets,
+        metrics=metrics,
+        claim_evidence_rows=claim_evidence_rows,
+    )
     project_name = slugify(root.name if root.name else idea)
     workspace = inspect_workspace()
     files = _build_files(
@@ -69,6 +89,8 @@ def generate_research_repo(
         workspace.as_dict(),
         verified_papers or [],
         literature_tasks or [],
+        claim_evidence_rows,
+        evidence_gate,
     )
 
     written: list[Path] = []
@@ -169,6 +191,8 @@ def _regenerate_from_request(
         workspace,
         [],
         [],
+        None,
+        evaluate_evidence_gate(),
     )
     written: list[Path] = []
     for relative_path, content in files.items():
@@ -226,6 +250,8 @@ def _build_files(
     workspace: dict[str, object] | None = None,
     verified_papers: list[PaperRecord] | None = None,
     literature_tasks: list[str] | None = None,
+    claim_evidence_rows: list[dict[str, str]] | None = None,
+    evidence_gate: EvidenceGate | None = None,
 ) -> dict[Path, str]:
     primary_route = diagnosis.routes[0]
     primary_domain = primary_route.domain
@@ -267,6 +293,9 @@ def _build_files(
             "Revised Plan Score",
             diagnosis.revised_score,
         ),
+        Path("docs/diagnosis/evidence_gate.md"): evidence_gate_markdown(
+            evidence_gate or diagnosis.evidence_gate
+        ),
         Path("docs/diagnosis/risk_register.md"): _risk_register(diagnosis),
         Path("docs/diagnosis/reviewer_simulation.md"): _reviewer_simulation(diagnosis),
         Path("docs/survey/survey.md"): _survey(diagnosis),
@@ -278,11 +307,7 @@ def _build_files(
         Path("docs/reference/related_work_matrix.csv"): related_work_csv(verified_papers or []),
         Path("docs/reference/literature_search_tasks.md"): literature_tasks_md(literature_tasks or []),
         Path("docs/reference/claim_evidence_matrix.csv"): _csv(
-            [
-                ["claim", "required_evidence", "planned_artifact", "status"],
-                ["TODO: primary claim", "TODO: dataset + metric + baseline", "results/tables/", "planned"],
-                ["TODO: limitation claim", "TODO: failure cases", "results/figures/", "planned"],
-            ]
+            _claim_evidence_rows(claim_evidence_rows)
         ),
         Path("docs/reference/paper_notes/README.md"): _paper_notes_readme(),
         Path("docs/reference/pdfs/README.md"): _pdf_readme(),
@@ -717,6 +742,10 @@ Required evidence:
 
 ## 9. CCF-A Scorecard
 
+Submission readiness gate: {"ready" if diagnosis.evidence_gate.submission_ready else "blocked"}
+
+Blocking reasons: {", ".join(diagnosis.evidence_gate.blocking_reasons) or "none"}
+
 ### Raw
 
 {_score_table(diagnosis.raw_score)}
@@ -760,6 +789,28 @@ def _score_table(score: ScoreBreakdown) -> str:
     for dimension, value in score.dimensions.items():
         lines.append(f"| {dimension} | {value} |")
     return "\n".join(lines)
+
+
+def _claim_evidence_rows(rows: list[dict[str, str]] | None) -> list[list[str]]:
+    header = ["claim", "required_evidence", "planned_artifact", "status"]
+    if not rows:
+        return [
+            header,
+            ["TODO: primary claim", "TODO: dataset + metric + baseline", "results/tables/", "planned"],
+            ["TODO: limitation claim", "TODO: failure cases", "results/figures/", "planned"],
+        ]
+    return [
+        header,
+        *[
+            [
+                row.get("claim", ""),
+                row.get("required_evidence", ""),
+                row.get("planned_artifact", ""),
+                row.get("status", ""),
+            ]
+            for row in rows
+        ],
+    ]
 
 
 def _risk_register(diagnosis: Diagnosis) -> str:

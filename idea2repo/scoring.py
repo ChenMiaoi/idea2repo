@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
+from .evidence import EvidenceGate, evaluate_evidence_gate
+from .literature import PaperRecord
 from .venues import DomainRoute, VenueDatabase, load_venue_database, route_idea
 
 
@@ -85,6 +87,7 @@ class Diagnosis:
     risks: tuple[str, ...]
     revised_plan: tuple[str, ...]
     revised_plan_text: str
+    evidence_gate: EvidenceGate
 
 
 def parse_idea(idea: str) -> ParsedIdea:
@@ -145,6 +148,11 @@ def diagnose_idea(
     *,
     requested_domains: list[str] | None = None,
     database: VenueDatabase | None = None,
+    verified_papers: list[PaperRecord] | None = None,
+    baselines: list[str] | None = None,
+    datasets: list[str] | None = None,
+    metrics: list[str] | None = None,
+    claim_evidence_rows: list[dict[str, str]] | None = None,
 ) -> Diagnosis:
     """Produce strict raw and revised CCF-A readiness scores."""
 
@@ -162,6 +170,13 @@ def diagnose_idea(
     )
     raw = _score(parsed, routes[0])
     revised = _score(parse_idea(revised_plan_text), routes[0])
+    evidence_gate = evaluate_evidence_gate(
+        verified_papers,
+        baselines=baselines,
+        datasets=datasets,
+        metrics=metrics,
+        claim_evidence_rows=claim_evidence_rows,
+    )
     risks = _risks_for(primary.key, raw.cap_triggers)
     return Diagnosis(
         parsed_idea=parsed,
@@ -172,6 +187,7 @@ def diagnose_idea(
         risks=risks,
         revised_plan=revised_plan,
         revised_plan_text=revised_plan_text,
+        evidence_gate=evidence_gate,
     )
 
 

@@ -55,6 +55,7 @@ class GeneratorTests(unittest.TestCase):
                 "docs/diagnosis/ccf_a_readiness_report.md",
                 "docs/diagnosis/raw_idea_score.md",
                 "docs/diagnosis/revised_plan_score.md",
+                "docs/diagnosis/evidence_gate.md",
                 "docs/diagnosis/risk_register.md",
                 "docs/diagnosis/reviewer_simulation.md",
                 "docs/survey/survey.md",
@@ -128,6 +129,7 @@ class GeneratorTests(unittest.TestCase):
             report = (output / "docs/diagnosis/ccf_a_readiness_report.md").read_text()
             self.assertIn("Raw Idea Score", report)
             self.assertIn("Revised Plan Score", report)
+            self.assertIn("Submission readiness gate: blocked", report)
             self.assertIn("Do not write performance claims", (output / "paper/sections/05_experiments.tex").read_text())
             generated_gitignore = (output / ".gitignore").read_text()
             for ignored in (
@@ -238,6 +240,9 @@ class GeneratorTests(unittest.TestCase):
             self.assertIn("windows", project_yaml)
             self.assertIn("linux", project_yaml)
             self.assertIn("macos", project_yaml)
+            evidence_gate = (output / "docs/diagnosis/evidence_gate.md").read_text()
+            self.assertIn("Submission readiness: blocked", evidence_gate)
+            self.assertIn("Generated revised-plan prose does not make a project", evidence_gate)
 
             plan = (output / "docs/execution_plan/16_week_plan.md").read_text()
             self.assertIn("# 16 Week Plan", plan)
@@ -298,6 +303,17 @@ class GeneratorTests(unittest.TestCase):
                 "agent memory benchmark",
                 output,
                 verified_papers=[paper],
+                baselines=["baseline"],
+                datasets=["dataset"],
+                metrics=["metric"],
+                claim_evidence_rows=[
+                    {
+                        "claim": "claim",
+                        "required_evidence": "evidence",
+                        "planned_artifact": "results/table.md",
+                        "status": "verified",
+                    }
+                ],
                 literature_tasks=["Network disabled fallback should not be needed"],
                 created_at="2026-05-10",
             )
@@ -308,6 +324,11 @@ class GeneratorTests(unittest.TestCase):
             related = (output / "docs/reference/related_work_matrix.csv").read_text()
             self.assertIn("https://openalex.org/W123", related)
             self.assertIn("Ada Lovelace; Alan Turing", related)
+            claim_matrix = (output / "docs/reference/claim_evidence_matrix.csv").read_text()
+            self.assertIn("results/table.md", claim_matrix)
+            self.assertIn("verified", claim_matrix)
+            gate = (output / "docs/diagnosis/evidence_gate.md").read_text()
+            self.assertIn("Submission readiness: ready", gate)
 
     def test_generate_research_repo_filters_invalid_literature_records(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
