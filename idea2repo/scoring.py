@@ -20,6 +20,7 @@ class CapTrigger(str, Enum):
     MISSING_SYSTEM_METRICS = "missing_system_metrics"
     MISSING_AI_ABLATION_OR_GENERALIZATION = "missing_ai_ablation_or_generalization"
     INSUFFICIENT_RECENT_LITERATURE = "insufficient_recent_literature"
+    NON_FULL_REGULAR_TARGET = "non_full_regular_target"
 
 
 CAP_LIMITS: dict[CapTrigger, int] = {
@@ -31,6 +32,7 @@ CAP_LIMITS: dict[CapTrigger, int] = {
     CapTrigger.MISSING_SYSTEM_METRICS: 65,
     CapTrigger.MISSING_AI_ABLATION_OR_GENERALIZATION: 70,
     CapTrigger.INSUFFICIENT_RECENT_LITERATURE: 70,
+    CapTrigger.NON_FULL_REGULAR_TARGET: 50,
 }
 
 
@@ -223,6 +225,17 @@ def _cap_triggers(idea: str, domain: str) -> tuple[CapTrigger, ...]:
         triggers.append(CapTrigger.MISSING_AI_ABLATION_OR_GENERALIZATION)
     if not _has_any(idea, "2024", "2025", "2026", "recent", "last two years"):
         triggers.append(CapTrigger.INSUFFICIENT_RECENT_LITERATURE)
+    if _has_any(
+        idea,
+        "workshop",
+        "short paper",
+        "short-paper",
+        "short submission",
+        "demo paper",
+        "demo track",
+        "demo submission",
+    ):
+        triggers.append(CapTrigger.NON_FULL_REGULAR_TARGET)
 
     return tuple(triggers)
 
@@ -251,6 +264,8 @@ def _risks_for(domain: str, triggers: tuple[CapTrigger, ...]) -> tuple[str, ...]
         "Novelty may collapse if recent related work already covers the same problem.",
         "The submission will be weak without reproducible baselines and grounded citations.",
     ]
+    if CapTrigger.NON_FULL_REGULAR_TARGET in triggers:
+        risks.append("CCF-A readiness should be judged against Full or Regular papers, not workshop, demo, or short-paper tracks.")
     if CapTrigger.MISSING_VERIFIABLE_EXPERIMENT_PLAN in triggers:
         risks.append("The current idea lacks enough experimental detail to support CCF-A claims.")
     if domain == "security":
@@ -339,4 +354,3 @@ def _has_any(text: str, *needles: str) -> int:
 
 def _bounded(value: int, upper: int) -> int:
     return max(0, min(value, upper))
-

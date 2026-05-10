@@ -33,6 +33,22 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Overwrite files in a non-empty output directory.",
     )
+    parser.add_argument(
+        "--weeks",
+        type=int,
+        choices=(8, 12, 16, 24),
+        default=12,
+        help="Execution timeline in weeks. Use 24 for a six-month plan.",
+    )
+    parser.add_argument(
+        "--resource",
+        action="append",
+        dest="resources",
+        help=(
+            "Resource constraint or capability. Can be repeated. Examples: "
+            "single-researcher, no-gpu, gpu, real-data, no-real-data."
+        ),
+    )
     return parser
 
 
@@ -44,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
             args.idea,
             args.output,
             requested_domains=args.domains,
+            timeline_weeks=args.weeks,
+            resources=args.resources,
             force=args.force,
         )
     except (FileExistsError, ValueError) as exc:
@@ -56,4 +74,5 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Raw Idea Score: {diagnosis.raw_score.total} / 100")
     print(f"Revised Plan Score: {diagnosis.revised_score.total} / 100")
     print("Main report: docs/diagnosis/ccf_a_readiness_report.md")
+    print(f"Execution plan: docs/execution_plan/{args.weeks}_week_plan.md")
     return 0

@@ -9,6 +9,9 @@ The implementation is intentionally workflow-first. It does not fabricate refere
 ```bash
 uv run idea2repo "LLM agents need long-term memory compression" \
   --domain "AI/LLM Agent" \
+  --weeks 12 \
+  --resource single-researcher \
+  --resource no-gpu \
   --output generated_repos/demo
 ```
 
@@ -20,6 +23,10 @@ The generated repo includes:
 - survey, execution plan, meeting, runtime, and provider notes
 - paper LaTeX skeleton
 - experiment, data, result, Docker, script, and GitHub scaffolds
+
+Use `--weeks 8`, `--weeks 12`, `--weeks 16`, or `--weeks 24` to choose the
+execution timeline. Add `--resource` repeatedly to capture constraints such as
+`single-researcher`, `gpu`, `no-gpu`, `real-data`, or `no-real-data`.
 
 Use `--force` only when intentionally regenerating into a non-empty output directory.
 

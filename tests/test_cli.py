@@ -7,16 +7,46 @@ from idea2repo.cli import build_parser, main
 
 class CliTests(unittest.TestCase):
     def test_parser_accepts_idea_and_output(self) -> None:
-        args = build_parser().parse_args(["test idea", "--output", "out", "--domain", "OSDI"])
+        args = build_parser().parse_args(
+            [
+                "test idea",
+                "--output",
+                "out",
+                "--domain",
+                "OSDI",
+                "--weeks",
+                "16",
+                "--resource",
+                "no-gpu",
+            ]
+        )
         self.assertEqual(args.idea, "test idea")
         self.assertEqual(args.output, "out")
         self.assertEqual(args.domains, ["OSDI"])
+        self.assertEqual(args.weeks, 16)
+        self.assertEqual(args.resources, ["no-gpu"])
 
     def test_main_returns_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "out"
-            self.assertEqual(main(["test idea", "--output", str(output), "--domain", "systems"]), 0)
+            self.assertEqual(
+                main(
+                    [
+                        "test idea",
+                        "--output",
+                        str(output),
+                        "--domain",
+                        "systems",
+                        "--weeks",
+                        "8",
+                        "--resource",
+                        "single-researcher",
+                    ]
+                ),
+                0,
+            )
             self.assertTrue((output / "docs/diagnosis/ccf_a_readiness_report.md").exists())
+            self.assertTrue((output / "docs/execution_plan/8_week_plan.md").exists())
 
     def test_main_returns_error_for_non_empty_output_without_force(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

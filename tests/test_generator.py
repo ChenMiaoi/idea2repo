@@ -19,6 +19,8 @@ class GeneratorTests(unittest.TestCase):
                 "A new LLM agent memory compression method with benchmark and baseline",
                 output,
                 requested_domains=["AI/LLM Agent"],
+                timeline_weeks=16,
+                resources=["single-researcher", "no-gpu"],
                 created_at="2026-05-10",
             )
 
@@ -42,7 +44,7 @@ class GeneratorTests(unittest.TestCase):
                 "docs/reference/claim_evidence_matrix.csv",
                 "docs/reference/paper_notes/README.md",
                 "docs/reference/pdfs/README.md",
-                "docs/execution_plan/12_week_plan.md",
+                "docs/execution_plan/16_week_plan.md",
                 "docs/execution_plan/milestones.md",
                 "docs/execution_plan/todo.md",
                 "docs/execution_plan/compute_budget.md",
@@ -112,6 +114,16 @@ class GeneratorTests(unittest.TestCase):
             self.assertEqual(related_rows[0]["collision_risk"], "Unknown until verified")
             self.assertEqual(related_rows[0]["source_url"], "TODO")
             self.assertEqual(related_rows[0]["bibtex_key"], "TODO")
+            self.assertEqual(related_rows[0]["authors"], "TODO")
+            self.assertEqual(related_rows[0]["main_claim"], "TODO")
+            self.assertEqual(related_rows[0]["evidence"], "TODO")
+            self.assertEqual(related_rows[0]["datasets"], "TODO")
+            self.assertEqual(related_rows[0]["baselines"], "TODO")
+            self.assertEqual(related_rows[0]["metrics"], "TODO")
+            self.assertEqual(related_rows[0]["limitations"], "TODO")
+            self.assertEqual(related_rows[0]["relation_to_current_idea"], "TODO")
+            self.assertEqual(related_rows[0]["useful_for"], "TODO")
+            self.assertEqual(related_rows[0]["bibtex"], "TODO")
             self.assertFalse(related_rows[0]["year"].isdigit())
 
             forbidden_result_terms = (
@@ -143,6 +155,9 @@ class GeneratorTests(unittest.TestCase):
 
             project_yaml = (output / "project.yaml").read_text()
             self.assertIn("created_at: 2026-05-10", project_yaml)
+            self.assertIn("timeline_weeks: 16", project_yaml)
+            self.assertIn("single-researcher", project_yaml)
+            self.assertIn("no-gpu", project_yaml)
             self.assertIn("raw_idea_score", project_yaml)
             self.assertIn("revised_plan_score", project_yaml)
             self.assertIn("openai_account_login", project_yaml)
@@ -152,6 +167,10 @@ class GeneratorTests(unittest.TestCase):
             self.assertIn("linux", project_yaml)
             self.assertIn("macos", project_yaml)
 
+            plan = (output / "docs/execution_plan/16_week_plan.md").read_text()
+            self.assertIn("# 16 Week Plan", plan)
+            self.assertIn("single-researcher, no-gpu", plan)
+
     def test_generate_research_repo_refuses_non_empty_output_without_force(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "existing"
@@ -160,6 +179,11 @@ class GeneratorTests(unittest.TestCase):
 
             with self.assertRaises(FileExistsError):
                 generate_research_repo("test idea", output)
+
+    def test_generate_research_repo_rejects_unsupported_timeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                generate_research_repo("test idea", Path(tmp) / "out", timeline_weeks=10)
 
     def test_result_guard_rejects_fake_numbers_metrics_and_citations(self) -> None:
         forbidden_terms = ("accuracy", "outperform", "sota", "significant")

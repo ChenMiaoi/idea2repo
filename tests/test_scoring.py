@@ -79,6 +79,14 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(diagnosis.routes[0].domain.key, "security")
         self.assertIn(CapTrigger.MISSING_THREAT_MODEL, diagnosis.raw_score.cap_triggers)
 
+    def test_workshop_demo_and_short_paper_targets_are_capped(self) -> None:
+        diagnosis = diagnose_idea(
+            "A workshop short paper about an LLM agent benchmark with baseline and metric",
+            requested_domains=["ai"],
+        )
+        self.assertIn(CapTrigger.NON_FULL_REGULAR_TARGET, diagnosis.raw_score.cap_triggers)
+        self.assertLessEqual(diagnosis.raw_score.total, 50)
+
     def test_revised_score_is_scored_from_explicit_revised_plan_evidence(self) -> None:
         diagnosis = diagnose_idea("agent memory compression", requested_domains=["ai"])
         self.assertIn(CapTrigger.MISSING_VERIFIABLE_EXPERIMENT_PLAN, diagnosis.raw_score.cap_triggers)

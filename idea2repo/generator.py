@@ -27,6 +27,8 @@ def generate_research_repo(
     output: str | Path,
     *,
     requested_domains: list[str] | None = None,
+    timeline_weeks: int = 12,
+    resources: list[str] | None = None,
     force: bool = False,
     created_at: str | None = None,
 ) -> GeneratedProject:
@@ -34,6 +36,8 @@ def generate_research_repo(
 
     if not idea.strip():
         raise ValueError("idea must not be empty")
+    if timeline_weeks not in {8, 12, 16, 24}:
+        raise ValueError("timeline_weeks must be one of: 8, 12, 16, 24")
 
     root = Path(output)
     if root.exists() and any(root.iterdir()) and not force:
@@ -42,7 +46,14 @@ def generate_research_repo(
     created_at = created_at or date.today().isoformat()
     diagnosis = diagnose_idea(idea, requested_domains=requested_domains)
     project_name = slugify(root.name if root.name else idea)
-    files = _build_files(project_name, idea, diagnosis, created_at)
+    files = _build_files(
+        project_name,
+        idea,
+        diagnosis,
+        created_at,
+        timeline_weeks,
+        resources or [],
+    )
 
     written: list[Path] = []
     for relative_path, content in files.items():
@@ -78,6 +89,8 @@ def _build_files(
     idea: str,
     diagnosis: Diagnosis,
     created_at: str,
+    timeline_weeks: int,
+    resources: list[str],
 ) -> dict[Path, str]:
     primary_route = diagnosis.routes[0]
     primary_domain = primary_route.domain
@@ -91,7 +104,14 @@ def _build_files(
     return {
         Path("README.md"): _root_readme(project_name, idea, diagnosis),
         Path(".gitignore"): _generated_gitignore(),
-        Path("project.yaml"): _project_yaml(project_name, idea, diagnosis, created_at),
+        Path("project.yaml"): _project_yaml(
+            project_name,
+            idea,
+            diagnosis,
+            created_at,
+            timeline_weeks,
+            resources,
+        ),
         Path("requirements.txt"): _requirements_txt(),
         Path("docs/diagnosis/ccf_a_readiness_report.md"): _readiness_report(
             project_name,
@@ -100,6 +120,7 @@ def _build_files(
             primary_venues,
             cap_values,
             revised_cap_values,
+            timeline_weeks,
         ),
         Path("docs/diagnosis/raw_idea_score.md"): _score_report(
             "Raw Idea Score",
@@ -124,14 +145,24 @@ def _build_files(
                     "title",
                     "venue",
                     "year",
+                    "authors",
                     "main_problem",
                     "core_method",
+                    "main_claim",
+                    "evidence",
+                    "datasets",
+                    "baselines",
+                    "metrics",
                     "strengths",
                     "weaknesses",
+                    "limitations",
+                    "relation_to_current_idea",
                     "difference_from_current_idea",
                     "collision_risk",
+                    "useful_for",
                     "source_url",
                     "bibtex_key",
+                    "bibtex",
                 ],
                 [
                     "TODO",
@@ -143,7 +174,17 @@ def _build_files(
                     "TODO",
                     "TODO",
                     "TODO",
+                    "TODO",
+                    "TODO",
+                    "TODO",
+                    "TODO",
+                    "TODO",
+                    "TODO",
+                    "TODO",
+                    "TODO",
                     "Unknown until verified",
+                    "TODO",
+                    "TODO",
                     "TODO",
                     "TODO",
                 ],
@@ -158,10 +199,17 @@ def _build_files(
         ),
         Path("docs/reference/paper_notes/README.md"): _paper_notes_readme(),
         Path("docs/reference/pdfs/README.md"): _pdf_readme(),
-        Path("docs/execution_plan/12_week_plan.md"): _twelve_week_plan(diagnosis),
+        Path(f"docs/execution_plan/{timeline_weeks}_week_plan.md"): _timeline_plan(
+            diagnosis,
+            timeline_weeks,
+            resources,
+        ),
         Path("docs/execution_plan/milestones.md"): _milestones(),
         Path("docs/execution_plan/todo.md"): _todo(diagnosis),
-        Path("docs/execution_plan/compute_budget.md"): _compute_budget(primary_domain.key),
+        Path("docs/execution_plan/compute_budget.md"): _compute_budget(
+            primary_domain.key,
+            resources,
+        ),
         Path("docs/execution_plan/experiment_checklist.md"): _experiment_checklist(
             primary_domain.key
         ),
@@ -289,6 +337,8 @@ def _project_yaml(
     idea: str,
     diagnosis: Diagnosis,
     created_at: str,
+    timeline_weeks: int,
+    resources: list[str],
 ) -> str:
     route = diagnosis.routes[0]
     domain = route.domain
@@ -306,6 +356,9 @@ idea:
 {_indent(idea, 4)}
   parsed_problem: {_yaml_scalar(diagnosis.parsed_idea.problem)}
   proposed_method: {_yaml_scalar(diagnosis.parsed_idea.proposed_method)}
+  timeline_weeks: {timeline_weeks}
+  resource_constraints:
+{_yaml_list(resources or ["unspecified"], 4)}
   target_domain:
 {_yaml_list([domain.key], 4)}
   target_venues:
@@ -336,7 +389,7 @@ artifacts:
   survey: docs/survey/survey.md
   related_work_matrix: docs/reference/related_work_matrix.csv
   bibtex: docs/reference/references.bib
-  execution_plan: docs/execution_plan/12_week_plan.md
+  execution_plan: docs/execution_plan/{timeline_weeks}_week_plan.md
   paper_template: paper/main.tex
 
 status:
@@ -352,6 +405,7 @@ def _readiness_report(
     primary_venues: str,
     cap_values: str,
     revised_cap_values: str,
+    timeline_weeks: int,
 ) -> str:
     route = diagnosis.routes[0]
     parsed = diagnosis.parsed_idea
@@ -366,6 +420,7 @@ def _readiness_report(
 - Candidate venues: {primary_venues}
 - Raw score caps: {cap_values}
 - Revised score caps: {revised_cap_values}
+- CCF-A scoring track: Full / Regular papers only; workshop, demo, and short-paper targets are capped.
 - Biggest risk: {diagnosis.risks[0]}
 - Most important next action: verify recent related work and fill the collision matrix.
 
@@ -423,7 +478,7 @@ Required evidence:
 
 ## 10. Execution Plan
 
-See `docs/execution_plan/12_week_plan.md`.
+See `docs/execution_plan/{timeline_weeks}_week_plan.md`.
 
 ## 11. Paper Skeleton
 
@@ -593,8 +648,12 @@ in the reference matrix.
 """
 
 
-def _twelve_week_plan(diagnosis: Diagnosis) -> str:
-    weeks = [
+def _timeline_plan(
+    diagnosis: Diagnosis,
+    timeline_weeks: int,
+    resources: list[str],
+) -> str:
+    base_weeks = [
         ("1", "Verify 10-20 recent related papers and fill collision risk."),
         ("2", "Finalize problem statement, threat/system/agent-specific rubric, and baselines."),
         ("3", "Reproduce the first baseline and lock data splits or workloads."),
@@ -608,7 +667,9 @@ def _twelve_week_plan(diagnosis: Diagnosis) -> str:
         ("11", "Run reviewer simulation and patch missing evidence."),
         ("12", "Prepare submission checklist, appendix, and reproducibility notes."),
     ]
-    lines = ["# 12 Week Plan", ""]
+    weeks = _scale_plan(base_weeks, timeline_weeks)
+    resource_text = ", ".join(resources) if resources else "unspecified"
+    lines = [f"# {timeline_weeks} Week Plan", "", f"Resource constraints: {resource_text}", ""]
     for week, deliverable in weeks:
         lines.append(f"## Week {week}")
         lines.append("")
@@ -619,6 +680,35 @@ def _twelve_week_plan(diagnosis: Diagnosis) -> str:
     lines.append("")
     lines.append(_markdown_list(diagnosis.required_evidence))
     return "\n".join(lines)
+
+
+def _scale_plan(base_weeks: list[tuple[str, str]], timeline_weeks: int) -> list[tuple[str, str]]:
+    if timeline_weeks == 12:
+        return base_weeks
+    if timeline_weeks == 8:
+        return [
+            ("1", "Verify core related papers and collision risk."),
+            ("2", "Finalize problem, baselines, datasets, and metrics."),
+            ("3", "Reproduce the first strong baseline."),
+            ("4", "Prototype the proposed method or system."),
+            ("5", "Run main experiments and log failures."),
+            ("6", "Run ablations, robustness, or scalability checks."),
+            ("7", "Update claim-evidence matrix and draft core sections."),
+            ("8", "Run reviewer simulation and prepare reproducibility notes."),
+        ]
+    if timeline_weeks == 16:
+        return base_weeks + [
+            ("13", "Expand related-work coverage and patch collision risks."),
+            ("14", "Run additional stress, robustness, or generalization checks."),
+            ("15", "Polish paper narrative, appendix, and artifact documentation."),
+            ("16", "Run final reviewer simulation and submission checklist."),
+        ]
+    return base_weeks + [
+        ("13-16", "Broaden benchmark coverage and strengthen baselines."),
+        ("17-20", "Run larger-scale validation and artifact hardening."),
+        ("21-22", "Draft full paper and reproducibility appendix."),
+        ("23-24", "Run final reviewer simulation, rebuttal prep, and release checks."),
+    ]
 
 
 def _milestones() -> str:
@@ -645,16 +735,19 @@ def _todo(diagnosis: Diagnosis) -> str:
     )
 
 
-def _compute_budget(domain: str) -> str:
+def _compute_budget(domain: str, resources: list[str]) -> str:
     if domain == "systems":
         focus = "Record hardware, workload scale, latency, throughput, memory, and cost."
     elif domain == "security":
         focus = "Record sandboxing, allowed targets, data handling, and defensive evaluation cost."
     else:
         focus = "Record model sizes, GPU hours, API cost, benchmark size, and random seeds."
+    resource_text = ", ".join(resources) if resources else "unspecified"
     return f"""# Compute Budget
 
 {focus}
+
+User resource constraints: {resource_text}
 
 | Resource | Estimate | Actual | Notes |
 | --- | ---: | ---: | --- |
