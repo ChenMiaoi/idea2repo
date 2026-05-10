@@ -1,0 +1,212 @@
+import csv
+import re
+import tempfile
+import unittest
+from pathlib import Path
+
+from idea2repo.generator import generate_research_repo, slugify
+
+
+class GeneratorTests(unittest.TestCase):
+    def test_slugify_creates_cross_platform_name(self) -> None:
+        self.assertEqual(slugify("LLM Agent: Memory / Compression!"), "llm-agent-memory-compression")
+        self.assertEqual(slugify("!!!"), "idea2repo-project")
+
+    def test_generate_research_repo_writes_core_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "llm-memory"
+            result = generate_research_repo(
+                "A new LLM agent memory compression method with benchmark and baseline",
+                output,
+                requested_domains=["AI/LLM Agent"],
+                created_at="2026-05-10",
+            )
+
+            required_paths = [
+                "README.md",
+                ".gitignore",
+                "project.yaml",
+                "requirements.txt",
+                "docs/diagnosis/ccf_a_readiness_report.md",
+                "docs/diagnosis/raw_idea_score.md",
+                "docs/diagnosis/revised_plan_score.md",
+                "docs/diagnosis/risk_register.md",
+                "docs/diagnosis/reviewer_simulation.md",
+                "docs/survey/survey.md",
+                "docs/survey/paper_map.md",
+                "docs/survey/topic_clusters.md",
+                "docs/survey/trend_analysis.md",
+                "docs/survey/open_problems.md",
+                "docs/reference/references.bib",
+                "docs/reference/related_work_matrix.csv",
+                "docs/reference/claim_evidence_matrix.csv",
+                "docs/reference/paper_notes/README.md",
+                "docs/reference/pdfs/README.md",
+                "docs/execution_plan/12_week_plan.md",
+                "docs/execution_plan/milestones.md",
+                "docs/execution_plan/todo.md",
+                "docs/execution_plan/compute_budget.md",
+                "docs/execution_plan/experiment_checklist.md",
+                "docs/meeting/weekly_update_template.md",
+                "docs/meeting/advisor_report.md",
+                "docs/runtime/platform_notes.md",
+                "docs/runtime/provider_config.md",
+                "paper/main.tex",
+                "paper/macros.tex",
+                "paper/figures/.gitkeep",
+                "paper/tables/.gitkeep",
+                "paper/sections/00_abstract.tex",
+                "paper/sections/01_introduction.tex",
+                "paper/sections/02_related_work.tex",
+                "paper/sections/03_problem_formulation.tex",
+                "paper/sections/04_method.tex",
+                "paper/sections/05_experiments.tex",
+                "paper/sections/06_discussion.tex",
+                "paper/sections/07_conclusion.tex",
+                "src/README.md",
+                "src/method/README.md",
+                "src/baselines/README.md",
+                "src/evaluation/README.md",
+                "src/utils/README.md",
+                "experiments/README.md",
+                "experiments/exp_001_baseline_reproduction/.gitkeep",
+                "experiments/exp_002_main_result/.gitkeep",
+                "experiments/exp_003_ablation/.gitkeep",
+                "experiments/exp_004_scalability_or_robustness/.gitkeep",
+                "experiments/exp_005_failure_cases/.gitkeep",
+                "configs/README.md",
+                "data/README.md",
+                "data/raw/.gitkeep",
+                "data/processed/.gitkeep",
+                "results/README.md",
+                "results/logs/.gitkeep",
+                "results/tables/.gitkeep",
+                "results/figures/.gitkeep",
+                "scripts/README.md",
+                "scripts/run.sh",
+                "scripts/run.ps1",
+                "docker/Dockerfile",
+                "docker/docker-compose.yml",
+                ".github/workflows/README.md",
+                ".github/ISSUE_TEMPLATE/research_task.md",
+            ]
+
+            self.assertEqual(result.root, output)
+            for required_path in required_paths:
+                self.assertTrue((output / required_path).exists(), required_path)
+
+            report = (output / "docs/diagnosis/ccf_a_readiness_report.md").read_text()
+            self.assertIn("Raw Idea Score", report)
+            self.assertIn("Revised Plan Score", report)
+            self.assertIn("Do not write performance claims", (output / "paper/sections/05_experiments.tex").read_text())
+
+            references = (output / "docs/reference/references.bib").read_text()
+            self.assertIn("Do not invent", references)
+            self.assertNotRegex(references, r"(?i)@\s*[a-z]+\s*\{")
+
+            with (output / "docs/reference/related_work_matrix.csv").open(newline="") as related_file:
+                related_rows = list(csv.DictReader(related_file))
+            self.assertEqual(len(related_rows), 1)
+            self.assertEqual(related_rows[0]["paper_id"], "TODO")
+            self.assertEqual(related_rows[0]["title"], "Add only verified papers")
+            self.assertEqual(related_rows[0]["collision_risk"], "Unknown until verified")
+            self.assertEqual(related_rows[0]["source_url"], "TODO")
+            self.assertEqual(related_rows[0]["bibtex_key"], "TODO")
+            self.assertFalse(related_rows[0]["year"].isdigit())
+
+            forbidden_result_terms = (
+                "accuracy",
+                "outperform",
+                "outperforms",
+                "improve",
+                "improves",
+                "sota",
+                "significant",
+                "p-value",
+            )
+            for row in related_rows:
+                for value in row.values():
+                    self.assert_no_result_claims(value.lower(), forbidden_result_terms)
+
+            with (output / "docs/reference/claim_evidence_matrix.csv").open(newline="") as claim_file:
+                claim_rows = list(csv.DictReader(claim_file))
+            self.assertTrue(claim_rows)
+            for row in claim_rows:
+                self.assertEqual(row["status"], "planned")
+                self.assertTrue(row["claim"].startswith("TODO:"))
+                self.assertTrue(row["required_evidence"].startswith("TODO:"))
+                result_text = " ".join(row.values()).lower()
+                self.assert_no_result_claims(result_text, forbidden_result_terms)
+
+            experiments_tex = (output / "paper/sections/05_experiments.tex").read_text().lower()
+            self.assert_no_result_claims(experiments_tex, forbidden_result_terms)
+
+            project_yaml = (output / "project.yaml").read_text()
+            self.assertIn("created_at: 2026-05-10", project_yaml)
+            self.assertIn("raw_idea_score", project_yaml)
+            self.assertIn("revised_plan_score", project_yaml)
+            self.assertIn("openai_account_login", project_yaml)
+            self.assertIn("enterprise_account", project_yaml)
+            self.assertIn("local_model", project_yaml)
+            self.assertIn("windows", project_yaml)
+            self.assertIn("linux", project_yaml)
+            self.assertIn("macos", project_yaml)
+
+    def test_generate_research_repo_refuses_non_empty_output_without_force(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "existing"
+            output.mkdir()
+            (output / "README.md").write_text("user content")
+
+            with self.assertRaises(FileExistsError):
+                generate_research_repo("test idea", output)
+
+    def test_result_guard_rejects_fake_numbers_metrics_and_citations(self) -> None:
+        forbidden_terms = ("accuracy", "outperform", "sota", "significant")
+        bad_examples = [
+            "42",
+            "3.14",
+            "2x",
+            "10 ms",
+            "f1",
+            "latency",
+            "throughput",
+            "gb",
+            "\\cite{fake2025}",
+            "@InProceedings{fake}",
+            "doi:10.1234/fake",
+            "arXiv 2501.00001",
+            "Smith et al.",
+            "2025",
+            "beats baseline",
+        ]
+        for example in bad_examples:
+            with self.subTest(example=example):
+                with self.assertRaises(AssertionError):
+                    self.assert_no_result_claims(example.lower(), forbidden_terms)
+
+    def assert_no_result_claims(self, text: str, forbidden_terms: tuple[str, ...]) -> None:
+        for term in forbidden_terms:
+            self.assertNotIn(term, text)
+        forbidden_patterns = (
+            r"\b\d+(\.\d+)?\s*%",
+            r"\b\d+(\.\d+)?\s*x\b",
+            r"\b\d+(\.\d+)?\s*(ms|s|sec|seconds|qps|tokens/s|gb|mb)\b",
+            r"\b\d+(\.\d+)?\s*(f1|auc|bleu|rouge|accuracy|latency|throughput)\b",
+            r"\b\d+(\.\d+)?\b",
+            r"\b(f1|auc|bleu|rouge|accuracy|latency|throughput)\b",
+            r"\b(ms|sec|seconds|qps|tokens/s|gb|mb)\b",
+            r"\b(achieve|achieves|achieved|reduce|reduces|reduced|beat|beats|beating|win|wins|faster|slower|lower|higher)\b",
+            r"\\cite\s*\{",
+            r"@\s*[a-z]+\s*\{",
+            r"\bdoi\b",
+            r"\barxiv\b",
+            r"\bet al\.",
+            r"\b(19|20)\d{2}\b",
+        )
+        for pattern in forbidden_patterns:
+            self.assertIsNone(re.search(pattern, text), pattern)
+
+
+if __name__ == "__main__":
+    unittest.main()
