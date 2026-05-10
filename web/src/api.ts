@@ -1,6 +1,26 @@
+import type {
+  ArtifactReadRequest,
+  ArtifactReadResponse,
+  GenerateRequest,
+  GenerateResponse,
+  GithubDryRunRequest,
+  PathRequest,
+  StatusResponse
+} from "../../src/api-contract";
+
 export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string };
+
+export type {
+  ArtifactReadRequest,
+  ArtifactReadResponse,
+  GenerateRequest,
+  GenerateResponse,
+  GithubDryRunRequest,
+  PathRequest,
+  StatusResponse
+};
 
 export function getApiBase(): string {
   return (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");

@@ -175,7 +175,7 @@ export const artifacts: ArtifactNode[] = [
 export const providerServices: ProviderService[] = [
   { name: "OpenAI", status: "offline", detail: "env unset" },
   { name: "Local model", status: "running", detail: "http://localhost:11434" },
-  { name: "FastAPI", status: "running", detail: "http://127.0.0.1:8000" },
+  { name: "Node API", status: "running", detail: "http://127.0.0.1:8000" },
   { name: "GitHub", status: "offline", detail: "dry-run only" }
 ];
 

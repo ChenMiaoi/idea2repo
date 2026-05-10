@@ -1,0 +1,387 @@
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
+import { pathToFileURL } from "node:url";
+import { buildGithubExportPlan, publishWithGh } from "./github-export.js";
+import { generateResearchRepo, resumeResearchRepo, type GenerateOptions } from "./generator.js";
+import { PermissionDeniedError, type PermissionPolicy } from "./permissions.js";
+import { canonicalProvider, providerSchema, safeProviderReport } from "./providers.js";
+import { status as projectStatus, validate as validateProject } from "./state.js";
+import { loadVenueDatabase, validateVenueDatabase } from "./venues.js";
+import { inspectWorkspace } from "./workspace.js";
+import { startApiServer } from "./api.js";
+import { AuthStorage, openaiCodexOAuthProvider } from "./auth/codex-oauth.js";
+import { runTui } from "./tui/App.js";
+import { loadCodexModelCatalog } from "./models.js";
+import { proxyEnvForChild } from "./proxy.js";
+
+const commandNames = new Set(["research", "generate", "status", "resume", "validate", "doctor", "auth", "login", "logout", "provider", "venues", "github", "api", "web"]);
+
+type ParsedArgs = {
+  _: string[];
+  flags: Map<string, string[]>;
+};
+
+export async function main(argv = process.argv.slice(2)): Promise<number> {
+  try {
+    if (!argv.length) {
+      if (process.stdin.isTTY && process.stdout.isTTY) {
+        await runTui();
+        return 0;
+      }
+      printHelp();
+      return 0;
+    }
+    if (argv[0] === "-h" || argv[0] === "--help") {
+      printHelp();
+      return 0;
+    }
+    const command = commandNames.has(argv[0] ?? "") ? argv[0]! : "generate";
+    const rest = command === "generate" && !commandNames.has(argv[0] ?? "") ? argv : argv.slice(1);
+    switch (command) {
+      case "generate":
+      case "research":
+        return await commandGenerate(rest);
+      case "status":
+        return await commandStatus(rest);
+      case "resume":
+        return await commandResume(rest);
+      case "validate":
+        return await commandValidate(rest);
+      case "doctor":
+        return await commandDoctor(rest);
+      case "auth":
+        return await commandAuth(rest);
+      case "login":
+        return await commandAuth(["login", ...rest]);
+      case "logout":
+        return await commandAuth(["logout", ...rest]);
+      case "provider":
+        return commandProvider(rest);
+      case "venues":
+        return commandVenues(rest);
+      case "github":
+        return await commandGithub(rest);
+      case "api":
+        return await commandApi(rest);
+      case "web":
+        return await commandWeb(rest);
+      default:
+        console.error(`error: unknown command: ${command}`);
+        return 2;
+    }
+  } catch (error) {
+    if (error instanceof PermissionDeniedError || error instanceof Error) {
+      console.error(`error: ${error.message}`);
+      return 2;
+    }
+    console.error("error: unknown failure");
+    return 2;
+  }
+}
+
+async function commandGenerate(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv);
+  const idea = parsed._.join(" ").trim();
+  if (!idea) throw new Error("idea must not be empty");
+  const weeks = numberFlag(parsed, "weeks", 12);
+  const offline = hasFlag(parsed, "offline");
+  const provider = stringFlag(parsed, "provider") ?? (offline ? "offline" : null);
+  const result = await generateResearchRepo(idea, stringFlag(parsed, "output") ?? "generated_repos/idea2repo-project", {
+    requestedDomains: valuesFlag(parsed, "domain"),
+    timelineWeeks: weeks,
+    resources: valuesFlag(parsed, "resource"),
+    force: hasFlag(parsed, "force"),
+    stack: stringFlag(parsed, "stack") === "ts" ? "ts" : "python",
+    offline,
+    provider,
+    model: stringFlag(parsed, "model"),
+    reasoningEffort: stringFlag(parsed, "reasoning"),
+    permissionPolicy: policyFromFlags(parsed)
+  });
+  const diagnosis = result.diagnosis;
+  console.log(`Generated Idea2Repo project: ${result.root}`);
+  console.log(`Primary route: ${diagnosis.routes[0]?.domain.label ?? "unknown"}`);
+  console.log(`Raw Idea Score: ${diagnosis.raw_score.total} / 100`);
+  console.log(`Revised Plan Score: ${diagnosis.revised_score.total} / 100`);
+  console.log(`Provider: ${result.provider_id}`);
+  console.log(`Analysis source: ${result.analysis_source}`);
+  if (result.fallback_reason) console.log(`Fallback reason: ${result.fallback_reason}`);
+  console.log("Main report: docs/diagnosis/ccf_a_readiness_report.md");
+  console.log(`Execution plan: docs/execution_plan/${weeks}_week_plan.md`);
+  return 0;
+}
+
+async function commandStatus(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv);
+  const current = await projectStatus(stringFlag(parsed, "output") ?? "generated_repos/idea2repo-project");
+  console.log(`Project: ${current.project_name}`);
+  console.log(`Stage: ${current.stage}`);
+  console.log(`Artifacts: ${current.present_artifacts}/${current.total_artifacts} present`);
+  console.log(`Missing: ${current.missing_artifacts.length}`);
+  console.log(`Modified: ${current.modified_artifacts.length}`);
+  return 0;
+}
+
+async function commandResume(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv);
+  const result = await resumeResearchRepo(stringFlag(parsed, "output") ?? "generated_repos/idea2repo-project", {
+    force: hasFlag(parsed, "force"),
+    permissionPolicy: policyFromFlags(parsed)
+  });
+  console.log(`Resumed Idea2Repo project: ${result.root}`);
+  console.log(`Restored files: ${result.files.length}`);
+  return 0;
+}
+
+async function commandValidate(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv);
+  const errors = await validateProject(stringFlag(parsed, "output") ?? "generated_repos/idea2repo-project");
+  if (errors.length) {
+    for (const error of errors) console.error(error);
+    return 1;
+  }
+  console.log("Validation passed");
+  return 0;
+}
+
+async function commandDoctor(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv);
+  const snapshot = inspectWorkspace(stringFlag(parsed, "cwd") ?? ".");
+  const oauth = await openaiCodexOAuthProvider.status();
+  console.log(`cwd: ${snapshot.cwd}`);
+  console.log(`git_root: ${snapshot.git_root ?? "not detected"}`);
+  console.log(`git_branch: ${snapshot.git_branch ?? "not detected"}`);
+  console.log(`git_status_entries: ${snapshot.git_status_short.length}`);
+  console.log(`oauth_login: ${oauth.loggedIn ? "logged in" : "not logged in"}`);
+  console.log(`oauth_endpoint: ${oauth.endpoint}`);
+  return 0;
+}
+
+async function commandAuth(argv: string[]): Promise<number> {
+  const action = argv[0] ?? "status";
+  const parsed = parseArgs(argv.slice(1));
+  if (action === "status") {
+    const status = await openaiCodexOAuthProvider.status();
+    console.log(`Auth: ${status.statusText}`);
+    console.log(`Endpoint: ${status.endpoint}`);
+    const credentials = await new AuthStorage().get("openai-codex");
+    if (credentials) {
+      console.log(`Account: ${credentials.accountId}`);
+      console.log("Access token: stored");
+      console.log("Refresh token: stored");
+      console.log(`Expires: ${new Date(credentials.expires).toISOString()}`);
+    }
+    return 0;
+  }
+  if (action === "limits") {
+    const usage = await openaiCodexOAuthProvider.usage();
+    console.log(`Source: ${usage.source}`);
+    if (usage.limitName) console.log(`Limit: ${usage.limitName}`);
+    if (usage.primary) console.log(`Primary: ${JSON.stringify(usage.primary)}`);
+    if (usage.secondary) console.log(`Secondary: ${JSON.stringify(usage.secondary)}`);
+    if (usage.credits) console.log(`Credits: ${JSON.stringify(usage.credits)}`);
+    return 0;
+  }
+  if (action === "logout") {
+    await openaiCodexOAuthProvider.logout();
+    console.log("Logged out");
+    return 0;
+  }
+  if (action === "login") {
+    const rl = createInterface({ input, output });
+    try {
+      const credentials = await openaiCodexOAuthProvider.login({
+        openBrowser: !hasFlag(parsed, "no-browser"),
+        onAuth: (pending) => {
+          console.log("Open this URL to sign in with OpenAI:");
+          console.log(pending.url);
+          console.log("Waiting for the browser callback, or paste the redirect URL when prompted.");
+        },
+        onManualCodeInput: async () => rl.question("Paste redirect URL or authorization code if browser callback does not complete: "),
+        onPrompt: async (prompt) => rl.question(`${prompt.message} `)
+      });
+      await new AuthStorage().set("openai-codex", credentials);
+      console.log("Logged in via Idea2Repo OpenAI Codex OAuth");
+      return 0;
+    } finally {
+      rl.close();
+    }
+  }
+  throw new Error(`unknown auth action: ${action}`);
+}
+
+function commandProvider(argv: string[]): number {
+  const action = argv[0] ?? "list";
+  if (action === "list") {
+    console.log("openai-codex (default, Codex OAuth)");
+    console.log("openai-codex-oauth (legacy alias for openai-codex)");
+    console.log("openai-codex-cli (official CLI wrapper, migration placeholder)");
+    console.log("offline (deterministic fallback)");
+    const catalog = loadCodexModelCatalog();
+    console.log(`models: ${catalog.models.map((model) => model.id).join(", ")} (${catalog.source})`);
+    return 0;
+  }
+  if (action === "show") {
+    console.log(safeProviderReport(canonicalProvider(argv[1])));
+    return 0;
+  }
+  if (action === "validate") {
+    console.log(JSON.stringify(providerSchema(), null, 2));
+    return 0;
+  }
+  throw new Error(`unknown provider action: ${action}`);
+}
+
+function commandVenues(argv: string[]): number {
+  const action = argv[0] ?? "validate";
+  const parsed = parseArgs(argv.slice(1));
+  if (action !== "validate") throw new Error(`unknown venues action: ${action}`);
+  const database = loadVenueDatabase(stringFlag(parsed, "path") ?? undefined);
+  const errors = validateVenueDatabase(database);
+  if (errors.length) {
+    for (const error of errors) console.error(error);
+    return 1;
+  }
+  const total = Object.values(database.domains).reduce((sum, domain) => sum + Object.keys(domain.venue_records).length, 0);
+  console.log(`Venue database valid: ${database.version} (${total} records)`);
+  return 0;
+}
+
+async function commandGithub(argv: string[]): Promise<number> {
+  const action = argv[0] ?? "dry-run";
+  const parsed = parseArgs(argv.slice(1));
+  const plan = await buildGithubExportPlan(stringFlag(parsed, "output") ?? "generated_repos/idea2repo-project", {
+    repoName: stringFlag(parsed, "repo-name") ?? "",
+    createIssues: !hasFlag(parsed, "no-issues")
+  });
+  if (action === "dry-run") {
+    console.log(JSON.stringify(plan, null, 2));
+    return 0;
+  }
+  if (action === "publish") {
+    const result = await publishWithGh(plan, { permissionPolicy: policyFromFlags(parsed) });
+    console.log(JSON.stringify(result, null, 2));
+    return 0;
+  }
+  throw new Error(`unknown github action: ${action}`);
+}
+
+async function commandApi(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv);
+  const port = numberFlag(parsed, "port", 8000);
+  const host = stringFlag(parsed, "host") ?? "127.0.0.1";
+  const server = await startApiServer({ host, port });
+  console.log(`Idea2Repo API listening on ${server.url}`);
+  await waitForTermination();
+  await server.close();
+  return 0;
+}
+
+async function commandWeb(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv);
+  const apiPort = numberFlag(parsed, "api-port", 8000);
+  const api = await startApiServer({ port: apiPort });
+  console.log(`Idea2Repo API listening on ${api.url}`);
+  console.log("Starting web dashboard with npm --workspace web run dev");
+  const child = spawn("npm", ["--workspace", "web", "run", "dev", "--", "--host", "127.0.0.1"], {
+    stdio: "inherit",
+    env: proxyEnvForChild({ ...process.env, VITE_API_BASE_URL: api.url })
+  });
+  const code = await new Promise<number>((resolve) => child.on("exit", (exitCode) => resolve(exitCode ?? 0)));
+  await api.close();
+  return code;
+}
+
+function parseArgs(argv: string[]): ParsedArgs {
+  const parsed: ParsedArgs = { _: [], flags: new Map() };
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index]!;
+    if (!token.startsWith("--")) {
+      parsed._.push(token);
+      continue;
+    }
+    const [rawName, inlineValue] = token.slice(2).split("=", 2);
+    const name = rawName!;
+    let value = inlineValue;
+    if (value == null && argv[index + 1] && !argv[index + 1]!.startsWith("--")) {
+      value = argv[index + 1]!;
+      index += 1;
+    }
+    const values = parsed.flags.get(name) ?? [];
+    values.push(value ?? "true");
+    parsed.flags.set(name, values);
+  }
+  return parsed;
+}
+
+function hasFlag(parsed: ParsedArgs, name: string): boolean {
+  return parsed.flags.has(name) && parsed.flags.get(name)?.at(-1) !== "false";
+}
+
+function stringFlag(parsed: ParsedArgs, name: string): string | null {
+  const value = parsed.flags.get(name)?.at(-1);
+  return value && value !== "true" ? value : null;
+}
+
+function valuesFlag(parsed: ParsedArgs, name: string): string[] {
+  return (parsed.flags.get(name) ?? []).filter((value) => value !== "true" && value.trim());
+}
+
+function numberFlag(parsed: ParsedArgs, name: string, fallback: number): number {
+  const raw = stringFlag(parsed, name);
+  const value = raw == null ? Number.NaN : Number(raw);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function policyFromFlags(parsed: ParsedArgs): PermissionPolicy {
+  return {
+    allowWrite: true,
+    allowOverwrite: hasFlag(parsed, "force"),
+    allowNetwork: hasFlag(parsed, "allow-network"),
+    allowLogin: hasFlag(parsed, "allow-login"),
+    allowInstall: hasFlag(parsed, "allow-install"),
+    allowPublish: hasFlag(parsed, "allow-publish")
+  };
+}
+
+function printHelp(): void {
+  console.log(`Idea2Repo
+
+Usage:
+  idea2repo "research idea" [--output dir] [--offline] [--stack python|ts]
+  idea2repo research "research idea" [options]
+  idea2repo generate "research idea" [options]  # legacy alias
+  idea2repo status|resume|validate [--output dir]
+  idea2repo auth status|login|logout
+  idea2repo provider list|show|validate
+  idea2repo venues validate
+  idea2repo github dry-run|publish
+  idea2repo api [--host 127.0.0.1] [--port 8000]
+  idea2repo web
+
+Options:
+  --domain value       Domain or venue hint; repeatable
+  --weeks 8|12|16|24  Execution timeline
+  --resource value     Resource constraint; repeatable
+  --force              Allow overwrite of non-empty output
+  --offline            Use deterministic local fallback
+  --provider id        openai-codex, openai-codex-oauth, openai-codex-cli, offline
+  --model id           Codex model id
+  --reasoning effort   Codex reasoning effort
+`);
+}
+
+async function waitForTermination(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    process.once("SIGINT", resolve);
+    process.once("SIGTERM", resolve);
+  });
+}
+
+const entry = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
+if (import.meta.url === entry) {
+  main().then((code) => {
+    process.exitCode = code;
+  });
+}

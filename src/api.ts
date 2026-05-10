@@ -1,0 +1,333 @@
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { readdir, readFile, stat } from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
+import { buildGithubExportPlan } from "./github-export.js";
+import { generateResearchRepo, resumeResearchRepo } from "./generator.js";
+import { searchLiterature } from "./literature.js";
+import { safeProviderReport, providerSchema } from "./providers.js";
+import { diagnoseIdea } from "./scoring.js";
+import { status as projectStatus, validate as validateProject } from "./state.js";
+import { submissionReady, blockingReasons } from "./evidence.js";
+import { runWorkflow } from "./workflow.js";
+import { openaiCodexOAuthProvider } from "./auth/codex-oauth.js";
+import { loadCodexModelCatalog } from "./models.js";
+
+export type ApiServer = {
+  server: Server;
+  url: string;
+  close: () => Promise<void>;
+};
+
+type JsonValue = Record<string, unknown> | unknown[];
+
+export function createApiHandler() {
+  return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    try {
+      await route(request, response);
+    } catch (error) {
+      const statusCode = error instanceof HttpError ? error.statusCode : 500;
+      sendJson(response, statusCode, { detail: error instanceof Error ? error.message : "unknown error" });
+    }
+  };
+}
+
+export async function startApiServer(options: { host?: string; port?: number } = {}): Promise<ApiServer> {
+  const host = options.host ?? "127.0.0.1";
+  const port = options.port ?? 8000;
+  const server = createServer(createApiHandler());
+  await new Promise<void>((resolvePromise, reject) => {
+    server.once("error", reject);
+    server.listen(port, host, () => {
+      server.off("error", reject);
+      resolvePromise();
+    });
+  });
+  const address = server.address();
+  const actualPort = typeof address === "object" && address ? address.port : port;
+  return {
+    server,
+    url: `http://${host}:${actualPort}`,
+    close: () => new Promise((resolvePromise, reject) => server.close((error) => (error ? reject(error) : resolvePromise())))
+  };
+}
+
+async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  const url = new URL(request.url ?? "/", "http://localhost");
+  const path = url.pathname;
+  if (request.method === "OPTIONS") {
+    sendJson(response, 204, {});
+    return;
+  }
+  if (request.method === "GET" && path === "/health") {
+    sendJson(response, 200, { ok: true, service: "idea2repo", runtime: "node" });
+    return;
+  }
+  if (request.method === "GET" && (path === "/provider" || path === "/provider/settings")) {
+    const status = await openaiCodexOAuthProvider.status();
+    sendJson(response, 200, {
+      provider: "openai-codex",
+      schema: providerSchema(),
+      report: safeProviderReport("openai-codex"),
+      model_catalog: loadCodexModelCatalog(),
+      auth: status
+    });
+    return;
+  }
+  if (request.method !== "POST") throw new HttpError(404, "route not found");
+  const body = (await readJson(request)) as Record<string, unknown>;
+  if (path === "/generate") {
+    const result = await generateResearchRepo(requiredString(body.idea, "idea"), requiredString(body.output, "output"), {
+      requestedDomains: stringArray(body.domains),
+      timelineWeeks: numberValue(body.weeks, 12),
+      resources: stringArray(body.resources),
+      stack: body.stack === "ts" ? "ts" : "python",
+      force: Boolean(body.force),
+      offline: Boolean(body.offline),
+      provider: stringOrNull(body.provider),
+      model: stringOrNull(body.model),
+      reasoningEffort: stringOrNull(body.reasoning_effort)
+    });
+    sendJson(response, 200, {
+      root: result.root,
+      project_name: result.project_name,
+      primary_route: result.diagnosis.routes[0]?.domain.key,
+      raw_score: result.diagnosis.raw_score.total,
+      revised_score: result.diagnosis.revised_score.total,
+      evidence_gate: evidencePayload(result.diagnosis.evidence_gate),
+      security: result.diagnosis.security_assessment,
+      analysis_source: result.analysis_source,
+      codex_available: result.codex_available,
+      codex_logged_in: result.codex_logged_in,
+      codex_model: result.model,
+      fallback_reason: result.fallback_reason
+    });
+    return;
+  }
+  if (path === "/status") {
+    sendJson(response, 200, await projectStatus(requiredString(body.output, "output")));
+    return;
+  }
+  if (path === "/resume") {
+    const result = await resumeResearchRepo(requiredString(body.output, "output"), { force: Boolean(body.force) });
+    sendJson(response, 200, {
+      root: result.root,
+      restored_files: result.files.map((file) => toPosix(relative(result.root, file))).filter((file) => !file.startsWith(".."))
+    });
+    return;
+  }
+  if (path === "/validate") {
+    const errors = await validateProject(requiredString(body.output, "output"));
+    sendJson(response, 200, { ok: errors.length === 0, errors });
+    return;
+  }
+  if (path === "/artifacts") {
+    const root = await existingRoot(requiredString(body.output, "output"));
+    const artifacts = await artifactEntries(root);
+    sendJson(response, 200, { root, artifacts, tree: artifactTree(artifacts) });
+    return;
+  }
+  if (path === "/artifacts/read") {
+    const root = await existingRoot(requiredString(body.output, "output"));
+    const path = safeChild(root, requiredString(body.path, "path"));
+    const pathStat = await stat(path).catch(() => null);
+    if (!pathStat?.isFile()) throw new HttpError(404, "artifact not found");
+    let content = "";
+    try {
+      content = await readFile(path, "utf8");
+    } catch {
+      throw new HttpError(415, "artifact is not UTF-8 text");
+    }
+    sendJson(response, 200, { path: toPosix(relative(root, path)), bytes: pathStat.size, content });
+    return;
+  }
+  if (path === "/literature/search") {
+    const [records, tasks] = searchLiterature(requiredString(body.query, "query"), {
+      allowNetwork: Boolean(body.allow_network),
+      limit: numberValue(body.limit, 10)
+    });
+    sendJson(response, 200, { records, tasks });
+    return;
+  }
+  if (path === "/score") {
+    const diagnosis = diagnoseIdea(requiredString(body.idea, "idea"), { requestedDomains: stringArray(body.domains) });
+    sendJson(response, 200, {
+      primary_route: diagnosis.routes[0]?.domain.key,
+      raw_score: diagnosis.raw_score.total,
+      revised_score: diagnosis.revised_score.total,
+      evidence_gate: evidencePayload(diagnosis.evidence_gate),
+      security: diagnosis.security_assessment,
+      required_evidence: diagnosis.required_evidence
+    });
+    return;
+  }
+  if (path === "/reviewer/simulate" || path === "/reviewer") {
+    const diagnosis = diagnoseIdea(requiredString(body.idea, "idea"), { requestedDomains: stringArray(body.domains) });
+    const artifacts = runWorkflow(diagnosis);
+    sendJson(response, 200, {
+      artifact: "docs/workflow/reviewer_simulation.md",
+      content: artifacts["docs/workflow/reviewer_simulation.md"]
+    });
+    return;
+  }
+  if (path === "/rebuttal") {
+    const diagnosis = diagnoseIdea(stringOrNull(body.idea) || "local research idea", { requestedDomains: stringArray(body.domains) });
+    const artifacts = runWorkflow(diagnosis);
+    const reviews = stringArray(body.reviews);
+    sendJson(response, 200, {
+      artifact: "docs/workflow/rebuttal_plan.md",
+      review_count: reviews.filter((review) => review.trim()).length,
+      content: artifacts["docs/workflow/rebuttal_plan.md"],
+      clusters: reviewClusters(reviews)
+    });
+    return;
+  }
+  if (path === "/provider/settings") {
+    const status = await openaiCodexOAuthProvider.status();
+    sendJson(response, 200, { provider: "openai-codex", schema: providerSchema(), report: safeProviderReport("openai-codex"), model_catalog: loadCodexModelCatalog(), auth: status });
+    return;
+  }
+  if (path === "/github/dry-run") {
+    sendJson(
+      response,
+      200,
+      await buildGithubExportPlan(requiredString(body.output, "output"), {
+        repoName: stringOrNull(body.repo_name) ?? undefined,
+        createIssues: body.create_issues !== false
+      })
+    );
+    return;
+  }
+  throw new HttpError(404, "route not found");
+}
+
+async function readJson(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  if (!chunks.length) return {};
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  } catch {
+    throw new HttpError(400, "invalid JSON body");
+  }
+}
+
+function sendJson(response: ServerResponse, statusCode: number, payload: JsonValue | Record<string, unknown>): void {
+  const body = statusCode === 204 ? "" : `${JSON.stringify(payload)}\n`;
+  response.statusCode = statusCode;
+  response.setHeader("content-type", "application/json; charset=utf-8");
+  response.setHeader("access-control-allow-origin", "*");
+  response.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
+  response.setHeader("access-control-allow-headers", "content-type");
+  response.end(body);
+}
+
+async function existingRoot(output: string): Promise<string> {
+  const root = resolve(output);
+  const pathStat = await stat(root).catch(() => null);
+  if (!pathStat?.isDirectory()) throw new HttpError(404, "output not found");
+  return root;
+}
+
+function safeChild(root: string, relativePath: string): string {
+  const child = resolve(root, relativePath);
+  const rel = relative(root, child);
+  if (!rel || rel.startsWith("..") || resolve(rel) === rel) throw new HttpError(400, "path escapes output root");
+  return child;
+}
+
+async function artifactEntries(root: string): Promise<Array<{ path: string; bytes: number; text: boolean }>> {
+  const entries: Array<{ path: string; bytes: number; text: boolean }> = [];
+  async function walk(dir: string): Promise<void> {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(path);
+      } else if (entry.isFile()) {
+        const pathStat = await stat(path);
+        entries.push({ path: toPosix(relative(root, path)), bytes: pathStat.size, text: await looksText(path) });
+      }
+    }
+  }
+  await walk(root);
+  return entries.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+function artifactTree(entries: Array<{ path: string; bytes: number; text: boolean }>): Record<string, unknown> {
+  const tree: Record<string, unknown> = {};
+  for (const entry of entries) {
+    const parts = entry.path.split("/");
+    let cursor: Record<string, unknown> = tree;
+    for (const part of parts.slice(0, -1)) {
+      const next = cursor[part];
+      if (!next || typeof next !== "object" || Array.isArray(next)) cursor[part] = {};
+      cursor = cursor[part] as Record<string, unknown>;
+    }
+    cursor[parts[parts.length - 1]!] = { bytes: entry.bytes, text: entry.text };
+  }
+  return tree;
+}
+
+async function looksText(path: string): Promise<boolean> {
+  try {
+    await readFile(path, "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function evidencePayload(gate: Parameters<typeof submissionReady>[0]): Record<string, unknown> {
+  return {
+    submission_ready: submissionReady(gate),
+    status: submissionReady(gate) ? "ready" : "blocked",
+    blocking_reasons: blockingReasons(gate)
+  };
+}
+
+function reviewClusters(reviews: string[]): Record<string, string[]> {
+  const clusters: Record<string, string[]> = {
+    novelty: [],
+    soundness: [],
+    significance: [],
+    reproducibility: [],
+    ethics: [],
+    other: []
+  };
+  for (const review of reviews) {
+    const lowered = review.toLowerCase();
+    const key = lowered.includes("novel") ? "novelty" : lowered.includes("sound") || lowered.includes("experiment") ? "soundness" : lowered.includes("significance") || lowered.includes("impact") ? "significance" : lowered.includes("reproduc") ? "reproducibility" : lowered.includes("ethic") || lowered.includes("privacy") ? "ethics" : "other";
+    clusters[key]!.push(review);
+  }
+  return clusters;
+}
+
+function requiredString(value: unknown, name: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new HttpError(400, `${name} is required`);
+  return value;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
+function numberValue(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function toPosix(value: string): string {
+  return value.split("\\").join("/");
+}
+
+class HttpError extends Error {
+  constructor(
+    readonly statusCode: number,
+    message: string
+  ) {
+    super(message);
+    this.name = "HttpError";
+  }
+}

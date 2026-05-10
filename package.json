@@ -1,0 +1,52 @@
+{
+  "name": "idea2repo",
+  "version": "0.1.0",
+  "description": "Generate CCF-A readiness research repositories from early research ideas.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "idea2repo": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "data",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "npm@10.9.3",
+  "workspaces": [
+    "web"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"test/*.test.ts\"",
+    "test:integration": "npm run build && node --import tsx --test \"test/integration/*.test.ts\"",
+    "pack:dry-run": "npm pack --dry-run",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build && npm run pack:dry-run",
+    "web:dev": "npm run dev -w idea2repo-web",
+    "web:typecheck": "npm run typecheck -w idea2repo-web",
+    "web:build": "npm run build -w idea2repo-web",
+    "web:test": "npm test -w idea2repo-web"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.41",
+    "ajv": "^8.17.1",
+    "chalk": "^5.6.2",
+    "ink": "^5.2.1",
+    "ink-text-input": "^6.0.0",
+    "open": "^10.2.0",
+    "react": "^18.3.1",
+    "undici": "^8.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.0",
+    "@types/react": "^18.3.23",
+    "tsup": "^8.5.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
