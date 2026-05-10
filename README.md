@@ -15,13 +15,66 @@ The task model follows the public shape of local coding agents:
 
 Idea2Repo adapts those patterns for research work: one idea becomes one resumable repo with manifests, run logs, evidence matrices, provider rules, and publish guardrails.
 
+## Install
+
+From the repository root:
+
+```bash
+uv tool install --editable .
+```
+
+Then start the CLI from anywhere:
+
+```bash
+idea2repo
+```
+
+To reinstall after dependency or entrypoint changes:
+
+```bash
+uv tool install --force --editable .
+```
+
 ## Quick Start
+
+Start the Codex-style interactive CLI:
+
+```bash
+uv run idea2repo
+```
+
+On first run, Idea2Repo checks its own OpenAI/Codex OAuth login under `~/.idea2repo`. If you are not logged in, it prompts you to complete a browser OAuth flow. After login, it asks for your research idea and then guides you through domain, timeline, resources, and output directory:
+
+```text
+Research idea >
+Target domain [auto] >
+Timeline weeks [12] >
+Resources [none] >
+Output directory [generated_repos/...]
+```
+
+Interactive slash commands are intentionally small:
+
+```text
+/help
+/logout
+/status
+/exit
+```
+
+Idea2Repo does not read `~/.codex` auth files or browser cookies. It stores OAuth metadata and credentials under `~/.idea2repo/agent/codex`, and generated repos contain only non-sensitive generation metadata.
+
+## Advanced / Automation
+
+Scripted generation remains available for CI and repeatable workflows.
 
 Cross-shell single-line form:
 
 ```bash
 uv run idea2repo generate "LLM agents need long-term memory compression" --domain "AI/LLM Agent" --weeks 12 --resource single-researcher --resource no-gpu --output generated_repos/demo
 ```
+
+Use `--offline` to force the deterministic fallback instead of calling the OAuth Codex responses provider. Use `--provider openai-codex-cli` to explicitly route through the official Codex CLI wrapper.
 
 PowerShell multi-line form:
 
@@ -52,6 +105,8 @@ uv run idea2repo status --output generated_repos/demo
 uv run idea2repo validate --output generated_repos/demo
 uv run idea2repo resume --output generated_repos/demo
 uv run idea2repo doctor
+uv run idea2repo auth status
+uv run idea2repo provider list
 uv run idea2repo venues validate
 uv run idea2repo provider show
 uv run idea2repo github dry-run --output generated_repos/demo
@@ -105,15 +160,11 @@ Dry-run paths are preferred. GitHub export previews issue payloads by default; p
 
 ## Provider Rules
 
-Supported provider modes are:
+The default provider is `openai-codex-oauth` with API shape `openai-codex-responses`: Idea2Repo performs its own OpenAI/Codex OAuth login, stores credentials under `~/.idea2repo/agent/codex/credentials.json`, calls the experimental Codex responses backend, and validates the final message against its `ResearchAnalysis` schema.
 
-- `offline`
-- `openai_account`
-- `openai_api_key`
-- `enterprise_gateway`
-- `local_model`
+`openai-codex-cli` remains available as an explicit provider, and the deterministic `offline` provider is available only through `--offline` or `--provider offline`. Codex or schema failures stop generation instead of silently falling back.
 
-OpenAI account login is only an official-boundary placeholder. The project does not scrape cookies, call private ChatGPT endpoints, or write tokens into repo artifacts. Use environment variables or OS credential storage for real credentials. Generated `.env.example` files contain empty placeholders only.
+The generated manifest records `analysis_source`, `provider_id`, `api_shape`, Codex model/version when available, schema version, and fallback reason. It never records tokens, Authorization headers, OAuth file paths, or private provider responses.
 
 ## Literature Policy
 

@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from idea2repo.codex_agent import CodexAnalysisResult, CodexExecutionError, ResearchAnalysis
 from idea2repo.generator import generate_research_repo, resume_research_repo, slugify
 from idea2repo.literature import PaperRecord
 from idea2repo.permissions import Operation, PermissionDeniedError, PermissionPolicy
@@ -45,6 +46,7 @@ class GeneratorTests(unittest.TestCase):
                 timeline_weeks=16,
                 resources=["single-researcher", "no-gpu"],
                 created_at="2026-05-10",
+                offline=True,
             )
 
             required_paths = [
@@ -192,7 +194,7 @@ class GeneratorTests(unittest.TestCase):
                 self.assertIn(ignored, dockerignore)
 
             env_example = (output / ".env.example").read_text()
-            self.assertIn("IDEA2REPO_PROVIDER=offline", env_example)
+            self.assertIn("IDEA2REPO_PROVIDER=openai-codex-oauth", env_example)
             self.assertIn("Supported modes", env_example)
             self.assertIn("OPENAI_API_KEY=", env_example)
 
@@ -254,9 +256,9 @@ class GeneratorTests(unittest.TestCase):
             self.assertIn("no-gpu", project_yaml)
             self.assertIn("raw_idea_score", project_yaml)
             self.assertIn("revised_plan_score", project_yaml)
-            self.assertIn("openai_account_login", project_yaml)
-            self.assertIn("enterprise_account", project_yaml)
-            self.assertIn("local_model", project_yaml)
+            self.assertIn("idea2repo_oauth", project_yaml)
+            self.assertIn("idea2repo_oauth", project_yaml)
+            self.assertIn("openai-codex-cli", project_yaml)
             self.assertIn("windows", project_yaml)
             self.assertIn("linux", project_yaml)
             self.assertIn("macos", project_yaml)
@@ -284,8 +286,90 @@ class GeneratorTests(unittest.TestCase):
             self.assertIn("Offline mode", provider_config)
             self.assertNotIn("sk-", provider_config)
             provider_schema = (output / "docs/runtime/provider_schema.json").read_text()
-            self.assertIn("openai_api_key", provider_schema)
+            self.assertIn("openai-codex-oauth", provider_schema)
             self.assertIn("secret_policy", provider_schema)
+
+    def test_generate_research_repo_uses_codex_analysis_when_available(self) -> None:
+        class FakeCodexClient:
+            def analyze_idea(self, *args, **kwargs):
+                return CodexAnalysisResult(
+                    analysis=ResearchAnalysis.model_validate(_analysis_payload()),
+                    provider_id="openai-codex-cli",
+                    api_shape="codex-exec-json",
+                    codex_version="codex-cli test",
+                    codex_model="gpt-test",
+                    stdout_events=(),
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "codex-backed"
+            result = generate_research_repo(
+                "agent memory benchmark",
+                output,
+                created_at="2026-05-10",
+                codex_client=FakeCodexClient(),  # type: ignore[arg-type]
+                reasoning_effort="high",
+                derived_config={"timeline_weeks": 12, "output_slug": "codex-backed"},
+                discussion_assumptions=["Assume no special hardware."],
+            )
+
+            self.assertEqual(result.analysis_source, "codex")
+            self.assertEqual(result.diagnosis.raw_score.total, 41)
+            self.assertEqual(result.diagnosis.revised_score.total, 73)
+            report = (output / "docs/diagnosis/ccf_a_readiness_report.md").read_text()
+            self.assertIn("Analysis source: Codex (openai-codex-cli, codex-exec-json)", report)
+            self.assertIn("Agent memory benchmark", report)
+            survey = (output / "docs/survey/survey.md").read_text()
+            self.assertIn("Memory benchmarks", survey)
+            manifest = (output / ".idea2repo/manifest.json").read_text()
+            self.assertIn('"analysis_source": "codex"', manifest)
+            self.assertIn('"provider_id": "openai-codex-cli"', manifest)
+            self.assertIn('"reasoning_effort": "high"', manifest)
+            self.assertIn('"discussion_assumptions"', manifest)
+
+    def test_generate_research_repo_defaults_to_oauth_provider(self) -> None:
+        class FakeOAuthClient:
+            def analyze_idea(self, *args, **kwargs):
+                return CodexAnalysisResult(
+                    analysis=ResearchAnalysis.model_validate(_analysis_payload()),
+                    provider_id="openai-codex-oauth",
+                    api_shape="openai-codex-responses",
+                    codex_version=None,
+                    codex_model="codex",
+                    stdout_events=(),
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "oauth-backed"
+            with patch("idea2repo.generator.CodexOAuthClient", return_value=FakeOAuthClient()):
+                result = generate_research_repo(
+                    "agent memory benchmark",
+                    output,
+                    created_at="2026-05-10",
+                )
+
+            self.assertEqual(result.provider_id, "openai-codex-oauth")
+            self.assertEqual(result.api_shape, "openai-codex-responses")
+            manifest = (output / ".idea2repo/manifest.json").read_text()
+            self.assertIn('"provider_id": "openai-codex-oauth"', manifest)
+            self.assertNotIn("access-secret", manifest)
+
+    def test_generate_research_repo_fails_without_offline_fallback(self) -> None:
+        class FailingOAuthClient:
+            def analyze_idea(self, *args, **kwargs):
+                raise CodexExecutionError("provider failed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "failed"
+            with patch("idea2repo.generator.CodexOAuthClient", return_value=FailingOAuthClient()):
+                with self.assertRaisesRegex(CodexExecutionError, "provider failed"):
+                    generate_research_repo(
+                        "agent memory benchmark",
+                        output,
+                        created_at="2026-05-10",
+                    )
+
+            self.assertFalse((output / "README.md").exists())
 
     def test_generated_provider_docs_ignore_ambient_provider_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -298,7 +382,7 @@ class GeneratorTests(unittest.TestCase):
                     "OPENAI_BASE_URL": "https://private.example.test/v1",
                 },
             ):
-                generate_research_repo("agent memory compression", output, created_at="2026-05-10")
+                generate_research_repo("agent memory compression", output, created_at="2026-05-10", offline=True)
 
             provider_config = (output / "docs/runtime/provider_config.md").read_text()
             self.assertIn("- Mode: offline", provider_config)
@@ -313,7 +397,7 @@ class GeneratorTests(unittest.TestCase):
     def test_generated_python_scaffold_runs_smoke_tests(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "smoke"
-            generate_research_repo("agent memory compression", output, created_at="2026-05-10")
+            generate_research_repo("agent memory compression", output, created_at="2026-05-10", offline=True)
 
             completed = subprocess.run(
                 ["uv", "run", "python", "-m", "unittest", "discover", "-s", "tests"],
@@ -328,7 +412,7 @@ class GeneratorTests(unittest.TestCase):
     def test_generate_research_repo_writes_ts_stack(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "ts-stack"
-            generate_research_repo("agent memory compression", output, stack="ts", created_at="2026-05-10")
+            generate_research_repo("agent memory compression", output, stack="ts", created_at="2026-05-10", offline=True)
 
             self.assertTrue((output / "package.json").exists())
             self.assertTrue((output / "tsconfig.json").exists())
@@ -347,7 +431,7 @@ class GeneratorTests(unittest.TestCase):
             self.skipTest("npm is not available on PATH")
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "ts-smoke"
-            generate_research_repo("agent memory compression", output, stack="ts", created_at="2026-05-10")
+            generate_research_repo("agent memory compression", output, stack="ts", created_at="2026-05-10", offline=True)
 
             install = subprocess.run(
                 f'"{npm}" install',
@@ -372,7 +456,7 @@ class GeneratorTests(unittest.TestCase):
     def test_resume_restores_ts_stack_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "ts-resume"
-            generate_research_repo("agent memory compression", output, stack="ts", created_at="2026-05-10")
+            generate_research_repo("agent memory compression", output, stack="ts", created_at="2026-05-10", offline=True)
             (output / "package.json").unlink()
             (output / "src/index.ts").unlink()
 
@@ -418,6 +502,7 @@ class GeneratorTests(unittest.TestCase):
                 ],
                 literature_tasks=["Network disabled fallback should not be needed"],
                 created_at="2026-05-10",
+                offline=True,
             )
 
             references = (output / "docs/reference/references.bib").read_text()
@@ -449,6 +534,7 @@ class GeneratorTests(unittest.TestCase):
                 output,
                 verified_papers=[paper],
                 created_at="2026-05-10",
+                offline=True,
             )
 
             references = (output / "docs/reference/references.bib").read_text()
@@ -461,7 +547,7 @@ class GeneratorTests(unittest.TestCase):
     def test_resume_restores_missing_files_without_overwriting_user_edits(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "resume-test"
-            generate_research_repo("agent memory compression", output, created_at="2026-05-10")
+            generate_research_repo("agent memory compression", output, created_at="2026-05-10", offline=True)
             readme = output / "README.md"
             readme.write_text("user edited readme", encoding="utf-8")
             survey = output / "docs/survey/survey.md"
@@ -479,7 +565,7 @@ class GeneratorTests(unittest.TestCase):
     def test_resume_reuses_manifest_state_for_sensitive_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "resume-state"
-            generate_research_repo("agent memory compression", output, created_at="2001-01-01")
+            generate_research_repo("agent memory compression", output, created_at="2001-01-01", offline=True)
             for relative_path in ("project.yaml", "docs/runtime/workspace_snapshot.md"):
                 (output / relative_path).unlink()
 
@@ -523,12 +609,13 @@ class GeneratorTests(unittest.TestCase):
                     output,
                     force=True,
                     permission_policy=PermissionPolicy(allow_overwrite=False),
+                    offline=True,
                 )
 
     def test_denied_force_resume_does_not_write_run_log(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "resume-denied"
-            generate_research_repo("agent memory compression", output, created_at="2026-05-10")
+            generate_research_repo("agent memory compression", output, created_at="2026-05-10", offline=True)
             run_log = output / ".idea2repo/run_log.jsonl"
             before = run_log.read_text(encoding="utf-8")
 
@@ -600,6 +687,67 @@ class GeneratorTests(unittest.TestCase):
         )
         for pattern in forbidden_patterns:
             self.assertIsNone(re.search(pattern, text), pattern)
+
+
+def _analysis_payload() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "idea_summary": "Agent memory benchmark",
+        "problem_statement": "Agents need verifiable long-horizon memory evaluation.",
+        "domain_route": {
+            "key": "ai_llm_agent",
+            "label": "AI/LLM Agent",
+            "candidate_venues": ["NeurIPS", "ICLR"],
+            "rationale": "The idea centers on agent evaluation.",
+        },
+        "raw_score": {
+            "total": 41,
+            "rationale": "Novelty and evidence are not yet grounded.",
+            "cap_reasons": ["missing recent related work"],
+        },
+        "revised_score": {
+            "total": 73,
+            "rationale": "A benchmark-first plan could be feasible.",
+            "cap_reasons": ["needs strong baselines"],
+        },
+        "feasibility": "Feasible if scoped to a small benchmark first.",
+        "risks": ["Related work may already cover the core idea."],
+        "related_work_queries": ["agent memory benchmark related work"],
+        "paper_clusters": [
+            {
+                "name": "Memory benchmarks",
+                "core_problem": "Evaluate long-horizon memory behavior.",
+                "method_pattern": "Benchmark and ablation study.",
+                "representative_papers": [],
+                "collision_risk": "Unknown until verified.",
+                "verification_queries": ["long horizon agent memory benchmark"],
+            }
+        ],
+        "novelty_gaps": ["Tie memory compression to falsifiable task failures."],
+        "revised_plan": {
+            "summary": "Build a benchmark-first memory compression study.",
+            "key_changes": ["Start from related-work collision checks."],
+            "evidence_required": ["Verified related-work matrix."],
+            "feasibility": "Feasible with narrow scope.",
+        },
+        "experiment_plan": {
+            "baselines": ["long-context baseline"],
+            "datasets": ["source-needed benchmark"],
+            "metrics": ["task success metric"],
+            "ablations": ["without compression"],
+            "failure_cases": ["memory overwrite failures"],
+            "reproducibility_checks": ["seed and config logging"],
+        },
+        "timeline": [
+            {
+                "week": "1",
+                "deliverable": "Verify related work.",
+                "exit_criteria": "Related-work matrix has source URLs.",
+            }
+        ],
+        "reviewer_simulation": "A reviewer will ask for stronger baselines.",
+        "artifact_contents": {},
+    }
 
 
 if __name__ == "__main__":

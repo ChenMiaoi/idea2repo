@@ -11,7 +11,7 @@ class GithubExportTests(unittest.TestCase):
     def test_dry_run_generates_sanitized_issue_payloads(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "github export"
-            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10")
+            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10", offline=True)
 
             plan = build_github_export_plan(output, repo_name="demo repo")
             payload = plan.public_dict()
@@ -36,7 +36,7 @@ class GithubExportTests(unittest.TestCase):
     def test_dry_run_refuses_secret_like_issue_payloads(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "secret-export"
-            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10")
+            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10", offline=True)
             todo = output / "docs/execution_plan/todo.md"
             todo.write_text("- Do not export sk-live-secret\n", encoding="utf-8")
 
@@ -47,7 +47,7 @@ class GithubExportTests(unittest.TestCase):
     def test_publish_is_denied_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "denied"
-            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10")
+            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10", offline=True)
             plan = build_github_export_plan(output)
             commands: list[list[str]] = []
 
@@ -59,7 +59,7 @@ class GithubExportTests(unittest.TestCase):
     def test_publish_uses_mocked_gh_when_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "allowed"
-            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10")
+            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10", offline=True)
             plan = build_github_export_plan(output, repo_name="allowed")
             calls: list[tuple[list[str], Path]] = []
 
@@ -90,7 +90,7 @@ class GithubExportTests(unittest.TestCase):
     def test_publish_stages_only_candidate_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "candidate-stage"
-            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10")
+            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10", offline=True)
             (output / ".gitignore").write_text("# user removed ignore rules\n", encoding="utf-8")
             (output / "leaked.key").write_text("Authorization: Bearer secret-token", encoding="utf-8")
             plan = build_github_export_plan(output, create_issues=False)
@@ -110,7 +110,7 @@ class GithubExportTests(unittest.TestCase):
     def test_publish_does_not_stage_unscanned_binary_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "binary-stage"
-            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10")
+            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10", offline=True)
             (output / ".gitignore").write_text("# user removed ignore rules\n", encoding="utf-8")
             (output / "artifact.bin").write_bytes(b"\xff\xfe\x00\x81")
             plan = build_github_export_plan(output, create_issues=False)
@@ -130,7 +130,7 @@ class GithubExportTests(unittest.TestCase):
     def test_publish_scans_repo_files_before_any_commands(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "secret-file"
-            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10")
+            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10", offline=True)
             (output / "README.md").write_text("Authorization: Bearer secret-token", encoding="utf-8")
             plan = build_github_export_plan(output, create_issues=False)
             calls: list[tuple[list[str], Path]] = []
@@ -155,7 +155,7 @@ class GithubExportTests(unittest.TestCase):
             with self.subTest(relative_path=relative_path):
                 with tempfile.TemporaryDirectory() as tmp:
                     output = Path(tmp) / "secret-publishable-readme"
-                    generate_research_repo("agent memory benchmark", output, created_at="2026-05-10")
+                    generate_research_repo("agent memory benchmark", output, created_at="2026-05-10", offline=True)
                     (output / relative_path).write_text(
                         "Authorization: Bearer secret-token",
                         encoding="utf-8",
@@ -186,7 +186,7 @@ class GithubExportTests(unittest.TestCase):
             with self.subTest(content=content):
                 with tempfile.TemporaryDirectory() as tmp:
                     output = Path(tmp) / "structured-secret"
-                    generate_research_repo("agent memory benchmark", output, created_at="2026-05-10")
+                    generate_research_repo("agent memory benchmark", output, created_at="2026-05-10", offline=True)
                     (output / "README.md").write_text(content, encoding="utf-8")
                     plan = build_github_export_plan(output, create_issues=False)
                     calls: list[tuple[list[str], Path]] = []
@@ -203,7 +203,7 @@ class GithubExportTests(unittest.TestCase):
     def test_publish_skips_sensitive_local_files_even_when_gitignore_is_edited(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "edited-gitignore"
-            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10")
+            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10", offline=True)
             (output / ".gitignore").write_text("# user edited ignore rules\n", encoding="utf-8")
             (output / ".env").write_text("GITHUB_TOKEN=ghp_local_token", encoding="utf-8")
             (output / "Credentials.JSON").write_text('{"token":"local"}', encoding="utf-8")
@@ -252,7 +252,7 @@ class GithubExportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "symlink-source"
             external = Path(tmp) / "outside.txt"
-            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10")
+            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10", offline=True)
             external.write_text("outside local content", encoding="utf-8")
             link = output / "outside-link.txt"
             try:
@@ -280,7 +280,7 @@ class GithubExportTests(unittest.TestCase):
     def test_publish_ignores_existing_source_git_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "source-git-state"
-            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10")
+            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10", offline=True)
             (output / ".git").mkdir()
             (output / ".git" / "index").write_bytes(b"pretend staged secret")
             plan = build_github_export_plan(output, create_issues=False)
@@ -298,7 +298,7 @@ class GithubExportTests(unittest.TestCase):
     def test_publish_ignores_case_variant_sensitive_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "case-variant-dirs"
-            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10")
+            generate_research_repo("agent memory benchmark", output, created_at="2026-05-10", offline=True)
             (output / ".GIT").mkdir()
             (output / ".GIT" / "config").write_text("pretend config", encoding="utf-8")
             (output / ".VENv").mkdir()

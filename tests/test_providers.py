@@ -12,10 +12,10 @@ from idea2repo.providers import (
 
 
 class ProviderTests(unittest.TestCase):
-    def test_default_provider_is_offline(self) -> None:
+    def test_default_provider_is_oauth(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             config = load_provider_config()
-        self.assertEqual(config.mode, ProviderMode.OFFLINE)
+        self.assertEqual(config.mode, ProviderMode.OPENAI_CODEX_OAUTH)
 
     def test_invalid_provider_mode_has_clear_error(self) -> None:
         with patch.dict("os.environ", {"IDEA2REPO_PROVIDER": "bad"}, clear=True):
@@ -40,16 +40,17 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn("sk-test-secret-value", report)
         self.assertIn("http...t/v1 (redacted)", report)
 
-    def test_official_account_mode_documents_boundary(self) -> None:
-        report = safe_provider_report({"IDEA2REPO_PROVIDER": "openai_account"})
-        self.assertIn("never capture cookies", report)
-        self.assertIn("official OpenAI account login", report)
+    def test_oauth_mode_documents_boundary(self) -> None:
+        report = safe_provider_report({"IDEA2REPO_PROVIDER": "openai-codex-oauth"})
+        self.assertIn("~/.idea2repo", report)
+        self.assertIn("never read ~/.codex", report)
 
     def test_provider_schema_lists_secret_policy(self) -> None:
         schema = provider_schema()
         self.assertIn("secret_policy", schema)
-        self.assertIn("openai_api_key", schema["modes"])
+        self.assertIn("openai-codex-oauth", schema["modes"])
         self.assertIn("OPENAI_API_KEY", schema["secret_policy"]["redacted_environment"])
+        self.assertEqual(schema["secret_policy"]["secret_storage"], "file_credentials")
 
     def test_secret_detector_catches_common_material(self) -> None:
         self.assertTrue(contains_secret_material("Authorization: Bearer abc"))

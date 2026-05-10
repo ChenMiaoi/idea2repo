@@ -51,6 +51,7 @@ def write_manifest(
     files: list[Path],
     permissions: dict[str, bool],
     workspace: dict[str, object],
+    generation: dict[str, object] | None = None,
 ) -> Path:
     state_dir = root / STATE_DIR
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +70,7 @@ def write_manifest(
         },
         "permissions": permissions,
         "workspace": workspace,
+        "generation": generation or {},
         "artifacts": [
             artifact_record(root, file_path)
             for file_path in sorted(files)

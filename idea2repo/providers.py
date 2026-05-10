@@ -7,7 +7,10 @@ import os
 import re
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Mapping
+
+from .auth import STATE_HOME_ENV, AuthProvider
 
 
 SECRET_ENV_VARS = (
@@ -19,8 +22,10 @@ SECRET_ENV_VARS = (
 
 
 class ProviderMode(str, Enum):
-    """Supported provider modes without private login or cookie scraping."""
+    """Supported provider modes without reading Codex auth files or browser cookies."""
 
+    OPENAI_CODEX_OAUTH = "openai-codex-oauth"
+    OPENAI_CODEX_CLI = "openai-codex-cli"
     OFFLINE = "offline"
     OPENAI_ACCOUNT = "openai_account"
     OPENAI_API_KEY = "openai_api_key"
@@ -38,11 +43,15 @@ class ProviderConfig:
     local_model_endpoint: str | None = None
 
     def public_dict(self, env: Mapping[str, str] | None = None) -> dict[str, object]:
+        explicit_env = env is not None
         env = os.environ if env is None else env
+        auth_provider = _auth_provider_for_env(env, explicit_env)
+        auth_session = auth_provider.current_session()
         return {
             "mode": self.mode.value,
             "auth_boundary": auth_boundary(self.mode),
-            "openai_api_key": _presence(env, "OPENAI_API_KEY"),
+            "openai_account": _openai_account_status(auth_session.public_dict()),
+            "openai_api_key": _api_key_status(env, auth_session.public_dict()),
             "openai_base_url": _redact(self.openai_base_url or env.get("OPENAI_BASE_URL")),
             "enterprise_gateway_url": _redact(
                 self.enterprise_gateway_url or env.get("ENTERPRISE_GATEWAY_URL")
@@ -55,7 +64,7 @@ class ProviderConfig:
 
 def load_provider_config(env: Mapping[str, str] | None = None) -> ProviderConfig:
     env = os.environ if env is None else env
-    raw_mode = env.get("IDEA2REPO_PROVIDER", ProviderMode.OFFLINE.value)
+    raw_mode = env.get("IDEA2REPO_PROVIDER", ProviderMode.OPENAI_CODEX_OAUTH.value)
     try:
         mode = ProviderMode(raw_mode)
     except ValueError as exc:
@@ -73,10 +82,19 @@ def validate_provider_config(
     config: ProviderConfig | None = None,
     env: Mapping[str, str] | None = None,
 ) -> tuple[str, ...]:
+    explicit_env = env is not None
     env = os.environ if env is None else env
     config = config or load_provider_config(env)
     errors: list[str] = []
-    if config.mode == ProviderMode.OPENAI_API_KEY and not env.get("OPENAI_API_KEY"):
+    auth_provider = _auth_provider_for_env(env, explicit_env)
+    auth_session = auth_provider.current_session()
+    if config.mode in {ProviderMode.OPENAI_CODEX_OAUTH, ProviderMode.OPENAI_ACCOUNT} and not auth_session.is_authenticated:
+        errors.append(f"OpenAI account login is required for {config.mode.value} provider mode")
+    if config.mode in {ProviderMode.OPENAI_CODEX_OAUTH, ProviderMode.OPENAI_ACCOUNT} and auth_session.is_expired:
+        errors.append("OpenAI account login is expired; run idea2repo auth login")
+    if config.mode == ProviderMode.OPENAI_API_KEY and not (
+        env.get("OPENAI_API_KEY") or auth_session.mode == "openai_api_key"
+    ):
         errors.append("OPENAI_API_KEY is required for openai_api_key provider mode")
     if config.mode == ProviderMode.ENTERPRISE_GATEWAY and not (
         config.enterprise_gateway_url or env.get("ENTERPRISE_GATEWAY_URL")
@@ -90,10 +108,16 @@ def validate_provider_config(
 
 
 def auth_boundary(mode: ProviderMode) -> str:
+    if mode == ProviderMode.OPENAI_CODEX_OAUTH:
+        return (
+            "Use Idea2Repo-managed OpenAI OAuth credentials stored under ~/.idea2repo; "
+            "never read ~/.codex auth files or browser cookies."
+        )
+    if mode == ProviderMode.OPENAI_CODEX_CLI:
+        return "Use the official Codex CLI as an explicit provider."
     if mode == ProviderMode.OPENAI_ACCOUNT:
         return (
-            "Use only official OpenAI account login mechanisms when available; "
-            "never capture cookies or call private ChatGPT endpoints."
+            "Legacy alias for Idea2Repo-managed OpenAI account OAuth."
         )
     if mode == ProviderMode.OPENAI_API_KEY:
         return "Read API keys from environment or OS credential storage; never write them to repo files."
@@ -107,7 +131,7 @@ def auth_boundary(mode: ProviderMode) -> str:
 def provider_schema() -> dict[str, object]:
     return {
         "version": 1,
-        "default": ProviderMode.OFFLINE.value,
+        "default": ProviderMode.OPENAI_CODEX_OAUTH.value,
         "modes": {
             mode.value: {
                 "auth_boundary": auth_boundary(mode),
@@ -124,6 +148,11 @@ def provider_schema() -> dict[str, object]:
                 "browser profile state",
             ],
             "redacted_environment": list(SECRET_ENV_VARS),
+            "user_state_directory": "~/.idea2repo/agent/codex",
+            "auth_metadata_file": "~/.idea2repo/agent/codex/auth.json",
+            "config_file": "~/.idea2repo/agent/codex/config.json",
+            "credentials_file": "~/.idea2repo/agent/codex/credentials.json",
+            "secret_storage": "file_credentials",
         },
     }
 
@@ -133,10 +162,12 @@ def provider_schema_json() -> str:
 
 
 def safe_provider_report(env: Mapping[str, str] | None = None) -> str:
-    env = os.environ if env is None else env
-    config = load_provider_config(env)
-    errors = validate_provider_config(config, env)
-    summary = config.public_dict(env)
+    explicit_env = env is not None
+    active_env = os.environ if env is None else env
+    config = load_provider_config(active_env)
+    report_env = active_env if explicit_env else None
+    errors = validate_provider_config(config, report_env)
+    summary = config.public_dict(report_env)
     lines = [
         "# Provider Configuration",
         "",
@@ -144,6 +175,7 @@ def safe_provider_report(env: Mapping[str, str] | None = None) -> str:
         "",
         f"- Mode: {summary['mode']}",
         f"- Boundary: {summary['auth_boundary']}",
+        f"- OpenAI account: {summary['openai_account']}",
         f"- OPENAI_API_KEY: {summary['openai_api_key']}",
         f"- OPENAI_BASE_URL: {summary['openai_base_url']}",
         f"- ENTERPRISE_GATEWAY_URL: {summary['enterprise_gateway_url']}",
@@ -162,8 +194,9 @@ def safe_provider_report(env: Mapping[str, str] | None = None) -> str:
             "## Credential Rules",
             "",
             "- Do not store tokens, cookies, API keys, or private provider responses in this repository.",
-            "- OpenAI account login is an official-boundary placeholder; do not scrape browser cookies.",
-            "- Prefer OS credential storage or environment variables for secrets.",
+            "- Store Idea2Repo auth metadata under ~/.idea2repo/agent/codex.",
+            "- Store access tokens and refresh tokens in ~/.idea2repo/agent/codex/credentials.json.",
+            "- Never read ~/.codex auth files or scrape browser cookies.",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -225,3 +258,23 @@ def _redact(value: str | None) -> str:
     if len(value) <= 8:
         return "<redacted>"
     return f"{value[:4]}...{value[-4:]} (redacted)"
+
+
+def _api_key_status(env: Mapping[str, str], session: Mapping[str, object]) -> str:
+    if env.get("OPENAI_API_KEY") or session.get("mode") == "openai_api_key":
+        return "set"
+    return "unset"
+
+
+def _openai_account_status(session: Mapping[str, object]) -> str:
+    if session.get("authenticated") is True and session.get("mode") == "openai_account":
+        label = str(session.get("account_label") or "logged in")
+        return label
+    return "not logged in"
+
+
+def _auth_provider_for_env(env: Mapping[str, str], explicit_env: bool) -> AuthProvider:
+    if not explicit_env:
+        return AuthProvider(env=env)
+    state_home = env.get(STATE_HOME_ENV) or Path("/__idea2repo_empty_auth_state__")
+    return AuthProvider(env=env, state_home=state_home)

@@ -117,6 +117,11 @@ class VenueRoutingTests(unittest.TestCase):
         routes = route_idea("runtime support for agent serving", requested_domains=["systems"])
         self.assertEqual(routes[0].domain.key, "systems")
 
+    def test_routes_riscv_testing_framework_to_systems(self) -> None:
+        routes = route_idea("做一个riscv自动化测试框架怎么样")
+        self.assertEqual(routes[0].domain.key, "systems")
+        self.assertIn("riscv", routes[0].matched_keywords)
+
     def test_requested_domain_accepts_aliases_and_venue_names(self) -> None:
         self.assertEqual(route_idea("agent evaluation", requested_domains=["安全"])[0].domain.key, "security")
         self.assertEqual(route_idea("agent evaluation", requested_domains=["OSDI"])[0].domain.key, "systems")

@@ -112,6 +112,7 @@ class SecurityGuardrailTests(unittest.TestCase):
                 output,
                 requested_domains=["security"],
                 created_at="2026-05-10",
+                offline=True,
             )
             guardrail = (output / "docs/diagnosis/security_guardrail.md").read_text()
             report = (output / "docs/diagnosis/ccf_a_readiness_report.md").read_text()

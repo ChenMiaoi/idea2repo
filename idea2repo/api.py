@@ -14,10 +14,13 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from .auth import AuthError
+from .codex_agent import CodexAgentError
+from .codex_models import load_codex_model_catalog
+from .codex_oauth import oauth_provider_payload
 from .generator import generate_research_repo, resume_research_repo
 from .github_export import build_github_export_plan
 from .literature import search_literature
-from .providers import safe_provider_report, validate_provider_config
 from .scoring import diagnose_idea
 from .state import status as project_status
 from .state import validate as validate_project
@@ -32,6 +35,10 @@ class GenerateRequest(BaseModel):
     resources: list[str] = Field(default_factory=list)
     stack: str = "python"
     force: bool = False
+    offline: bool = False
+    provider: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
 
 
 class PathRequest(BaseModel):
@@ -89,9 +96,15 @@ def create_app() -> FastAPI:
                 resources=request.resources,
                 stack=request.stack,
                 force=request.force,
+                offline=request.offline,
+                provider="offline" if request.offline else request.provider,
+                codex_model=request.model,
+                reasoning_effort=request.reasoning_effort,
             )
         except (FileExistsError, PermissionError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except (CodexAgentError, AuthError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         return {
             "root": str(result.root),
             "project_name": result.project_name,
@@ -100,6 +113,11 @@ def create_app() -> FastAPI:
             "revised_score": result.diagnosis.revised_score.total,
             "evidence_gate": _evidence_payload(result.diagnosis.evidence_gate),
             "security": _security_payload(result.diagnosis.security_assessment),
+            "analysis_source": result.analysis_source,
+            "codex_available": result.codex_available,
+            "codex_logged_in": result.codex_logged_in,
+            "codex_model": result.codex_model,
+            "fallback_reason": result.fallback_reason,
         }
 
     @app.post("/status")
@@ -219,12 +237,20 @@ def create_app() -> FastAPI:
 
     @app.get("/provider")
     def provider() -> dict[str, object]:
-        errors = validate_provider_config()
-        return {
-            "ok": not errors,
-            "errors": list(errors),
-            "report": safe_provider_report(),
-        }
+        payload = oauth_provider_payload()
+        catalog = load_codex_model_catalog()
+        default_model = catalog.default_model()
+        payload.update(
+            {
+                "model_catalog_available": catalog.available,
+                "model_catalog_source": catalog.source,
+                "default_model": default_model.slug,
+                "supported_reasoning_levels": [
+                    level.effort for level in default_model.supported_reasoning
+                ],
+            }
+        )
+        return payload
 
     @app.get("/provider/settings")
     def provider_settings() -> dict[str, object]:

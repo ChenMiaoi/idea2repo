@@ -4,15 +4,27 @@ from __future__ import annotations
 
 import csv
 import re
+from dataclasses import replace
 from dataclasses import dataclass
 from datetime import date
 from io import StringIO
 from pathlib import Path
+from typing import Callable
 
+from .codex_agent import (
+    CODEX_API_SHAPE,
+    CODEX_PROVIDER_ID,
+    CODEX_SCHEMA_VERSION,
+    CodexAnalysisResult,
+    CodexCliClient,
+    ResearchAnalysis,
+)
+from .codex_models import load_codex_model_catalog
+from .codex_oauth import OAUTH_CODEX_API_SHAPE, OAUTH_CODEX_PROVIDER_ID, CodexOAuthClient
 from .evidence import EvidenceGate, evidence_gate_markdown, evaluate_evidence_gate
 from .literature import PaperRecord, literature_tasks_md, references_bib, related_work_csv
 from .permissions import Operation, PermissionPolicy, default_policy
-from .providers import provider_schema_json, safe_provider_report
+from .providers import contains_secret_material, provider_schema_json, safe_provider_report
 from .scoring import Diagnosis, ScoreBreakdown, diagnose_idea
 from .security import safe_security_reframe, security_guardrail_markdown
 from .state import RUN_LOG_PATH, append_run_log, read_manifest, write_manifest
@@ -28,6 +40,16 @@ class GeneratedProject:
     project_name: str
     files: tuple[Path, ...]
     diagnosis: Diagnosis
+    analysis_source: str = "offline_fallback"
+    provider_id: str = OAUTH_CODEX_PROVIDER_ID
+    api_shape: str = OAUTH_CODEX_API_SHAPE
+    codex_version: str | None = None
+    codex_model: str | None = None
+    reasoning_effort: str | None = None
+    codex_available: bool = False
+    codex_logged_in: bool = False
+    fallback_reason: str = ""
+    research_analysis: ResearchAnalysis | None = None
 
 
 def generate_research_repo(
@@ -47,6 +69,14 @@ def generate_research_repo(
     metrics: list[str] | None = None,
     claim_evidence_rows: list[dict[str, str]] | None = None,
     stack: str = "python",
+    offline: bool = False,
+    provider: str | None = None,
+    codex_client: CodexCliClient | None = None,
+    codex_model: str | None = None,
+    reasoning_effort: str | None = None,
+    derived_config: dict[str, object] | None = None,
+    discussion_assumptions: list[str] | None = None,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> GeneratedProject:
     """Generate a CCF-A readiness repository for a raw research idea."""
 
@@ -56,6 +86,12 @@ def generate_research_repo(
         raise ValueError("timeline_weeks must be one of: 8, 12, 16, 24")
     if stack not in {"python", "ts"}:
         raise ValueError("stack must be one of: python, ts")
+    if not offline and provider != OFFLINE_PROVIDER_ID and (codex_model or reasoning_effort):
+        catalog = load_codex_model_catalog()
+        model = catalog.validate_model(codex_model or catalog.default_model().slug)
+        codex_model = model.slug
+        if reasoning_effort:
+            catalog.validate_reasoning(model.slug, reasoning_effort)
 
     root = Path(output)
     permission_policy = permission_policy or default_policy(allow_overwrite=force)
@@ -66,6 +102,24 @@ def generate_research_repo(
     permission_policy.require(Operation.WRITE, str(root))
 
     created_at = created_at or date.today().isoformat()
+    codex_result, fallback_reason, selected_provider, selected_api_shape = _analyze_with_provider(
+        idea,
+        requested_domains=requested_domains,
+        timeline_weeks=timeline_weeks,
+        resources=resources or [],
+        stack=stack,
+        offline=offline,
+        provider=provider,
+        codex_client=codex_client,
+        codex_model=codex_model,
+        reasoning_effort=reasoning_effort,
+        progress_callback=progress_callback,
+    )
+    analysis = codex_result.analysis if codex_result is not None else None
+    if analysis is not None:
+        literature_tasks = literature_tasks or analysis.related_work_queries
+        if claim_evidence_rows is None:
+            claim_evidence_rows = _analysis_claim_evidence_rows(analysis)
     evidence_gate = evaluate_evidence_gate(
         verified_papers,
         baselines=baselines,
@@ -82,6 +136,8 @@ def generate_research_repo(
         metrics=metrics,
         claim_evidence_rows=claim_evidence_rows,
     )
+    if analysis is not None:
+        diagnosis = _diagnosis_from_analysis(diagnosis, analysis)
     artifact_idea = safe_security_reframe(idea, diagnosis.security_assessment)
     project_name = slugify(root.name if root.name else idea)
     workspace = inspect_workspace()
@@ -98,6 +154,16 @@ def generate_research_repo(
         claim_evidence_rows,
         evidence_gate,
         stack,
+        analysis,
+        _provider_report(
+            codex_result,
+            fallback_reason,
+            selected_provider,
+            selected_api_shape,
+            reasoning_effort,
+        ),
+        codex_result.provider_id if codex_result is not None else selected_provider,
+        codex_result.api_shape if codex_result is not None else selected_api_shape,
     )
 
     written: list[Path] = []
@@ -126,6 +192,15 @@ def generate_research_repo(
         files=written,
         permissions=permission_policy.as_dict(),
         workspace=workspace.as_dict(),
+        generation=_generation_metadata(
+            codex_result,
+            fallback_reason,
+            selected_provider,
+            selected_api_shape,
+            reasoning_effort,
+            derived_config,
+            discussion_assumptions,
+        ),
     )
     written.append(manifest_path)
     written.append(root / RUN_LOG_PATH)
@@ -135,6 +210,16 @@ def generate_research_repo(
         project_name=project_name,
         files=tuple(written),
         diagnosis=diagnosis,
+        analysis_source="codex" if codex_result is not None else "offline_fallback",
+        provider_id=codex_result.provider_id if codex_result is not None else selected_provider,
+        api_shape=codex_result.api_shape if codex_result is not None else selected_api_shape,
+        codex_version=codex_result.codex_version if codex_result is not None else None,
+        codex_model=codex_result.codex_model if codex_result is not None else None,
+        reasoning_effort=reasoning_effort,
+        codex_available=codex_result is not None,
+        codex_logged_in=codex_result is not None,
+        fallback_reason=fallback_reason,
+        research_analysis=analysis,
     )
 
 
@@ -161,6 +246,195 @@ def resume_research_repo(
     )
     append_run_log(root, "resume_completed", {"files": len(result.files)})
     return result
+
+
+OFFLINE_PROVIDER_ID = "offline"
+OFFLINE_API_SHAPE = "deterministic-fallback"
+SUPPORTED_PROVIDERS = {OAUTH_CODEX_PROVIDER_ID, CODEX_PROVIDER_ID, OFFLINE_PROVIDER_ID}
+
+
+def _analyze_with_provider(
+    idea: str,
+    *,
+    requested_domains: list[str] | None,
+    timeline_weeks: int,
+    resources: list[str],
+    stack: str,
+    offline: bool,
+    provider: str | None,
+    codex_client: CodexCliClient | None,
+    codex_model: str | None,
+    reasoning_effort: str | None,
+    progress_callback: Callable[[str], None] | None,
+) -> tuple[CodexAnalysisResult | None, str, str, str]:
+    selected_provider = _select_provider(provider, offline, codex_client)
+    selected_api_shape = _api_shape_for_provider(selected_provider)
+    if selected_provider == OFFLINE_PROVIDER_ID:
+        return None, "offline mode requested", selected_provider, selected_api_shape
+    if progress_callback is not None:
+        progress_callback(f"Provider: {selected_provider}")
+    if selected_provider == CODEX_PROVIDER_ID:
+        client = codex_client or CodexCliClient(
+            cwd=Path.cwd(),
+            model=codex_model,
+            reasoning_effort=reasoning_effort,
+        )
+    elif selected_provider == OAUTH_CODEX_PROVIDER_ID:
+        client = codex_client or CodexOAuthClient(
+            model=codex_model,
+            reasoning_effort=reasoning_effort,
+        )
+    else:
+        allowed = ", ".join(sorted(SUPPORTED_PROVIDERS))
+        raise ValueError(f"unsupported provider: {selected_provider}. Allowed: {allowed}")
+    if selected_provider == OAUTH_CODEX_PROVIDER_ID:
+        result = client.analyze_idea(  # type: ignore[union-attr]
+            idea,
+            requested_domains=requested_domains,
+            timeline_weeks=timeline_weeks,
+            resources=resources,
+            stack=stack,
+            progress_callback=progress_callback,
+        )
+    else:
+        if progress_callback is not None:
+            progress_callback("Codex CLI: running structured analysis")
+        result = client.analyze_idea(  # type: ignore[union-attr]
+            idea,
+            requested_domains=requested_domains,
+            timeline_weeks=timeline_weeks,
+            resources=resources,
+            stack=stack,
+        )
+    return result, "", selected_provider, selected_api_shape
+
+
+def _select_provider(
+    provider: str | None,
+    offline: bool,
+    codex_client: CodexCliClient | None,
+) -> str:
+    if offline:
+        return OFFLINE_PROVIDER_ID
+    if provider:
+        return provider
+    if codex_client is not None:
+        return CODEX_PROVIDER_ID
+    return OAUTH_CODEX_PROVIDER_ID
+
+
+def _api_shape_for_provider(provider: str) -> str:
+    if provider == OAUTH_CODEX_PROVIDER_ID:
+        return OAUTH_CODEX_API_SHAPE
+    if provider == CODEX_PROVIDER_ID:
+        return CODEX_API_SHAPE
+    if provider == OFFLINE_PROVIDER_ID:
+        return OFFLINE_API_SHAPE
+    allowed = ", ".join(sorted(SUPPORTED_PROVIDERS))
+    raise ValueError(f"unsupported provider: {provider}. Allowed: {allowed}")
+
+
+def _diagnosis_from_analysis(diagnosis: Diagnosis, analysis: ResearchAnalysis) -> Diagnosis:
+    raw = replace(
+        diagnosis.raw_score,
+        total=analysis.raw_score.total,
+        uncapped_total=max(analysis.raw_score.total, diagnosis.raw_score.uncapped_total),
+    )
+    revised = replace(
+        diagnosis.revised_score,
+        total=analysis.revised_score.total,
+        uncapped_total=max(analysis.revised_score.total, diagnosis.revised_score.uncapped_total),
+    )
+    required_evidence = tuple(analysis.revised_plan.evidence_required) or diagnosis.required_evidence
+    risks = tuple(analysis.risks) or diagnosis.risks
+    return replace(
+        diagnosis,
+        raw_score=raw,
+        revised_score=revised,
+        required_evidence=required_evidence,
+        risks=risks,
+        revised_plan=tuple(analysis.revised_plan.key_changes) or diagnosis.revised_plan,
+        revised_plan_text=analysis.revised_plan.summary,
+    )
+
+
+def _analysis_claim_evidence_rows(analysis: ResearchAnalysis) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for index, evidence in enumerate(analysis.revised_plan.evidence_required[:8], start=1):
+        rows.append(
+            {
+                "claim": f"TODO: Codex-planned claim {index}",
+                "required_evidence": evidence,
+                "planned_artifact": "results/tables/",
+                "status": "planned",
+            }
+        )
+    return rows
+
+
+def _generation_metadata(
+    codex_result: CodexAnalysisResult | None,
+    fallback_reason: str,
+    provider_id: str,
+    api_shape: str,
+    reasoning_effort: str | None,
+    derived_config: dict[str, object] | None,
+    discussion_assumptions: list[str] | None,
+) -> dict[str, object]:
+    return {
+        "analysis_source": "codex" if codex_result is not None else "offline_fallback",
+        "provider_id": codex_result.provider_id if codex_result is not None else provider_id,
+        "api_shape": codex_result.api_shape if codex_result is not None else api_shape,
+        "schema_version": CODEX_SCHEMA_VERSION,
+        "codex_version": codex_result.codex_version if codex_result is not None else None,
+        "codex_model": codex_result.codex_model if codex_result is not None else None,
+        "reasoning_effort": reasoning_effort,
+        "derived_config": derived_config or {},
+        "discussion_assumptions": discussion_assumptions or [],
+        "fallback_reason": fallback_reason,
+    }
+
+
+def _provider_report(
+    codex_result: CodexAnalysisResult | None,
+    fallback_reason: str,
+    provider_id: str,
+    api_shape: str,
+    reasoning_effort: str | None = None,
+) -> str:
+    if codex_result is not None:
+        provider_label = (
+            "Idea2Repo OAuth Codex Responses"
+            if codex_result.provider_id == OAUTH_CODEX_PROVIDER_ID
+            else "Official Codex CLI"
+        )
+        return (
+            "# Provider Configuration\n\n"
+            "## Active Provider\n\n"
+            f"- Provider ID: {codex_result.provider_id}\n"
+            f"- API shape: {codex_result.api_shape}\n"
+            f"- Provider: {provider_label}\n"
+            "- Login: logged in\n"
+            f"- Version: {codex_result.codex_version or 'unknown'}\n"
+            f"- Model: {codex_result.codex_model or 'codex default'}\n"
+            f"- Reasoning effort: {reasoning_effort or 'model default'}\n\n"
+            "## Boundary\n\n"
+            "- Do not read ~/.codex auth files or scrape browser cookies.\n"
+            "- Store generated research artifacts only; never write tokens or private provider responses.\n"
+        )
+    if fallback_reason == "offline mode requested":
+        return safe_provider_report({"IDEA2REPO_PROVIDER": OFFLINE_PROVIDER_ID})
+    return (
+        "# Provider Configuration\n\n"
+        "## Active Provider\n\n"
+        f"- Provider ID: {provider_id}\n"
+        f"- API shape: {api_shape}\n"
+        "- Provider unavailable for this generation\n"
+        f"- Fallback reason: {fallback_reason or 'unknown'}\n\n"
+        "## Boundary\n\n"
+        "- Offline fallback used deterministic local artifacts and did not call a model.\n"
+        "- Do not read ~/.codex auth files, scrape browser cookies, or call private ChatGPT endpoints.\n"
+    )
 
 
 def _regenerate_from_request(
@@ -242,9 +516,24 @@ def _regenerate_from_request(
             files=written,
             permissions=permission_policy.as_dict(),
             workspace=workspace,
+            generation={
+                "analysis_source": "offline_fallback",
+                "provider_id": OFFLINE_PROVIDER_ID,
+                "api_shape": OFFLINE_API_SHAPE,
+                "schema_version": CODEX_SCHEMA_VERSION,
+                "fallback_reason": "resume uses manifest deterministic fallback",
+            },
         )
         written.append(manifest_path)
-    return GeneratedProject(root=root, project_name=project_name, files=tuple(written), diagnosis=diagnosis)
+    return GeneratedProject(
+        root=root,
+        project_name=project_name,
+        files=tuple(written),
+        diagnosis=diagnosis,
+        provider_id=OFFLINE_PROVIDER_ID,
+        api_shape=OFFLINE_API_SHAPE,
+        fallback_reason="resume uses manifest deterministic fallback",
+    )
 
 
 def slugify(value: str) -> str:
@@ -267,6 +556,10 @@ def _build_files(
     claim_evidence_rows: list[dict[str, str]] | None = None,
     evidence_gate: EvidenceGate | None = None,
     stack: str = "python",
+    analysis: ResearchAnalysis | None = None,
+    provider_report: str | None = None,
+    analysis_provider_id: str = OAUTH_CODEX_PROVIDER_ID,
+    analysis_api_shape: str = OAUTH_CODEX_API_SHAPE,
 ) -> dict[Path, str]:
     primary_route = diagnosis.routes[0]
     primary_domain = primary_route.domain
@@ -347,7 +640,7 @@ def _build_files(
         Path("docs/meeting/weekly_update_template.md"): _weekly_update_template(),
         Path("docs/meeting/advisor_report.md"): _advisor_report(diagnosis),
         Path("docs/runtime/platform_notes.md"): _platform_notes(),
-        Path("docs/runtime/provider_config.md"): _provider_config(),
+        Path("docs/runtime/provider_config.md"): provider_report or _provider_config(),
         Path("docs/runtime/provider_schema.json"): provider_schema_json(),
         Path("docs/runtime/workspace_snapshot.md"): _workspace_snapshot(workspace or {}),
         Path("docs/workflow/README.md"): workflow_summary(),
@@ -395,7 +688,327 @@ def _build_files(
             }
         )
     files.update({Path(path): content for path, content in run_workflow(diagnosis).items()})
+    if analysis is not None:
+        files.update(
+            _analysis_artifact_overrides(
+                analysis,
+                diagnosis,
+                timeline_weeks,
+                resources,
+                analysis_provider_id,
+                analysis_api_shape,
+            )
+        )
     return files
+
+
+def _analysis_artifact_overrides(
+    analysis: ResearchAnalysis,
+    diagnosis: Diagnosis,
+    timeline_weeks: int,
+    resources: list[str],
+    provider_id: str,
+    api_shape: str,
+) -> dict[Path, str]:
+    overrides: dict[Path, str] = {
+        Path("docs/diagnosis/ccf_a_readiness_report.md"): _analysis_readiness_report(
+            analysis,
+            diagnosis,
+            timeline_weeks,
+            provider_id,
+            api_shape,
+        ),
+        Path("docs/diagnosis/raw_idea_score.md"): _analysis_score_report(
+            "Raw Idea Score",
+            analysis.raw_score,
+        ),
+        Path("docs/diagnosis/revised_plan_score.md"): _analysis_score_report(
+            "Revised Plan Score",
+            analysis.revised_score,
+        ),
+        Path("docs/diagnosis/risk_register.md"): _analysis_risk_register(analysis),
+        Path("docs/diagnosis/reviewer_simulation.md"): _analysis_reviewer_simulation(analysis),
+        Path("docs/survey/survey.md"): _analysis_survey(analysis),
+        Path("docs/survey/paper_map.md"): _analysis_paper_map(analysis),
+        Path("docs/survey/topic_clusters.md"): _analysis_topic_clusters(analysis),
+        Path("docs/survey/open_problems.md"): _analysis_open_problems(analysis),
+        Path("docs/reference/literature_search_tasks.md"): _analysis_literature_tasks(analysis),
+        Path(f"docs/execution_plan/{timeline_weeks}_week_plan.md"): _analysis_timeline_plan(
+            analysis,
+            timeline_weeks,
+            resources,
+        ),
+        Path("docs/execution_plan/todo.md"): _analysis_todo(analysis, diagnosis),
+        Path("docs/workflow/literature_radar.md"): _analysis_literature_tasks(analysis),
+        Path("docs/workflow/novelty_check.md"): _analysis_novelty_check(analysis),
+        Path("docs/workflow/experiment_design.md"): _analysis_experiment_design(analysis),
+        Path("docs/workflow/reviewer_simulation.md"): _analysis_reviewer_simulation(analysis),
+    }
+    allowed = {
+        "docs/diagnosis/ccf_a_readiness_report.md",
+        "docs/survey/survey.md",
+        "docs/reference/literature_search_tasks.md",
+        f"docs/execution_plan/{timeline_weeks}_week_plan.md",
+        "docs/diagnosis/reviewer_simulation.md",
+    }
+    for relative, content in analysis.artifact_contents.items():
+        if relative not in allowed or contains_secret_material(content):
+            continue
+        overrides[Path(relative)] = _ensure_trailing_newline(content)
+    return overrides
+
+
+def _analysis_readiness_report(
+    analysis: ResearchAnalysis,
+    diagnosis: Diagnosis,
+    timeline_weeks: int,
+    provider_id: str,
+    api_shape: str,
+) -> str:
+    return f"""# CCF-A Readiness Report
+
+Analysis source: Codex ({provider_id}, {api_shape})
+
+## Executive Summary
+
+- Idea: {analysis.idea_summary}
+- Problem: {analysis.problem_statement}
+- Primary route: {analysis.domain_route.label}
+- Candidate venues: {", ".join(analysis.domain_route.candidate_venues) or "verify from current venue sources"}
+- Raw Idea Score: {analysis.raw_score.total} / 100
+- Revised Plan Score: {analysis.revised_score.total} / 100
+- Feasibility: {analysis.feasibility}
+- Submission readiness gate: {"ready" if diagnosis.evidence_gate.submission_ready else "blocked"}
+
+## Route Rationale
+
+{analysis.domain_route.rationale}
+
+## Raw Idea Diagnosis
+
+{analysis.raw_score.rationale}
+
+Cap reasons:
+{_markdown_list(analysis.raw_score.cap_reasons or ["No explicit cap reason returned by Codex."])}
+
+## Revised Research Plan
+
+{analysis.revised_plan.summary}
+
+Key changes:
+{_markdown_list(analysis.revised_plan.key_changes or ["TODO: refine with advisor feedback."])}
+
+Required evidence:
+{_markdown_list(analysis.revised_plan.evidence_required or list(diagnosis.required_evidence))}
+
+## Novelty Gaps
+
+{_markdown_list(analysis.novelty_gaps or ["Verify novelty against recent related work before claiming a gap."])}
+
+## Risks
+
+{_markdown_list(analysis.risks or list(diagnosis.risks))}
+
+## Execution Plan
+
+See `docs/execution_plan/{timeline_weeks}_week_plan.md`.
+"""
+
+
+def _analysis_score_report(title: str, score) -> str:
+    return f"""# {title}
+
+- Final score: {score.total} / 100
+- Rationale: {score.rationale}
+- Cap triggers: {", ".join(score.cap_reasons) or "none"}
+"""
+
+
+def _analysis_risk_register(analysis: ResearchAnalysis) -> str:
+    risks = analysis.risks or ["Novelty and evidence risks must be verified against related work."]
+    lines = [
+        "# Risk Register",
+        "",
+        "| Risk | Impact | Mitigation |",
+        "| --- | --- | --- |",
+    ]
+    for risk in risks:
+        lines.append(f"| {risk} | High | Add traceable evidence before making claims. |")
+    return "\n".join(lines) + "\n"
+
+
+def _analysis_reviewer_simulation(analysis: ResearchAnalysis) -> str:
+    return f"""# Reviewer Simulation
+
+{analysis.reviewer_simulation}
+
+## Required Fixes Before Submission
+
+{_markdown_list(analysis.revised_plan.evidence_required or ["Fill related-work, baseline, dataset, metric, and claim-evidence artifacts."])}
+"""
+
+
+def _analysis_survey(analysis: ResearchAnalysis) -> str:
+    return f"""# Survey
+
+## Scope
+
+{analysis.problem_statement}
+
+Primary route: {analysis.domain_route.label}
+
+## Initial Search Queries
+
+{_markdown_list(analysis.related_work_queries or ["TODO: add verified search queries."])}
+
+## Paper Clusters
+
+{_paper_cluster_markdown(analysis)}
+"""
+
+
+def _analysis_paper_map(analysis: ResearchAnalysis) -> str:
+    lines = [
+        "# Paper Map",
+        "",
+        "| Cluster | Representative Papers | Core Question | Collision Risk |",
+        "| --- | --- | --- | --- |",
+    ]
+    for cluster in analysis.paper_clusters:
+        papers = "; ".join(cluster.representative_papers) or "source-needed"
+        lines.append(f"| {cluster.name} | {papers} | {cluster.core_problem} | {cluster.collision_risk} |")
+    if not analysis.paper_clusters:
+        lines.append("| TODO | TODO | TODO | Unknown until verified |")
+    return "\n".join(lines) + "\n"
+
+
+def _analysis_topic_clusters(analysis: ResearchAnalysis) -> str:
+    lines = [
+        "# Topic Clusters",
+        "",
+        "| Cluster | Problem | Method Pattern | Open Gap |",
+        "| --- | --- | --- | --- |",
+    ]
+    for cluster in analysis.paper_clusters:
+        gap = "; ".join(analysis.novelty_gaps[:2]) or "verify against related work"
+        lines.append(f"| {cluster.name} | {cluster.core_problem} | {cluster.method_pattern} | {gap} |")
+    if not analysis.paper_clusters:
+        lines.append("| TODO | TODO | TODO | TODO |")
+    return "\n".join(lines) + "\n"
+
+
+def _analysis_open_problems(analysis: ResearchAnalysis) -> str:
+    return "# Open Problems\n\n" + _markdown_list(
+        analysis.novelty_gaps or analysis.revised_plan.evidence_required or ["TODO: verify open problems."]
+    )
+
+
+def _analysis_literature_tasks(analysis: ResearchAnalysis) -> str:
+    tasks = list(analysis.related_work_queries)
+    for cluster in analysis.paper_clusters:
+        tasks.extend(cluster.verification_queries)
+    return "# Literature Search Tasks\n\n" + _markdown_list(
+        tasks or ["Add verified papers from DBLP, OpenAlex, Crossref, arXiv, venue pages, or publisher pages."]
+    )
+
+
+def _analysis_timeline_plan(
+    analysis: ResearchAnalysis,
+    timeline_weeks: int,
+    resources: list[str],
+) -> str:
+    resource_text = ", ".join(resources) if resources else "unspecified"
+    lines = [f"# {timeline_weeks} Week Plan", "", f"Resource constraints: {resource_text}", ""]
+    items = analysis.timeline or [
+        TimelineLike("1", "Verify related work and collision risk.", "Related-work matrix has source URLs."),
+        TimelineLike("2", "Finalize baselines, datasets, and metrics.", "Claim-evidence matrix has planned rows."),
+    ]
+    for item in items:
+        lines.append(f"## Week {item.week}")
+        lines.append("")
+        lines.append(f"- Deliverable: {item.deliverable}")
+        lines.append(f"- Exit criteria: {item.exit_criteria}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class TimelineLike:
+    week: str
+    deliverable: str
+    exit_criteria: str
+
+
+def _analysis_todo(analysis: ResearchAnalysis, diagnosis: Diagnosis) -> str:
+    return "# TODO\n\n" + _markdown_list(
+        [
+            "Verify latest CCF and venue information before publication-critical claims.",
+            *analysis.related_work_queries[:5],
+            *analysis.revised_plan.evidence_required,
+            *diagnosis.required_evidence,
+        ]
+    )
+
+
+def _analysis_novelty_check(analysis: ResearchAnalysis) -> str:
+    return f"""# Novelty Check
+
+- Raw score: {analysis.raw_score.total} / 100
+- Revised score: {analysis.revised_score.total} / 100
+
+## Novelty Gaps
+
+{_markdown_list(analysis.novelty_gaps or ["Verify novelty against related work."])}
+"""
+
+
+def _analysis_experiment_design(analysis: ResearchAnalysis) -> str:
+    plan = analysis.experiment_plan
+    return f"""# Experiment Design
+
+## Baselines
+
+{_markdown_list(plan.baselines or ["TODO: choose strong baselines."])}
+
+## Datasets
+
+{_markdown_list(plan.datasets or ["TODO: choose datasets or workloads."])}
+
+## Metrics
+
+{_markdown_list(plan.metrics or ["TODO: choose claim-aligned metrics."])}
+
+## Ablations
+
+{_markdown_list(plan.ablations or ["TODO: isolate each method component."])}
+
+## Failure Cases
+
+{_markdown_list(plan.failure_cases or ["TODO: collect failure cases."])}
+
+## Reproducibility Checks
+
+{_markdown_list(plan.reproducibility_checks or ["TODO: document seeds, configs, and environment."])}
+"""
+
+
+def _paper_cluster_markdown(analysis: ResearchAnalysis) -> str:
+    if not analysis.paper_clusters:
+        return "- TODO: add verified paper clusters.\n"
+    lines: list[str] = []
+    for cluster in analysis.paper_clusters:
+        lines.append(f"### {cluster.name}")
+        lines.append("")
+        lines.append(f"- Core problem: {cluster.core_problem}")
+        lines.append(f"- Method pattern: {cluster.method_pattern}")
+        lines.append(f"- Collision risk: {cluster.collision_risk}")
+        lines.append(f"- Verification queries: {', '.join(cluster.verification_queries) or 'TODO'}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _ensure_trailing_newline(value: str) -> str:
+    return value if value.endswith("\n") else value + "\n"
 
 
 def _empty_directories() -> tuple[Path, ...]:
@@ -633,8 +1246,8 @@ docs/reference/pdfs/
 
 def _env_example() -> str:
     return """# Copy to .env for local experiments. Never commit real secrets.
-IDEA2REPO_PROVIDER=offline
-# Supported modes: offline, openai_account, openai_api_key, enterprise_gateway, local_model
+IDEA2REPO_PROVIDER=openai-codex-oauth
+# Supported modes: openai-codex-oauth, openai-codex-cli, offline
 OPENAI_API_KEY=
 OPENAI_BASE_URL=
 ENTERPRISE_GATEWAY_URL=
@@ -678,13 +1291,13 @@ runtime:
   platforms:
 {_yaml_list(["windows", "linux", "macos"], 4)}
   cli_behavior_references:
-{_yaml_list(["openai_codex_cli", "claude_cli"], 4)}
+{_yaml_list(["gsd_2_provider_harness", "openai_codex_cli"], 4)}
   auth:
-    primary: openai_account_login
+    primary: idea2repo_oauth
     supported_subscriptions:
 {_yaml_list(["plus", "pro"], 6)}
     fallback_providers:
-{_yaml_list(["openai_api_key", "enterprise_account", "local_model"], 6)}
+{_yaml_list(["openai-codex-cli", "offline"], 6)}
 
 scores:
   raw_idea_score: {diagnosis.raw_score.total}
@@ -1178,7 +1791,7 @@ The project should remain portable across Windows, Linux, and macOS.
 
 
 def _provider_config() -> str:
-    return safe_provider_report({})
+    return safe_provider_report({"IDEA2REPO_PROVIDER": OFFLINE_PROVIDER_ID})
 
 
 def _workspace_snapshot(workspace: dict[str, object]) -> str:

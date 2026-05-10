@@ -30,12 +30,14 @@ class ApiTests(unittest.TestCase):
                     "weeks": 8,
                     "resources": ["single-researcher"],
                     "stack": "python",
+                    "offline": True,
                 },
             )
             self.assertEqual(generate.status_code, 200, generate.text)
             payload = generate.json()
             self.assertEqual(payload["primary_route"], "ai_llm_agent")
             self.assertEqual(payload["evidence_gate"]["status"], "blocked")
+            self.assertEqual(payload["analysis_source"], "offline_fallback")
 
             status = self.client.post("/status", json={"output": str(output)})
             self.assertEqual(status.status_code, 200, status.text)
@@ -151,7 +153,17 @@ class ApiTests(unittest.TestCase):
         self.assertIn("novelty", categories)
         self.assertIn("reproducibility", categories)
 
-        with patch.dict("os.environ", {"IDEA2REPO_PROVIDER": "openai_api_key"}, clear=True):
+        with patch("idea2repo.api.oauth_provider_payload") as provider_payload:
+            provider_payload.return_value = {
+                "ok": False,
+                "errors": ["not logged in"],
+                "provider_id": "openai-codex-oauth",
+                "api_shape": "openai-codex-responses",
+                "codex_available": True,
+                "codex_logged_in": False,
+                "codex_model": "codex",
+                "report": "OAuth not logged in",
+            }
             provider = self.client.get("/provider/settings")
         self.assertEqual(provider.status_code, 200, provider.text)
         self.assertFalse(provider.json()["ok"])
@@ -162,7 +174,7 @@ class ApiTests(unittest.TestCase):
             output = Path(tmp) / "github-dry-run"
             generate = self.client.post(
                 "/generate",
-                json={"idea": "agent memory benchmark", "output": str(output)},
+                json={"idea": "agent memory benchmark", "output": str(output), "offline": True},
             )
             self.assertEqual(generate.status_code, 200, generate.text)
 

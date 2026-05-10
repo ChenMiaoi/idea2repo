@@ -272,7 +272,7 @@
     },
     "systems": {
       "label": "Systems",
-      "aliases": ["systems", "system", "系统", "runtime", "serving", "OSDI", "SOSP", "ASPLOS", "EuroSys", "USENIX ATC", "NSDI", "FAST"],
+      "aliases": ["systems", "system", "系统", "runtime", "serving", "architecture", "体系结构", "hardware", "硬件", "RISC-V", "RISCV", "OSDI", "SOSP", "ASPLOS", "EuroSys", "USENIX ATC", "NSDI", "FAST", "HPCA", "MICRO"],
       "primary_venues": ["OSDI", "SOSP", "ASPLOS", "EuroSys", "USENIX ATC", "NSDI", "FAST"],
       "secondary_venues": ["PPoPP", "HPCA", "MICRO", "SC"],
       "review_focus": [
@@ -298,6 +298,22 @@
         "database",
         "query",
         "optimization",
+        "risc-v",
+        "riscv",
+        "isa",
+        "cpu",
+        "processor",
+        "soc",
+        "fpga",
+        "hardware",
+        "architecture",
+        "microarchitecture",
+        "verification",
+        "verilator",
+        "qemu",
+        "自动化测试",
+        "硬件验证",
+        "体系结构",
         "prototype"
       ],
       "venue_records": [
