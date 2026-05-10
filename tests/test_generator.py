@@ -75,6 +75,7 @@ class GeneratorTests(unittest.TestCase):
                 "docs/meeting/advisor_report.md",
                 "docs/runtime/platform_notes.md",
                 "docs/runtime/provider_config.md",
+                "docs/runtime/provider_schema.json",
                 "docs/runtime/workspace_snapshot.md",
                 "paper/main.tex",
                 "paper/macros.tex",
@@ -168,6 +169,7 @@ class GeneratorTests(unittest.TestCase):
 
             env_example = (output / ".env.example").read_text()
             self.assertIn("IDEA2REPO_PROVIDER=offline", env_example)
+            self.assertIn("Supported modes", env_example)
             self.assertIn("OPENAI_API_KEY=", env_example)
 
             references = (output / "docs/reference/references.bib").read_text()
@@ -246,6 +248,32 @@ class GeneratorTests(unittest.TestCase):
 
             workspace_snapshot = (output / "docs/runtime/workspace_snapshot.md").read_text()
             self.assertIn("# Workspace Snapshot", workspace_snapshot)
+
+            provider_config = (output / "docs/runtime/provider_config.md").read_text()
+            self.assertIn("Offline mode", provider_config)
+            self.assertNotIn("sk-", provider_config)
+            provider_schema = (output / "docs/runtime/provider_schema.json").read_text()
+            self.assertIn("openai_api_key", provider_schema)
+            self.assertIn("secret_policy", provider_schema)
+
+    def test_generated_provider_docs_ignore_ambient_provider_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "ambient-provider"
+            with patch.dict(
+                "os.environ",
+                {
+                    "IDEA2REPO_PROVIDER": "openai_api_key",
+                    "OPENAI_API_KEY": "sk-test-secret",
+                    "OPENAI_BASE_URL": "https://private.example.test/v1",
+                },
+            ):
+                generate_research_repo("agent memory compression", output, created_at="2026-05-10")
+
+            provider_config = (output / "docs/runtime/provider_config.md").read_text()
+            self.assertIn("- Mode: offline", provider_config)
+            self.assertIn("OPENAI_API_KEY: unset", provider_config)
+            self.assertNotIn("private.example", provider_config)
+            self.assertNotIn("sk-test-secret", provider_config)
 
             current = status(output)
             self.assertEqual(current.total_artifacts, current.present_artifacts)

@@ -10,6 +10,7 @@ from io import StringIO
 from pathlib import Path
 
 from .permissions import Operation, PermissionPolicy, default_policy
+from .providers import provider_schema_json, safe_provider_report
 from .scoring import Diagnosis, ScoreBreakdown, diagnose_idea
 from .state import RUN_LOG_PATH, append_run_log, read_manifest, write_manifest
 from .workspace import inspect_workspace
@@ -344,6 +345,7 @@ def _build_files(
         Path("docs/meeting/advisor_report.md"): _advisor_report(diagnosis),
         Path("docs/runtime/platform_notes.md"): _platform_notes(),
         Path("docs/runtime/provider_config.md"): _provider_config(),
+        Path("docs/runtime/provider_schema.json"): provider_schema_json(),
         Path("docs/runtime/workspace_snapshot.md"): _workspace_snapshot(workspace or {}),
         Path("paper/main.tex"): _main_tex(project_name),
         Path("paper/macros.tex"): _macros_tex(),
@@ -612,6 +614,7 @@ docs/reference/pdfs/
 def _env_example() -> str:
     return """# Copy to .env for local experiments. Never commit real secrets.
 IDEA2REPO_PROVIDER=offline
+# Supported modes: offline, openai_account, openai_api_key, enterprise_gateway, local_model
 OPENAI_API_KEY=
 OPENAI_BASE_URL=
 ENTERPRISE_GATEWAY_URL=
@@ -1128,17 +1131,7 @@ The project should remain portable across Windows, Linux, and macOS.
 
 
 def _provider_config() -> str:
-    return """# Provider Configuration
-
-Supported provider modes:
-
-- OpenAI account login, subject to official account permissions and usage limits.
-- OpenAI API key.
-- Enterprise account or proxy gateway.
-- Local model backend.
-
-Do not commit tokens, cookies, API keys, or private provider responses.
-"""
+    return safe_provider_report({})
 
 
 def _workspace_snapshot(workspace: dict[str, object]) -> str:

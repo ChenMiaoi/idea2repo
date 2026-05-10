@@ -1,6 +1,7 @@
 import unittest
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from idea2repo.cli import build_command_parser, build_parser, main
 
@@ -76,6 +77,16 @@ class CliTests(unittest.TestCase):
 
     def test_doctor_returns_success(self) -> None:
         self.assertEqual(main(["doctor", "--cwd", "."]), 0)
+
+    def test_provider_validate_respects_environment(self) -> None:
+        with patch.dict("os.environ", {"IDEA2REPO_PROVIDER": "openai_api_key"}, clear=True):
+            self.assertEqual(main(["provider", "validate"]), 1)
+        with patch.dict(
+            "os.environ",
+            {"IDEA2REPO_PROVIDER": "openai_api_key", "OPENAI_API_KEY": "sk-test-secret"},
+            clear=True,
+        ):
+            self.assertEqual(main(["provider", "validate"]), 0)
 
     def test_main_returns_error_for_non_empty_output_without_force(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

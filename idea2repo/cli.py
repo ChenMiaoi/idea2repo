@@ -7,6 +7,7 @@ import sys
 
 from .generator import generate_research_repo, resume_research_repo
 from .permissions import PermissionDeniedError, PermissionPolicy
+from .providers import load_provider_config, safe_provider_report, validate_provider_config
 from .state import status as project_status
 from .state import validate as validate_project
 from .workspace import inspect_workspace
@@ -84,12 +85,15 @@ def build_command_parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor", help="Inspect the current local workspace.")
     doctor.add_argument("--cwd", default=".")
+
+    provider = subparsers.add_parser("provider", help="Inspect provider configuration without exposing secrets.")
+    provider.add_argument("action", choices=("validate", "show"))
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    command_names = {"generate", "status", "resume", "validate", "doctor"}
+    command_names = {"generate", "status", "resume", "validate", "doctor", "provider"}
     parser = build_command_parser() if argv[:1] and argv[0] in command_names else build_parser()
     args = parser.parse_args(argv)
     try:
@@ -137,6 +141,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"git_root: {snapshot.git_root or 'not detected'}")
             print(f"git_branch: {snapshot.git_branch or 'not detected'}")
             print(f"git_status_entries: {len(snapshot.git_status_short)}")
+            return 0
+        if command == "provider":
+            config = load_provider_config()
+            if args.action == "show":
+                print(safe_provider_report())
+                return 0
+            errors = validate_provider_config(config)
+            if errors:
+                for error in errors:
+                    print(error, file=sys.stderr)
+                return 1
+            print("Provider configuration valid")
             return 0
     except (FileExistsError, ValueError, FileNotFoundError, PermissionDeniedError) as exc:
         print(f"error: {exc}", file=sys.stderr)
