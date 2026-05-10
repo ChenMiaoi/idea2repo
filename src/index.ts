@@ -7,6 +7,7 @@ export * from "./venues.js";
 export * from "./models.js";
 export * from "./providers.js";
 export * from "./proxy.js";
+export * from "./agents/agent-runner.js";
 export * from "./agents/schemas.js";
 export * from "./pipeline/research-pipeline.js";
 export * from "./pipeline/stage-state.js";

@@ -6,6 +6,25 @@ import { homedir, platform, release, arch } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import open from "open";
 import { validateIdeaDiscussionTurn, validateResearchAnalysis, type IdeaDiscussionTurn, type ResearchAnalysis } from "../types.js";
+import { buildAgentPrompt, stagedAgentInstructions, type AgentPromptFile } from "../agents/agent-runner.js";
+import {
+  validateCandidateTriage,
+  validateFeasibilityReview,
+  validateNoveltyGapAnalysis,
+  validatePdfPaperNote,
+  validateRelatedWorkAnalysis,
+  validateResearchStrategy,
+  validateSearchPlan,
+  validateStrictCcfAReview,
+  type CandidateTriage,
+  type FeasibilityReview,
+  type NoveltyGapAnalysis,
+  type PdfPaperNote,
+  type RelatedWorkAnalysis,
+  type ResearchStrategy,
+  type SearchPlan,
+  type StrictCcfAReview
+} from "../agents/schemas.js";
 import { filterUnsupportedModels } from "../models.js";
 import { configureProxyFromEnv, proxySummary } from "../proxy.js";
 
@@ -313,6 +332,79 @@ export class CodexOAuthClient {
     return { analysis: parsed, provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: OPENAI_CODEX_API_SHAPE, codex_model: this.model(), events };
   }
 
+  async planLiteratureSearch(
+    idea: string,
+    context: { requestedDomains?: string[]; targetVenues?: string[]; timelineWeeks?: number; resources?: string[] } = {},
+    progress?: (message: string) => void
+  ): Promise<{ search_plan: SearchPlan; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const { parsed, events } = await this.runStagedAgent("01_search_planner.md", "Plan literature search queries for the idea.", { idea, ...context }, validateSearchPlan, "SearchPlan", progress);
+    return { search_plan: parsed, provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: OPENAI_CODEX_API_SHAPE, codex_model: this.model(), events };
+  }
+
+  async triagePaperCandidates(
+    idea: string,
+    candidates: unknown[],
+    progress?: (message: string) => void
+  ): Promise<{ triage: CandidateTriage; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const { parsed, events } = await this.runStagedAgent("02_candidate_triage.md", "Triage paper candidates before novelty judgment.", { idea, candidates }, validateCandidateTriage, "CandidateTriage", progress);
+    return { triage: parsed, provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: OPENAI_CODEX_API_SHAPE, codex_model: this.model(), events };
+  }
+
+  async readPaperPdf(
+    idea: string,
+    paper: unknown,
+    chunks: unknown[],
+    progress?: (message: string) => void
+  ): Promise<{ paper_note: PdfPaperNote; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const { parsed, events } = await this.runStagedAgent("03_pdf_paper_reader.md", "Read parsed PDF chunks and extract evidence only from the chunks.", { idea, paper, chunks }, validatePdfPaperNote, "PdfPaperNote", progress);
+    return { paper_note: parsed, provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: OPENAI_CODEX_API_SHAPE, codex_model: this.model(), events };
+  }
+
+  async analyzeRelatedWork(
+    idea: string,
+    paperNotes: unknown[],
+    progress?: (message: string) => void
+  ): Promise<{ related_work: RelatedWorkAnalysis; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const { parsed, events } = await this.runStagedAgent("04_related_work_analyst.md", "Synthesize verified paper notes into a related-work map.", { idea, paper_notes: paperNotes }, validateRelatedWorkAnalysis, "RelatedWorkAnalysis", progress);
+    return { related_work: parsed, provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: OPENAI_CODEX_API_SHAPE, codex_model: this.model(), events };
+  }
+
+  async analyzeNovelty(
+    idea: string,
+    relatedWork: unknown,
+    progress?: (message: string) => void
+  ): Promise<{ novelty: NoveltyGapAnalysis; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const { parsed, events } = await this.runStagedAgent("05_novelty_gap_analyst.md", "Compare the idea against verified related work and identify defensible gaps.", { idea, related_work: relatedWork }, validateNoveltyGapAnalysis, "NoveltyGapAnalysis", progress);
+    return { novelty: parsed, provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: OPENAI_CODEX_API_SHAPE, codex_model: this.model(), events };
+  }
+
+  async scoreCcfA(
+    idea: string,
+    evidence: unknown,
+    progress?: (message: string) => void
+  ): Promise<{ scorecard: StrictCcfAReview; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const { parsed, events } = await this.runStagedAgent("06_ccf_a_reviewer.md", "Apply the strict CCF-A evidence rubric and cap rules.", { idea, evidence }, validateStrictCcfAReview, "StrictCcfAReview", progress);
+    return { scorecard: parsed, provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: OPENAI_CODEX_API_SHAPE, codex_model: this.model(), events };
+  }
+
+  async reviewFeasibility(
+    idea: string,
+    constraints: unknown,
+    progress?: (message: string) => void
+  ): Promise<{ feasibility: FeasibilityReview; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const { parsed, events } = await this.runStagedAgent("07_feasibility_reviewer.md", "Review feasibility under the provided time and resource constraints.", { idea, constraints }, validateFeasibilityReview, "FeasibilityReview", progress);
+    return { feasibility: parsed, provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: OPENAI_CODEX_API_SHAPE, codex_model: this.model(), events };
+  }
+
+  async refineIdea(
+    idea: string,
+    reviewContext: unknown,
+    progress?: (message: string) => void
+  ): Promise<{ strategy: ResearchStrategy; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const { parsed, events } = await this.runStagedAgent("08_research_strategist.md", "Propose a revised defensible research direction after strict review.", { idea, review_context: reviewContext }, validateResearchStrategy, "ResearchStrategy", progress);
+    return { strategy: parsed, provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: OPENAI_CODEX_API_SHAPE, codex_model: this.model(), events };
+  }
+
   async discussIdea(
     idea: string,
     conversation: Array<{ role: string; content: string }> = [],
@@ -330,6 +422,20 @@ export class CodexOAuthClient {
     const payload = responsesPayload(buildProjectNamePrompt(idea), projectNameInstructions(), this.model(), this.options.reasoningEffort);
     const { parsed, events } = await this.requestStructured(payload, validateProjectNameSuggestion, progress);
     return { project_name: parsed.project_name, provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: OPENAI_CODEX_API_SHAPE, codex_model: this.model(), events };
+  }
+
+  private async runStagedAgent<T>(
+    promptFile: AgentPromptFile,
+    task: string,
+    context: unknown,
+    parser: (value: unknown) => T,
+    schemaName: string,
+    progress?: (message: string) => void
+  ): Promise<{ parsed: T; events: unknown[] }> {
+    progress?.(`Codex OAuth: building ${promptFile} request`);
+    const prompt = await buildAgentPrompt({ promptFile, task, context });
+    const payload = responsesPayload(prompt, stagedAgentInstructions(schemaName), this.model(), this.options.reasoningEffort);
+    return this.requestStructured(payload, parser, progress);
   }
 
   private async requestStructured<T>(payload: object, parser: (value: unknown) => T, progress?: (message: string) => void): Promise<{ parsed: T; events: unknown[] }> {

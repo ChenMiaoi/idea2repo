@@ -12,6 +12,7 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   splitting: false,
+  onSuccess: "node scripts/copy-agent-prompts.mjs",
   banner: {
     js: "#!/usr/bin/env node"
   }

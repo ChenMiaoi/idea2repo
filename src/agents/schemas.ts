@@ -87,6 +87,81 @@ export const PdfPaperNoteSchema = Type.Object(
   { additionalProperties: false }
 );
 
+export const CandidateTriageSchema = Type.Object(
+  {
+    must_read_core_papers: Type.Array(Type.String()),
+    expanded_papers: Type.Array(Type.String()),
+    baselines: Type.Array(Type.String()),
+    datasets: Type.Array(Type.String()),
+    surveys: Type.Array(Type.String()),
+    weakly_related: Type.Array(Type.String()),
+    duplicates: Type.Array(Type.String()),
+    missing_search_areas: Type.Array(Type.String()),
+    rationale: Type.String()
+  },
+  { additionalProperties: false }
+);
+
+export const RelatedWorkAnalysisSchema = Type.Object(
+  {
+    topic_clusters: Type.Array(Type.Record(Type.String(), Type.String())),
+    related_work_matrix_rows: Type.Array(Type.Record(Type.String(), Type.String())),
+    reviewer_expected_baselines: Type.Array(Type.String()),
+    evaluation_conventions: Type.Array(Type.String()),
+    evidence_warnings: Type.Array(Type.String())
+  },
+  { additionalProperties: false }
+);
+
+export const NoveltyGapAnalysisSchema = Type.Object(
+  {
+    collision_risk: Type.Union([Type.Literal("high"), Type.Literal("medium"), Type.Literal("low")]),
+    collision_reasons: Type.Array(Type.String()),
+    novelty_gaps: Type.Array(Type.String()),
+    defensible_gap: Type.String(),
+    evidence_warnings: Type.Array(Type.String())
+  },
+  { additionalProperties: false }
+);
+
+export const StrictCcfAReviewSchema = Type.Object(
+  {
+    total: Type.Integer({ minimum: 0, maximum: 100 }),
+    dimensions: Type.Record(Type.String(), Type.Number()),
+    cap_reasons: Type.Array(Type.String()),
+    evidence_warnings: Type.Array(Type.String()),
+    recommendations: Type.Array(Type.String())
+  },
+  { additionalProperties: false }
+);
+
+export const FeasibilityReviewSchema = Type.Object(
+  {
+    timeline_weeks: Type.Integer({ minimum: 1 }),
+    feasible_mvp: Type.Array(Type.String()),
+    ambitious_extensions: Type.Array(Type.String()),
+    risks: Type.Array(Type.String()),
+    unavailable_resource_warnings: Type.Array(Type.String()),
+    verdict: Type.String()
+  },
+  { additionalProperties: false }
+);
+
+export const ResearchStrategySchema = Type.Object(
+  {
+    revised_idea: Type.String(),
+    central_hypothesis: Type.String(),
+    baselines: Type.Array(Type.String()),
+    datasets: Type.Array(Type.String()),
+    metrics: Type.Array(Type.String()),
+    ablations: Type.Array(Type.String()),
+    failure_cases: Type.Array(Type.String()),
+    first_4_week_plan: Type.Array(Type.String()),
+    paper_story: Type.String()
+  },
+  { additionalProperties: false }
+);
+
 export const PaperCandidateSchema = Type.Object(
   {
     candidate_id: Type.String(),
@@ -130,6 +205,12 @@ export type SearchPlan = Static<typeof SearchPlanSchema>;
 export type SearchQueryPlan = Static<typeof SearchQueryPlanSchema>;
 export type EvidenceRef = Static<typeof EvidenceRefSchema>;
 export type PdfPaperNote = Static<typeof PdfPaperNoteSchema>;
+export type CandidateTriage = Static<typeof CandidateTriageSchema>;
+export type RelatedWorkAnalysis = Static<typeof RelatedWorkAnalysisSchema>;
+export type NoveltyGapAnalysis = Static<typeof NoveltyGapAnalysisSchema>;
+export type StrictCcfAReview = Static<typeof StrictCcfAReviewSchema>;
+export type FeasibilityReview = Static<typeof FeasibilityReviewSchema>;
+export type ResearchStrategy = Static<typeof ResearchStrategySchema>;
 export type PaperCandidate = Static<typeof PaperCandidateSchema>;
 export type ResearchPipelineSchemaResult = Static<typeof ResearchPipelineResultSchema>;
 
@@ -151,4 +232,28 @@ export function validateSearchPlan(value: unknown): SearchPlan {
 
 export function validatePdfPaperNote(value: unknown): PdfPaperNote {
   return validateWithSchema<PdfPaperNote>(PdfPaperNoteSchema, value, "PdfPaperNote");
+}
+
+export function validateCandidateTriage(value: unknown): CandidateTriage {
+  return validateWithSchema<CandidateTriage>(CandidateTriageSchema, value, "CandidateTriage");
+}
+
+export function validateRelatedWorkAnalysis(value: unknown): RelatedWorkAnalysis {
+  return validateWithSchema<RelatedWorkAnalysis>(RelatedWorkAnalysisSchema, value, "RelatedWorkAnalysis");
+}
+
+export function validateNoveltyGapAnalysis(value: unknown): NoveltyGapAnalysis {
+  return validateWithSchema<NoveltyGapAnalysis>(NoveltyGapAnalysisSchema, value, "NoveltyGapAnalysis");
+}
+
+export function validateStrictCcfAReview(value: unknown): StrictCcfAReview {
+  return validateWithSchema<StrictCcfAReview>(StrictCcfAReviewSchema, value, "StrictCcfAReview");
+}
+
+export function validateFeasibilityReview(value: unknown): FeasibilityReview {
+  return validateWithSchema<FeasibilityReview>(FeasibilityReviewSchema, value, "FeasibilityReview");
+}
+
+export function validateResearchStrategy(value: unknown): ResearchStrategy {
+  return validateWithSchema<ResearchStrategy>(ResearchStrategySchema, value, "ResearchStrategy");
 }

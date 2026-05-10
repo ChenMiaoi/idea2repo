@@ -106,6 +106,43 @@ test("CodexOAuthClient parses project-name suggestions", async () => {
   }
 });
 
+test("CodexOAuthClient runs split staged agent prompts", async () => {
+  const home = await mkdtemp(join(tmpdir(), "idea2repo-staged-agent-"));
+  const previous = process.env.IDEA2REPO_HOME;
+  process.env.IDEA2REPO_HOME = home;
+  try {
+    const storage = new AuthStorage();
+    await storage.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.now() + 3_600_000,
+      accountId: "account-id"
+    });
+    let requestBody = "";
+    const client = new CodexOAuthClient({
+      storage,
+      fetchImpl: async (_url, init) => {
+        requestBody = String(init?.body ?? "");
+        return new Response(JSON.stringify(sampleSearchPlan()), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      },
+      maxRetries: 0
+    });
+    const result = await client.planLiteratureSearch("agent benchmark", { targetVenues: ["NeurIPS"] });
+    assert.equal(result.search_plan.precision_queries.length, 5);
+    assert.equal(result.provider_id, "openai-codex");
+    assert.match(requestBody, /01 Search Planner/);
+    assert.match(requestBody, /SearchPlan/);
+  } finally {
+    if (previous == null) delete process.env.IDEA2REPO_HOME;
+    else process.env.IDEA2REPO_HOME = previous;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("Codex usage parser accepts primary and secondary rate-limit windows", () => {
   const parsed = parseUsageSnapshot(
     {
@@ -205,5 +242,20 @@ function sampleAnalysis() {
     ],
     reviewer_simulation: "Reviewer asks for stronger baselines.",
     artifact_contents: {}
+  };
+}
+
+function sampleSearchPlan() {
+  const query = (value: string) => ({ query: value, source_hints: ["openalex", "dblp"], purpose: "test" });
+  return {
+    core_concepts: ["agent", "benchmark"],
+    synonyms: ["agent evaluation"],
+    precision_queries: [query("p1"), query("p2"), query("p3"), query("p4"), query("p5")],
+    recall_queries: [query("r1"), query("r2"), query("r3"), query("r4"), query("r5")],
+    baseline_queries: [query("baseline")],
+    dataset_metric_queries: [query("dataset metric")],
+    venue_queries: [query("NeurIPS agent benchmark")],
+    collision_queries: [query("agent benchmark prior work")],
+    stop_condition: "enough candidates"
   };
 }
