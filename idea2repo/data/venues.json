@@ -1,0 +1,93 @@
+{
+  "version": "2026.03-seed",
+  "source_note": "Seed venue database for offline Idea2Repo v0.1. Keep this file updated from authoritative CCF, venue, DBLP, OpenReview, ACM, IEEE, Semantic Scholar, and OpenAlex sources before making publication-critical claims.",
+  "domains": {
+    "ai_llm_agent": {
+      "label": "AI / LLM Agent",
+      "aliases": ["ai", "llm", "llm agent", "agent", "人工智能", "智能体"],
+      "primary_venues": ["NeurIPS", "ICML", "ICLR", "ACL", "AAAI"],
+      "secondary_venues": ["CVPR", "ICCV", "EMNLP", "NAACL"],
+      "review_focus": [
+        "new problem formulation",
+        "non-trivial method beyond prompt engineering",
+        "strong long-horizon or agent benchmarks",
+        "ablation and generalization analysis",
+        "comparison with long-context, RAG, memory, planning, and tool-use baselines"
+      ],
+      "keywords": [
+        "agent",
+        "llm",
+        "language model",
+        "memory",
+        "rag",
+        "retrieval",
+        "planning",
+        "tool use",
+        "multi-agent",
+        "benchmark",
+        "reasoning",
+        "alignment",
+        "multimodal"
+      ]
+    },
+    "security": {
+      "label": "Security",
+      "aliases": ["security", "secure", "privacy", "安全", "隐私", "CCS", "S&P", "IEEE S&P", "USENIX Security", "NDSS"],
+      "primary_venues": ["CCS", "IEEE S&P", "USENIX Security", "NDSS"],
+      "secondary_venues": ["ACSAC", "RAID", "PETS"],
+      "review_focus": [
+        "clear threat model",
+        "realistic attacker and defender capabilities",
+        "systematic evaluation instead of isolated demos",
+        "false positive and false negative analysis",
+        "ethics and responsible disclosure boundaries"
+      ],
+      "keywords": [
+        "security",
+        "privacy",
+        "attack",
+        "defense",
+        "threat",
+        "vulnerability",
+        "exploit",
+        "malware",
+        "jailbreak",
+        "red team",
+        "audit",
+        "adversarial",
+        "disclosure"
+      ]
+    },
+    "systems": {
+      "label": "Systems",
+      "aliases": ["systems", "system", "系统", "runtime", "serving", "OSDI", "SOSP", "ASPLOS", "EuroSys", "USENIX ATC", "NSDI", "FAST"],
+      "primary_venues": ["OSDI", "SOSP", "ASPLOS", "EuroSys", "USENIX ATC", "NSDI", "FAST"],
+      "secondary_venues": ["PPoPP", "HPCA", "MICRO", "SC"],
+      "review_focus": [
+        "real system bottleneck",
+        "working prototype",
+        "end-to-end performance evaluation",
+        "throughput, latency, memory, scalability, and cost metrics",
+        "comparison with existing systems baselines"
+      ],
+      "keywords": [
+        "system",
+        "runtime",
+        "serving",
+        "inference",
+        "distributed",
+        "throughput",
+        "latency",
+        "memory system",
+        "scalability",
+        "scheduler",
+        "storage",
+        "network",
+        "database",
+        "query",
+        "optimization",
+        "prototype"
+      ]
+    }
+  }
+}
