@@ -10,6 +10,7 @@ from .permissions import PermissionDeniedError, PermissionPolicy
 from .providers import load_provider_config, safe_provider_report, validate_provider_config
 from .state import status as project_status
 from .state import validate as validate_project
+from .venues import load_venue_database, validate_venue_database
 from .workspace import inspect_workspace
 
 
@@ -88,12 +89,16 @@ def build_command_parser() -> argparse.ArgumentParser:
 
     provider = subparsers.add_parser("provider", help="Inspect provider configuration without exposing secrets.")
     provider.add_argument("action", choices=("validate", "show"))
+
+    venues = subparsers.add_parser("venues", help="Validate or inspect the CCF-A venue database.")
+    venues.add_argument("action", choices=("validate",))
+    venues.add_argument("--path", help="Optional venue database JSON path.")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    command_names = {"generate", "status", "resume", "validate", "doctor", "provider"}
+    command_names = {"generate", "status", "resume", "validate", "doctor", "provider", "venues"}
     parser = build_command_parser() if argv[:1] and argv[0] in command_names else build_parser()
     args = parser.parse_args(argv)
     try:
@@ -153,6 +158,16 @@ def main(argv: list[str] | None = None) -> int:
                     print(error, file=sys.stderr)
                 return 1
             print("Provider configuration valid")
+            return 0
+        if command == "venues":
+            database = load_venue_database(args.path)
+            errors = validate_venue_database(database)
+            if errors:
+                for error in errors:
+                    print(error, file=sys.stderr)
+                return 1
+            total = sum(len(domain.venue_records) for domain in database.domains.values())
+            print(f"Venue database valid: {database.version} ({total} records)")
             return 0
     except (FileExistsError, ValueError, FileNotFoundError, PermissionDeniedError) as exc:
         print(f"error: {exc}", file=sys.stderr)

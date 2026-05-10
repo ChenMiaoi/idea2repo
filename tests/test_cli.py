@@ -88,6 +88,9 @@ class CliTests(unittest.TestCase):
         ):
             self.assertEqual(main(["provider", "validate"]), 0)
 
+    def test_venues_validate_returns_success(self) -> None:
+        self.assertEqual(main(["venues", "validate"]), 0)
+
     def test_main_returns_error_for_non_empty_output_without_force(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "out"

@@ -1,6 +1,6 @@
-{
-  "version": "2026.03-seed",
-  "source_note": "Seed venue database for offline Idea2Repo v0.1. Keep this file updated from authoritative CCF, venue, DBLP, OpenReview, ACM, IEEE, Semantic Scholar, and OpenAlex sources before making publication-critical claims.",
+﻿{
+  "version": "2026.03-v1",
+  "source_note": "Auditable seed venue database for offline Idea2Repo v0.1. Verify against the official CCF catalog, venue sites, DBLP, OpenReview, ACM, IEEE, Semantic Scholar, and OpenAlex before publication-critical claims.",
   "domains": {
     "ai_llm_agent": {
       "label": "AI / LLM Agent",
@@ -28,6 +28,125 @@
         "reasoning",
         "alignment",
         "multimodal"
+      ],
+      "venue_records": [
+        {
+          "name": "NeurIPS",
+          "full_name": "Conference on Neural Information Processing Systems",
+          "ccf_category": "A",
+          "domain": "ai_llm_agent",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/nips/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Seeded from CCF category pages and DBLP venue index."
+        },
+        {
+          "name": "ICML",
+          "full_name": "International Conference on Machine Learning",
+          "ccf_category": "A",
+          "domain": "ai_llm_agent",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/icml/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Seeded from CCF category pages and DBLP venue index."
+        },
+        {
+          "name": "ICLR",
+          "full_name": "International Conference on Learning Representations",
+          "ccf_category": "A",
+          "domain": "ai_llm_agent",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/iclr/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Seeded from CCF category pages and DBLP venue index."
+        },
+        {
+          "name": "ACL",
+          "full_name": "Annual Meeting of the Association for Computational Linguistics",
+          "ccf_category": "A",
+          "domain": "ai_llm_agent",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/acl/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Seeded from CCF category pages and DBLP venue index."
+        },
+        {
+          "name": "AAAI",
+          "full_name": "AAAI Conference on Artificial Intelligence",
+          "ccf_category": "A",
+          "domain": "ai_llm_agent",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/aaai/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Seeded from CCF category pages and DBLP venue index."
+        },
+        {
+          "name": "CVPR",
+          "full_name": "IEEE/CVF Conference on Computer Vision and Pattern Recognition",
+          "ccf_category": "A",
+          "domain": "ai_llm_agent",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/cvpr/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Secondary seed for multimodal agent routing; verify CCF category before publication claims."
+        },
+        {
+          "name": "ICCV",
+          "full_name": "IEEE/CVF International Conference on Computer Vision",
+          "ccf_category": "A",
+          "domain": "ai_llm_agent",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/iccv/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Secondary seed for multimodal agent routing; verify CCF category before publication claims."
+        },
+        {
+          "name": "EMNLP",
+          "full_name": "Conference on Empirical Methods in Natural Language Processing",
+          "ccf_category": "A",
+          "domain": "ai_llm_agent",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/emnlp/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Secondary seed for NLP routing; verify CCF category before publication claims."
+        },
+        {
+          "name": "NAACL",
+          "full_name": "North American Chapter of the Association for Computational Linguistics",
+          "ccf_category": "A",
+          "domain": "ai_llm_agent",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/naacl/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Secondary seed for NLP routing; verify CCF category before publication claims."
+        }
       ]
     },
     "security": {
@@ -56,6 +175,99 @@
         "audit",
         "adversarial",
         "disclosure"
+      ],
+      "venue_records": [
+        {
+          "name": "CCS",
+          "full_name": "ACM Conference on Computer and Communications Security",
+          "ccf_category": "A",
+          "domain": "security",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/ccs/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Seeded from CCF category pages and DBLP venue index."
+        },
+        {
+          "name": "IEEE S&P",
+          "full_name": "IEEE Symposium on Security and Privacy",
+          "ccf_category": "A",
+          "domain": "security",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/sp/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Seeded from CCF category pages and DBLP venue index."
+        },
+        {
+          "name": "USENIX Security",
+          "full_name": "USENIX Security Symposium",
+          "ccf_category": "A",
+          "domain": "security",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/uss/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Seeded from CCF category pages and DBLP venue index."
+        },
+        {
+          "name": "NDSS",
+          "full_name": "Network and Distributed System Security Symposium",
+          "ccf_category": "A",
+          "domain": "security",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/ndss/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Seeded from CCF category pages and DBLP venue index."
+        },
+        {
+          "name": "ACSAC",
+          "full_name": "Annual Computer Security Applications Conference",
+          "ccf_category": "A",
+          "domain": "security",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/acsac/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Secondary seed for security routing; verify CCF category before publication claims."
+        },
+        {
+          "name": "RAID",
+          "full_name": "International Symposium on Research in Attacks, Intrusions and Defenses",
+          "ccf_category": "A",
+          "domain": "security",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/raid/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Secondary seed for security routing; verify CCF category before publication claims."
+        },
+        {
+          "name": "PETS",
+          "full_name": "Privacy Enhancing Technologies Symposium",
+          "ccf_category": "A",
+          "domain": "security",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/pet/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Secondary seed for privacy routing; verify CCF category before publication claims."
+        }
       ]
     },
     "systems": {
@@ -87,6 +299,151 @@
         "query",
         "optimization",
         "prototype"
+      ],
+      "venue_records": [
+        {
+          "name": "OSDI",
+          "full_name": "USENIX Symposium on Operating Systems Design and Implementation",
+          "ccf_category": "A",
+          "domain": "systems",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/osdi/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Seeded from CCF category pages and DBLP venue index."
+        },
+        {
+          "name": "SOSP",
+          "full_name": "ACM Symposium on Operating Systems Principles",
+          "ccf_category": "A",
+          "domain": "systems",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/sosp/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Seeded from CCF category pages and DBLP venue index."
+        },
+        {
+          "name": "ASPLOS",
+          "full_name": "Architectural Support for Programming Languages and Operating Systems",
+          "ccf_category": "A",
+          "domain": "systems",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/asplos/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Seeded from CCF category pages and DBLP venue index."
+        },
+        {
+          "name": "EuroSys",
+          "full_name": "European Conference on Computer Systems",
+          "ccf_category": "A",
+          "domain": "systems",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/eurosys/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Seeded from CCF category pages and DBLP venue index."
+        },
+        {
+          "name": "USENIX ATC",
+          "full_name": "USENIX Annual Technical Conference",
+          "ccf_category": "A",
+          "domain": "systems",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/usenix/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Seeded from CCF category pages and DBLP venue index."
+        },
+        {
+          "name": "NSDI",
+          "full_name": "USENIX Symposium on Networked Systems Design and Implementation",
+          "ccf_category": "A",
+          "domain": "systems",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/nsdi/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Seeded from CCF category pages and DBLP venue index."
+        },
+        {
+          "name": "FAST",
+          "full_name": "USENIX Conference on File and Storage Technologies",
+          "ccf_category": "A",
+          "domain": "systems",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/fast/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Seeded from CCF category pages and DBLP venue index."
+        },
+        {
+          "name": "PPoPP",
+          "full_name": "ACM SIGPLAN Symposium on Principles and Practice of Parallel Programming",
+          "ccf_category": "A",
+          "domain": "systems",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/ppopp/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Secondary seed for systems routing; verify CCF category before publication claims."
+        },
+        {
+          "name": "HPCA",
+          "full_name": "IEEE International Symposium on High-Performance Computer Architecture",
+          "ccf_category": "A",
+          "domain": "systems",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/hpca/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Secondary seed for architecture routing; verify CCF category before publication claims."
+        },
+        {
+          "name": "MICRO",
+          "full_name": "IEEE/ACM International Symposium on Microarchitecture",
+          "ccf_category": "A",
+          "domain": "systems",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/micro/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Secondary seed for architecture routing; verify CCF category before publication claims."
+        },
+        {
+          "name": "SC",
+          "full_name": "International Conference for High Performance Computing, Networking, Storage and Analysis",
+          "ccf_category": "A",
+          "domain": "systems",
+          "venue_type": "conference",
+          "eligible_tracks": ["Full paper", "Regular paper"],
+          "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+          "source_url": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+          "dblp_url": "https://dblp.org/db/conf/sc/",
+          "last_checked": "2026-05-10",
+          "provenance_note": "Secondary seed for HPC routing; verify CCF category before publication claims."
+        }
       ]
     }
   }

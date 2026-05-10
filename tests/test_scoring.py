@@ -1,7 +1,10 @@
 import unittest
+import json
+import tempfile
+from pathlib import Path
 
 from idea2repo.scoring import CapTrigger, diagnose_idea
-from idea2repo.venues import load_venue_database, route_idea
+from idea2repo.venues import load_venue_database, route_idea, validate_venue_database
 
 
 class VenueRoutingTests(unittest.TestCase):
@@ -10,6 +13,100 @@ class VenueRoutingTests(unittest.TestCase):
         self.assertIn("ai_llm_agent", database.domains)
         self.assertIn("USENIX Security", database.domains["security"].primary_venues)
         self.assertIn("OSDI", database.domains["systems"].primary_venues)
+        self.assertEqual(validate_venue_database(database), ())
+        osdi = database.domains["systems"].venue_records["OSDI"]
+        self.assertEqual(osdi.ccf_category, "A")
+        self.assertIn("Full paper", osdi.eligible_tracks)
+        self.assertIn("Workshop", osdi.ineligible_tracks)
+        self.assertTrue(osdi.source_url.startswith("https://"))
+        self.assertTrue(osdi.dblp_url.startswith("https://dblp.org/"))
+
+    def test_venue_database_validation_reports_missing_provenance(self) -> None:
+        data = {
+            "version": "test",
+            "source_note": "test",
+            "domains": {
+                "ai_llm_agent": {
+                    "label": "AI / LLM Agent",
+                    "aliases": ["ai"],
+                    "primary_venues": ["MissingConf"],
+                    "secondary_venues": [],
+                    "review_focus": ["focus"],
+                    "keywords": ["agent"],
+                    "venue_records": [],
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "venues.json"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            database = load_venue_database(path)
+
+        self.assertIn(
+            "ai_llm_agent: missing venue record for MissingConf",
+            validate_venue_database(database),
+        )
+
+    def test_venue_loader_rejects_missing_required_record_fields(self) -> None:
+        data = {
+            "version": "test",
+            "source_note": "test",
+            "domains": {
+                "ai_llm_agent": {
+                    "label": "AI / LLM Agent",
+                    "aliases": ["ai"],
+                    "primary_venues": ["TestConf"],
+                    "secondary_venues": [],
+                    "review_focus": ["focus"],
+                    "keywords": ["agent"],
+                    "venue_records": [{"name": "TestConf"}],
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "venues.json"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "missing required fields"):
+                load_venue_database(path)
+
+    def test_venue_validation_rejects_invalid_category_and_track_conflicts(self) -> None:
+        data = {
+            "version": "test",
+            "source_note": "test",
+            "domains": {
+                "ai_llm_agent": {
+                    "label": "AI / LLM Agent",
+                    "aliases": ["ai"],
+                    "primary_venues": ["TestConf"],
+                    "secondary_venues": [],
+                    "review_focus": ["focus"],
+                    "keywords": ["agent"],
+                    "venue_records": [
+                        {
+                            "name": "TestConf",
+                            "full_name": "Test Conference",
+                            "ccf_category": "seed_secondary",
+                            "domain": "ai_llm_agent",
+                            "venue_type": "conference",
+                            "eligible_tracks": ["Full paper", "Workshop"],
+                            "ineligible_tracks": ["Workshop", "Demo", "Short paper"],
+                            "source_url": "https://example.test/source",
+                            "dblp_url": "https://dblp.org/db/conf/test/",
+                            "last_checked": "2026-05-10",
+                            "provenance_note": "test",
+                        }
+                    ],
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "venues.json"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            errors = validate_venue_database(load_venue_database(path))
+
+        self.assertIn("ai_llm_agent: TestConf has invalid CCF category seed_secondary", errors)
+        self.assertIn("ai_llm_agent: TestConf has contradictory eligible and ineligible tracks", errors)
+        self.assertIn("ai_llm_agent: TestConf cannot mark workshop/demo/short paper as eligible", errors)
 
     def test_routes_agent_memory_idea_to_ai(self) -> None:
         routes = route_idea("LLM agent long-term memory benchmark with ablation")
