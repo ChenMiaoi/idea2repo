@@ -26,6 +26,9 @@ export * from "./skills/analysis/related-work-matrix.js";
 export * from "./skills/analysis/novelty-matrix.js";
 export * from "./skills/analysis/ccf-a-score.js";
 export * from "./skills/analysis/idea-refine.js";
+export * from "./skills/templates/catalog.js";
+export * from "./skills/templates/resolve.js";
+export * from "./skills/templates/types.js";
 export {
   AuthStorage,
   CodexOAuthClient,

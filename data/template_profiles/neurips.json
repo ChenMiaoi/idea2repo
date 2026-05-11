@@ -1,0 +1,39 @@
+{
+  "profile_id": "neurips",
+  "venue_key": "neurips",
+  "venue_name": "NeurIPS",
+  "aliases": ["NeurIPS", "NIPS"],
+  "domain": "ai_llm_agent",
+  "ccf_rank": "A",
+  "template_family": "neurips",
+  "publisher_hint": "NeurIPS",
+  "official_template_url": "https://neurips.cc/Conferences/current/PaperInformation/StyleFiles",
+  "official_template_version": "neurips",
+  "official_template_verified_at": null,
+  "review_modes": ["anonymous", "non_anonymous", "camera_ready"],
+  "default_review_mode": "anonymous",
+  "latex": {
+    "documentclass": "article",
+    "documentclass_options": ["final"],
+    "usepackages": ["neurips_2026"],
+    "bibliography_style": "plain",
+    "citation_style": "numeric",
+    "main_tex_template": "neurips/main.tex",
+    "section_template_dir": "common/sections",
+    "compile_engine": "pdflatex"
+  },
+  "paper_rules": {
+    "columns": 1,
+    "font_size": "10pt",
+    "main_page_limit": 9,
+    "references_count_toward_limit": false,
+    "appendix_allowed": true,
+    "supplement_allowed": true,
+    "checklist_required": true,
+    "anonymity_required": true
+  },
+  "required_files": ["paper/main.tex", "paper/macros.tex", "paper/references.bib"],
+  "optional_files": ["paper/checklist/reproducibility_checklist.tex"],
+  "forbidden_patterns": ["\\\\author\\{[^}]+\\}", "github.com/.+"],
+  "notes": ["Strong baselines, ablations, generalization, and limitations are expected."]
+}

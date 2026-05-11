@@ -1,0 +1,38 @@
+{
+  "profile_id": "springer-lncs",
+  "venue_key": "springer-lncs",
+  "venue_name": "Springer LNCS",
+  "aliases": ["LNCS", "Springer"],
+  "domain": "general",
+  "template_family": "springer",
+  "publisher_hint": "Springer",
+  "official_template_url": "https://www.springer.com/gp/computer-science/lncs/conference-proceedings-guidelines",
+  "official_template_version": "llncs",
+  "official_template_verified_at": null,
+  "review_modes": ["anonymous", "non_anonymous", "camera_ready"],
+  "default_review_mode": "anonymous",
+  "latex": {
+    "documentclass": "llncs",
+    "documentclass_options": [],
+    "usepackages": [],
+    "bibliography_style": "splncs04",
+    "citation_style": "numeric",
+    "main_tex_template": "springer-lncs/main.tex",
+    "section_template_dir": "common/sections",
+    "compile_engine": "pdflatex"
+  },
+  "paper_rules": {
+    "columns": 1,
+    "font_size": "10pt",
+    "main_page_limit": null,
+    "references_count_toward_limit": null,
+    "appendix_allowed": true,
+    "supplement_allowed": true,
+    "checklist_required": false,
+    "anonymity_required": false
+  },
+  "required_files": ["paper/main.tex", "paper/macros.tex", "paper/references.bib"],
+  "optional_files": ["paper/appendix/appendix.tex"],
+  "forbidden_patterns": [],
+  "notes": ["Use as non-CCF generic conference fallback when Springer proceedings are requested."]
+}

@@ -1,0 +1,39 @@
+{
+  "profile_id": "usenix-security",
+  "venue_key": "usenix-security",
+  "venue_name": "USENIX Security Symposium",
+  "aliases": ["USENIX Security", "Security"],
+  "domain": "security",
+  "ccf_rank": "A",
+  "template_family": "usenix",
+  "publisher_hint": "USENIX",
+  "official_template_url": "https://www.usenix.org/conferences/author-resources/paper-templates",
+  "official_template_version": "usenix",
+  "official_template_verified_at": null,
+  "review_modes": ["anonymous", "non_anonymous", "camera_ready"],
+  "default_review_mode": "anonymous",
+  "latex": {
+    "documentclass": "article",
+    "documentclass_options": ["letterpaper", "twocolumn", "10pt"],
+    "usepackages": ["usenix"],
+    "bibliography_style": "plain",
+    "citation_style": "numeric",
+    "main_tex_template": "usenix/main.tex",
+    "section_template_dir": "common/sections",
+    "compile_engine": "pdflatex"
+  },
+  "paper_rules": {
+    "columns": 2,
+    "font_size": "10pt",
+    "main_page_limit": null,
+    "references_count_toward_limit": null,
+    "appendix_allowed": true,
+    "supplement_allowed": true,
+    "checklist_required": false,
+    "anonymity_required": true
+  },
+  "required_files": ["paper/main.tex", "paper/macros.tex", "paper/references.bib"],
+  "optional_files": ["paper/appendix/appendix.tex"],
+  "forbidden_patterns": ["\\\\author\\{[^}]+\\}", "github.com/.+"],
+  "notes": ["Security submissions need threat model, ethics, and responsible disclosure when applicable."]
+}

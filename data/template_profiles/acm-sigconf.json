@@ -1,0 +1,39 @@
+{
+  "profile_id": "acm-sigconf",
+  "venue_key": "acm-ccs",
+  "venue_name": "ACM Conference",
+  "aliases": ["ACM CCS", "CCS", "SIGCOMM", "SOSP", "ASPLOS"],
+  "domain": "security",
+  "ccf_rank": "A",
+  "template_family": "acm",
+  "publisher_hint": "ACM",
+  "official_template_url": "https://www.acm.org/publications/proceedings-template",
+  "official_template_version": "acmart",
+  "official_template_verified_at": null,
+  "review_modes": ["anonymous", "non_anonymous", "camera_ready"],
+  "default_review_mode": "anonymous",
+  "latex": {
+    "documentclass": "acmart",
+    "documentclass_options": ["sigconf", "review", "anonymous"],
+    "usepackages": [],
+    "bibliography_style": "ACM-Reference-Format",
+    "citation_style": "numeric",
+    "main_tex_template": "acm-sigconf/main.tex",
+    "section_template_dir": "common/sections",
+    "compile_engine": "pdflatex"
+  },
+  "paper_rules": {
+    "columns": 2,
+    "font_size": "9pt",
+    "main_page_limit": null,
+    "references_count_toward_limit": null,
+    "appendix_allowed": true,
+    "supplement_allowed": true,
+    "checklist_required": true,
+    "anonymity_required": true
+  },
+  "required_files": ["paper/main.tex", "paper/macros.tex", "paper/references.bib"],
+  "optional_files": ["paper/checklist/reproducibility_checklist.tex", "paper/appendix/appendix.tex"],
+  "forbidden_patterns": ["\\\\author\\{[^}]+\\}", "github.com/.+"],
+  "notes": ["Use ACM review anonymous mode until camera-ready."]
+}

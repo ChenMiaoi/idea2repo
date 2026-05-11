@@ -1,0 +1,39 @@
+{
+  "profile_id": "cvf",
+  "venue_key": "cvf",
+  "venue_name": "CVF Conference",
+  "aliases": ["CVPR", "ICCV", "ECCV"],
+  "domain": "ai_llm_agent",
+  "ccf_rank": "A",
+  "template_family": "cvf",
+  "publisher_hint": "CVF",
+  "official_template_url": "https://cvpr.thecvf.com/Conferences/current/AuthorGuidelines",
+  "official_template_version": "cvpr",
+  "official_template_verified_at": null,
+  "review_modes": ["anonymous", "non_anonymous", "camera_ready"],
+  "default_review_mode": "anonymous",
+  "latex": {
+    "documentclass": "article",
+    "documentclass_options": ["10pt", "twocolumn", "letterpaper"],
+    "usepackages": ["cvpr"],
+    "bibliography_style": "ieeenat_fullname",
+    "citation_style": "numeric",
+    "main_tex_template": "cvf/main.tex",
+    "section_template_dir": "common/sections",
+    "compile_engine": "pdflatex"
+  },
+  "paper_rules": {
+    "columns": 2,
+    "font_size": "10pt",
+    "main_page_limit": 8,
+    "references_count_toward_limit": false,
+    "appendix_allowed": true,
+    "supplement_allowed": true,
+    "checklist_required": true,
+    "anonymity_required": true
+  },
+  "required_files": ["paper/main.tex", "paper/macros.tex", "paper/references.bib"],
+  "optional_files": ["paper/checklist/reproducibility_checklist.tex"],
+  "forbidden_patterns": ["\\\\author\\{[^}]+\\}", "github.com/.+"],
+  "notes": ["Verify current CVF author kit and checklist requirements."]
+}

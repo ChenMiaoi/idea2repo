@@ -1,0 +1,38 @@
+{
+  "profile_id": "generic-article",
+  "venue_key": "generic",
+  "venue_name": "Generic Article",
+  "aliases": ["generic", "article"],
+  "domain": "general",
+  "template_family": "custom",
+  "publisher_hint": "Generic",
+  "official_template_url": null,
+  "official_template_version": "article",
+  "official_template_verified_at": null,
+  "review_modes": ["anonymous", "non_anonymous", "camera_ready"],
+  "default_review_mode": "anonymous",
+  "latex": {
+    "documentclass": "article",
+    "documentclass_options": [],
+    "usepackages": [],
+    "bibliography_style": "plain",
+    "citation_style": "numeric",
+    "main_tex_template": "generic/main.tex",
+    "section_template_dir": "common/sections",
+    "compile_engine": "pdflatex"
+  },
+  "paper_rules": {
+    "columns": 1,
+    "font_size": "10pt",
+    "main_page_limit": null,
+    "references_count_toward_limit": null,
+    "appendix_allowed": true,
+    "supplement_allowed": true,
+    "checklist_required": false,
+    "anonymity_required": false
+  },
+  "required_files": ["paper/main.tex", "paper/macros.tex", "paper/references.bib"],
+  "optional_files": ["paper/appendix/appendix.tex"],
+  "forbidden_patterns": [],
+  "notes": ["Fallback only; verify official venue templates before submission."]
+}

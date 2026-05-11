@@ -1,0 +1,39 @@
+{
+  "profile_id": "iclr",
+  "venue_key": "iclr",
+  "venue_name": "ICLR",
+  "aliases": ["ICLR"],
+  "domain": "ai_llm_agent",
+  "ccf_rank": "A",
+  "template_family": "iclr",
+  "publisher_hint": "OpenReview",
+  "official_template_url": "https://iclr.cc/Conferences/current/AuthorGuide",
+  "official_template_version": "iclr",
+  "official_template_verified_at": null,
+  "review_modes": ["anonymous", "non_anonymous", "camera_ready"],
+  "default_review_mode": "anonymous",
+  "latex": {
+    "documentclass": "article",
+    "documentclass_options": [],
+    "usepackages": ["iclr2026_conference"],
+    "bibliography_style": "iclr2026_conference",
+    "citation_style": "author_year",
+    "main_tex_template": "iclr/main.tex",
+    "section_template_dir": "common/sections",
+    "compile_engine": "pdflatex"
+  },
+  "paper_rules": {
+    "columns": 1,
+    "font_size": "10pt",
+    "main_page_limit": 9,
+    "references_count_toward_limit": false,
+    "appendix_allowed": true,
+    "supplement_allowed": true,
+    "checklist_required": false,
+    "anonymity_required": true
+  },
+  "required_files": ["paper/main.tex", "paper/macros.tex", "paper/references.bib"],
+  "optional_files": ["paper/appendix/appendix.tex"],
+  "forbidden_patterns": ["\\\\author\\{[^}]+\\}", "github.com/.+"],
+  "notes": ["OpenReview anonymity and supplementary policies must be checked for the target year."]
+}

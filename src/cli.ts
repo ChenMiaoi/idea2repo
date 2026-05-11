@@ -29,8 +29,10 @@ import { relatedWorkMatrixCsv, topicClustersMarkdown } from "./skills/analysis/r
 import { assessNovelty, noveltyMatrixMarkdown } from "./skills/analysis/novelty-matrix.js";
 import { strictCcfAScore, strictScoreMarkdown } from "./skills/analysis/ccf-a-score.js";
 import { experimentPlanMarkdown, feasibilityMarkdown, revisedIdeaMarkdown } from "./skills/analysis/idea-refine.js";
+import { loadTemplateProfiles, validateTemplateProfiles } from "./skills/templates/catalog.js";
+import { resolveTemplateProfile, templateDecisionMarkdown } from "./skills/templates/resolve.js";
 
-const commandNames = new Set(["research", "generate", "literature", "papers", "score", "refine", "status", "resume", "validate", "doctor", "auth", "login", "logout", "provider", "venues", "github", "api", "web"]);
+const commandNames = new Set(["research", "generate", "literature", "papers", "score", "refine", "templates", "status", "resume", "validate", "doctor", "auth", "login", "logout", "provider", "venues", "github", "api", "web"]);
 
 type ParsedArgs = {
   _: string[];
@@ -65,6 +67,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         return await commandScore(rest);
       case "refine":
         return await commandRefine(rest);
+      case "templates":
+        return await commandTemplates(rest);
       case "status":
         return await commandStatus(rest);
       case "resume":
@@ -188,6 +192,47 @@ async function commandRefine(argv: string[]): Promise<number> {
   await writeText(ensureChild(root, "docs/diagnosis/feasibility_report.md"), feasibilityMarkdown(valuesFlag(parsed, "resource"), numberFlag(parsed, "weeks", 12)));
   console.log(`Revised idea written: ${ensureChild(root, "docs/proposal/revised_idea.md")}`);
   return 0;
+}
+
+async function commandTemplates(argv: string[]): Promise<number> {
+  const action = argv[0] ?? "list";
+  const parsed = parseArgs(argv.slice(1));
+  if (action === "list") {
+    for (const profile of loadTemplateProfiles()) {
+      console.log(`${profile.profile_id}\t${profile.venue_key}\t${profile.template_family}\t${profile.venue_name}`);
+    }
+    return 0;
+  }
+  if (action === "validate") {
+    const errors = validateTemplateProfiles();
+    if (errors.length) {
+      for (const error of errors) console.error(error);
+      return 1;
+    }
+    console.log(`Template profiles valid: ${loadTemplateProfiles().length}`);
+    return 0;
+  }
+  if (action === "show") {
+    const venueArg = stringFlag(parsed, "venue") ?? (parsed._.join(" ").trim() || undefined);
+    const year = optionalNumberFlag(parsed, "year");
+    const input = {
+      venue: venueArg,
+      domain: stringFlag(parsed, "domain") ?? undefined,
+      family: stringFlag(parsed, "family") ?? undefined,
+      year,
+      mode: normalizeTemplateMode(stringFlag(parsed, "mode") ?? stringFlag(parsed, "review-mode")),
+      paperType: stringFlag(parsed, "paper-type") ?? undefined
+    };
+    const result = await resolveTemplateProfile(input);
+    console.log(JSON.stringify(result, null, 2));
+    const root = stringFlag(parsed, "output");
+    if (root) {
+      await writeText(ensureChild(root, "docs/submission/venue_template_profile.json"), JSON.stringify(result.profile, null, 2) + "\n");
+      await writeText(ensureChild(root, "docs/submission/template_decision.md"), templateDecisionMarkdown(result, input));
+    }
+    return 0;
+  }
+  throw new Error(`unknown templates action: ${action}`);
 }
 
 async function commandGenerate(argv: string[]): Promise<number> {
@@ -500,6 +545,21 @@ function numberFlag(parsed: ParsedArgs, name: string, fallback: number): number 
   return Number.isFinite(value) ? value : fallback;
 }
 
+function optionalNumberFlag(parsed: ParsedArgs, name: string): number | undefined {
+  const raw = stringFlag(parsed, name);
+  if (raw == null) return undefined;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeTemplateMode(mode: string | null): "review" | "camera_ready" | undefined {
+  if (!mode) return undefined;
+  const normalized = mode.toLowerCase().replace("-", "_");
+  if (normalized === "camera_ready") return "camera_ready";
+  if (normalized === "review" || normalized === "anonymous" || normalized === "non_anonymous") return "review";
+  return undefined;
+}
+
 async function ideaFromArgsOrManifest(parsed: ParsedArgs, root: string): Promise<string> {
   const idea = parsed._.join(" ").trim() || stringFlag(parsed, "idea");
   if (idea) return idea;
@@ -557,6 +617,7 @@ Usage:
   idea2repo papers analyze [--output dir]
   idea2repo score [--output dir] [--strict-ccf-a]
   idea2repo refine [--output dir]
+  idea2repo templates list|show|validate
   idea2repo status|resume|validate [--output dir]
   idea2repo auth status|login|logout
   idea2repo provider list|show|validate
