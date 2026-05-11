@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CandidateTriage, FeasibilityReview, IdeaBrief, NoveltyGapAnalysis, PdfPaperNote, RelatedWorkAnalysis, ResearchStrategy, SearchPlan, StrictCcfAReview } from "../agents/schemas.js";
 import { CodexOAuthClient } from "../auth/codex-oauth.js";
-import { paperCandidateToRecord, type PaperRecord } from "../literature.js";
+import { paperCandidateToRecord, type LiteratureSearchOptions, type LiteratureSearchResult, type PaperRecord } from "../literature.js";
 import { diagnoseIdea } from "../scoring.js";
 import { exists } from "../state.js";
 import { evidenceRowsCsv, evidenceRowsMarkdown, evidenceText, extractEvidenceRows } from "../skills/analysis/evidence-extract.js";
@@ -11,10 +11,8 @@ import { strictCcfAScore, strictScoreMarkdown } from "../skills/analysis/ccf-a-s
 import { experimentPlanMarkdown, feasibilityMarkdown, revisedIdeaMarkdown } from "../skills/analysis/idea-refine.js";
 import { assessNovelty, noveltyMatrixMarkdown } from "../skills/analysis/novelty-matrix.js";
 import { relatedWorkMatrixCsv, topicClustersMarkdown } from "../skills/analysis/related-work-matrix.js";
-import { searchLiteratureAsync } from "../literature.js";
 import type { LiteratureSource, PaperCandidate } from "../skills/literature/types.js";
-import { acquirePdfs } from "../skills/pdf/acquire.js";
-import { buildPdfChunkIndex, type PdfChunkIndexEntry } from "../skills/pdf/chunk.js";
+import type { PdfChunkIndexEntry } from "../skills/pdf/chunk.js";
 import type { PdfManifestRecord } from "../skills/pdf/provenance.js";
 import { pdfChunksEqual, validateDownloadedPdfManifest } from "../skills/pdf/trust.js";
 import { anonymityMarkdown, checkTemplateComplianceArtifacts, complianceMarkdown } from "../skills/templates/compliance.js";
@@ -22,8 +20,10 @@ import { createZipArchive, type ZipEntry } from "../skills/templates/package.js"
 import { resolveTemplateProfile, templateDecisionMarkdown } from "../skills/templates/resolve.js";
 import { renderPaper } from "../skills/templates/render.js";
 import type { TemplateResolveInput } from "../skills/templates/types.js";
+import { approvalPolicyForMode } from "../runtime/approvals.js";
 import { DecisionRecorder } from "../runtime/decisions.js";
 import { runtimeTimestamp, type EventSink, type Idea2RepoEvent } from "../runtime/events.js";
+import { createCoreToolRegistry, createToolContext } from "../runtime/tools.js";
 import { createResearchPipelineState, markStage, readResearchPipelineState, writeResearchPipelineState, type ResearchPipelineState } from "./stage-state.js";
 import { researchStages } from "./stages.js";
 
@@ -83,6 +83,14 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     await emitRuntimeEvent({ type: "run.cancelled", run_id: runId, reason: abortReason(options.signal), timestamp: runtimeTimestamp() });
     throwIfAborted(options.signal);
   }
+  const toolRegistry = createCoreToolRegistry();
+  const toolContext = createToolContext({
+    runId,
+    outputRoot,
+    events: options.events,
+    permissions: approvalPolicyForMode("generate", { allowNetwork: Boolean(options.allowNetwork), allowOverwrite: true }),
+    recordToolCalls: Boolean(options.outputRoot)
+  });
   const restoredState = options.outputRoot ? await readResearchPipelineState(outputRoot) : null;
   if (restoredState && restoredState.idea !== idea) throw new Error(`research pipeline state belongs to a different idea: ${restoredState.idea}`);
   let state = restoredState ?? createResearchPipelineState(idea, options.outputRoot);
@@ -220,13 +228,13 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
   } else {
     await setStage("literature_search", "running");
     const queries = searchPlanQueries(searchPlan);
-    const literature = await searchLiteratureAsync({
+    const literature = await toolRegistry.execute<LiteratureSearchOptions, LiteratureSearchResult>("literature.search", {
       queries,
       allowNetwork: Boolean(options.allowNetwork),
       limit: options.maxPapers ?? 20,
       idea,
       sources: options.sources as LiteratureSource[] | undefined
-    });
+    }, toolContext);
     warnings.push(...literature.warnings);
     candidates = literature.candidates;
     searchReport = literature.search_report;
@@ -272,18 +280,19 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
       warnings.push("PDF acquisition resume ignored because one or more downloaded PDF records failed provenance validation.");
     }
     await setStage("pdf_acquisition", "running");
-    manifest = await acquirePdfs(candidates, {
+    manifest = await toolRegistry.execute<{ candidates: PaperCandidate[]; outputRoot: string; allowNetwork: boolean; downloadPdfs: boolean }, PdfManifestRecord[]>("pdf.acquire", {
+      candidates,
       outputRoot,
       allowNetwork: Boolean(options.allowNetwork),
       downloadPdfs: Boolean(options.downloadPdfs)
-    });
+    }, toolContext);
     await setStage("pdf_acquisition", candidates.length ? "completed" : "skipped", candidates.length ? undefined : "No candidates available for PDF acquisition.");
   }
 
   let chunks: PdfChunkIndexEntry[];
   let agentPaperNotes: PdfPaperNote[] = [];
   const resumedChunks = await readJsonArtifact<PdfChunkIndexEntry[]>(readArtifact, "docs/reference/pdf_chunks.json");
-  const parsedManifestChunks = manifest.length ? await buildPdfChunkIndex(outputRoot, manifest) : [];
+  const parsedManifestChunks = await toolRegistry.execute<{ root: string; manifest: PdfManifestRecord[] }, PdfChunkIndexEntry[]>("pdf.chunk", { root: outputRoot, manifest }, toolContext);
   const trustedResumedChunks = resumedChunks && pdfChunksEqual(resumedChunks, parsedManifestChunks) ? parsedManifestChunks : null;
   const canResumePdfReading = Boolean(
     trustedResumedChunks?.length &&
@@ -303,7 +312,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     await setStage("pdf_reading", chunks.length ? "completed" : "skipped", chunks.length ? undefined : "No downloaded PDFs were available for reading.");
   }
 
-  const evidenceRows = extractEvidenceRows(chunks);
+  const evidenceRows = await toolRegistry.execute<{ chunks: PdfChunkIndexEntry[] }, ReturnType<typeof extractEvidenceRows>>("evidence.extract", { chunks }, toolContext);
   const verifiedEvidenceRows = evidenceRows.filter((row) => row.status === "verified" && row.page && row.quote && row.chunk_id);
   const hasVerifiedPdfEvidence = verifiedEvidenceRows.length > 0;
   const noteArtifacts = { ...evidenceRowsMarkdown(evidenceRows), ...paperNoteArtifacts(agentPaperNotes, chunks) };
@@ -388,7 +397,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
 
   const verifiedPaperCount = verifiedEvidencePaperCount(evidenceRows);
   const evidence = evidenceText(evidenceRows);
-  const score = strictCcfAScore({
+  const score = await toolRegistry.execute<Parameters<typeof strictCcfAScore>[0], ReturnType<typeof strictCcfAScore>>("score.ccf_a_strict", {
     verifiedRelatedWorkCount: verifiedPaperCount,
     pdfReadCount: new Set(chunks.map((chunk) => chunk.paper_id)).size,
     corePaperCount: verifiedPaperCount,
@@ -405,7 +414,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     hasPrototype: evidence.includes("prototype"),
     venueExpectsStrongMlBaselines: /neurips|icml|iclr|acl/i.test(options.venue ?? ""),
     hasStrongMlBaselines: evidence.includes("baseline")
-  });
+  }, toolContext);
   let agentScore: StrictCcfAReview | null = null;
   const strictScoreResumed = canResumePdfReading && hasVerifiedPdfEvidence && (await canResumeStage("ccf_a_strict_scoring"));
   if (!strictScoreResumed) {

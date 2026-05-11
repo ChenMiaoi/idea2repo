@@ -2,6 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { buildGithubExportPlan, publishWithGh } from "../github-export.js";
+import { searchLiteratureAsync, type LiteratureSearchOptions, type LiteratureSearchResult } from "../literature.js";
+import { strictCcfAScore, type StrictScoreInput, type StrictScoreResult } from "../skills/analysis/ccf-a-score.js";
+import { extractEvidenceRows, type ClaimEvidenceRow } from "../skills/analysis/evidence-extract.js";
+import { acquirePdfs, type PdfAcquireOptions } from "../skills/pdf/acquire.js";
+import { buildPdfChunkIndex, type PdfChunkIndexEntry } from "../skills/pdf/chunk.js";
+import type { PdfManifestRecord } from "../skills/pdf/provenance.js";
+import type { PaperCandidate } from "../skills/literature/types.js";
 import { ensureChild, exists } from "../state.js";
 import { snapshotArtifact } from "./artifacts.js";
 import { DecisionRecorder, type DecisionInput } from "./decisions.js";
@@ -117,6 +124,7 @@ export function createToolContext(options: {
   permissions?: ApprovalPolicy;
   approvals?: ApprovalRecorder;
   toolCalls?: ToolCallRecorder;
+  recordToolCalls?: boolean;
 }): ToolContext {
   const permissions = options.permissions ?? approvalPolicyForMode("generate");
   return {
@@ -125,7 +133,7 @@ export function createToolContext(options: {
     events: options.events ?? noopEvents,
     permissions,
     approvals: options.approvals,
-    toolCalls: options.toolCalls ?? new ToolCallRecorder(options.outputRoot)
+    toolCalls: options.recordToolCalls === false ? undefined : options.toolCalls ?? new ToolCallRecorder(options.outputRoot)
   };
 }
 
@@ -210,6 +218,60 @@ export function createCoreToolRegistry(): ToolRegistry {
     }
   });
 
+  registry.register<LiteratureSearchOptions, LiteratureSearchResult>({
+    name: "literature.search",
+    description: "Search literature candidates through configured sources.",
+    risk: (input) => input.allowNetwork ? ["read", "network"] : ["read"],
+    inputSchema: { type: "object", required: ["queries"], properties: { queries: { type: "array" }, allowNetwork: { type: "boolean" }, limit: { type: "number" } } },
+    summarizeInput: (input) => `queries=${(input.queries ?? (input.query ? [input.query] : [])).length}; allow_network=${Boolean(input.allowNetwork)}; limit=${input.limit ?? "default"}`,
+    summarizeOutput: (output) => `candidates=${output.candidates.length}; warnings=${output.warnings.length}`,
+    handler: (input) => searchLiteratureAsync(input)
+  });
+
+  registry.register<PdfAcquireToolInput, PdfManifestRecord[]>({
+    name: "pdf.acquire",
+    description: "Acquire public PDFs and write validated downloads into the generated repository.",
+    risk: (input) => [
+      "read",
+      ...(input.downloadPdfs ? ["write" as const] : []),
+      ...(input.allowNetwork && input.downloadPdfs ? ["network" as const] : [])
+    ],
+    inputSchema: { type: "object", required: ["candidates", "outputRoot"], properties: { candidates: { type: "array" }, outputRoot: { type: "string" }, allowNetwork: { type: "boolean" }, downloadPdfs: { type: "boolean" } } },
+    summarizeInput: (input) => `candidates=${input.candidates.length}; download_pdfs=${Boolean(input.downloadPdfs)}; allow_network=${Boolean(input.allowNetwork)}`,
+    summarizeOutput: (output) => `pdf_records=${output.length}; downloaded=${output.filter((record) => record.status === "downloaded").length}`,
+    handler: (input) => acquirePdfs(input.candidates, input)
+  });
+
+  registry.register<{ root: string; manifest: PdfManifestRecord[] }, PdfChunkIndexEntry[]>({
+    name: "pdf.chunk",
+    description: "Build a stable chunk index from validated PDF manifest records.",
+    risk: ["read"],
+    inputSchema: { type: "object", required: ["root", "manifest"], properties: { root: { type: "string" }, manifest: { type: "array" } } },
+    summarizeInput: (input) => `manifest_records=${input.manifest.length}`,
+    summarizeOutput: (output) => `chunks=${output.length}`,
+    handler: (input) => buildPdfChunkIndex(input.root, input.manifest)
+  });
+
+  registry.register<{ chunks: PdfChunkIndexEntry[] }, ClaimEvidenceRow[]>({
+    name: "evidence.extract",
+    description: "Extract claim-evidence rows from PDF chunks.",
+    risk: ["read"],
+    inputSchema: { type: "object", required: ["chunks"], properties: { chunks: { type: "array" } } },
+    summarizeInput: (input) => `chunks=${input.chunks.length}`,
+    summarizeOutput: (output) => `evidence_rows=${output.length}; verified=${output.filter((row) => row.status === "verified").length}`,
+    handler: (input) => Promise.resolve(extractEvidenceRows(input.chunks))
+  });
+
+  registry.register<StrictScoreInput, StrictScoreResult>({
+    name: "score.ccf_a_strict",
+    description: "Apply strict CCF-A readiness scoring caps.",
+    risk: ["read"],
+    inputSchema: { type: "object" },
+    summarizeInput: (input) => `verified_related_work=${input.verifiedRelatedWorkCount ?? 0}; pdf_read=${input.pdfReadCount ?? 0}; collision=${Boolean(input.highPriorWorkCollision)}`,
+    summarizeOutput: (output) => `strict_score=${output.total}; caps=${output.caps.length}`,
+    handler: (input) => Promise.resolve(strictCcfAScore(input))
+  });
+
   registry.register<{ repoName?: string; createIssues?: boolean }, Awaited<ReturnType<typeof buildGithubExportPlan>>>({
     name: "github.dry_run",
     description: "Build GitHub publish payloads without network publication.",
@@ -274,6 +336,10 @@ export type ArtifactWriteOutput = {
 };
 
 export type ArtifactAdoptInput = ArtifactWriteOutput;
+
+export type PdfAcquireToolInput = PdfAcquireOptions & {
+  candidates: PaperCandidate[];
+};
 
 function approvalRisks(risk: ToolRisk[]): ApprovalRisk[] {
   return [...new Set(risk.map((item) => (item === "write-state" ? "write" : item)))];

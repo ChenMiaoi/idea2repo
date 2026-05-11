@@ -98,6 +98,9 @@ test("research generation adopts package helper artifacts into tool records", as
       jsonlEvents: true
     });
     const calls = await readToolCallRecords(output);
+    for (const toolName of ["literature.search", "pdf.acquire", "pdf.chunk", "evidence.extract", "score.ccf_a_strict"]) {
+      assert.ok(calls.some((record) => record.tool_name === toolName && record.status === "completed"), `missing completed ${toolName}`);
+    }
     assert.ok(calls.some((record) => record.tool_name === "artifact.adopt" && /paper\/submission\/overleaf.zip/.test(record.input_summary)));
     assert.ok(calls.some((record) => record.tool_name === "artifact.adopt" && /paper\/submission\/submission.zip/.test(record.input_summary)));
   } finally {
