@@ -6,6 +6,8 @@ import { test } from "node:test";
 import { buildPdfChunkIndex, chunkPdf } from "../src/skills/pdf/chunk.js";
 import { acquirePdf, acquirePdfs } from "../src/skills/pdf/acquire.js";
 import { parsePdf } from "../src/skills/pdf/parse.js";
+import { assessPdfExtractionQuality } from "../src/skills/pdf/quality.js";
+import { resolvePublicPdfUrls, resolvePublicPdfUrlsAsync } from "../src/skills/pdf/resolve.js";
 import { isPdf } from "../src/skills/pdf/validate.js";
 import type { PdfManifestRecord } from "../src/skills/pdf/provenance.js";
 import type { LiteraturePaperCandidate } from "../src/literature.js";
@@ -27,7 +29,81 @@ test("PDF acquisition records sha256 bytes status and provenance", async () => {
     assert.equal(record.license_hint, "arXiv");
     assert.equal(record.downloaded_at, "2026-05-11T00:00:00Z");
     assert.equal(record.pdf_sha256?.length, 64);
+    assert.equal(record.extraction_quality?.page_count, 1);
+    assert.equal(record.extraction_quality?.pages[0]?.page, 1);
+    assert.notEqual(record.extraction_quality?.quality, "empty");
     assert.equal(isPdf(await readFile(join(root, record.pdf_path!))), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("PDF resolver derives public PDF URLs from known paper sources", async () => {
+  const resolved = resolvePublicPdfUrls(candidate({
+    arxiv_id: "2601.00001",
+    pdf_urls: [
+      "https://aclanthology.org/2026.acl-long.1/.pdf",
+      "https://openreview.net/forum?id=fromPdfUrls",
+      "https://arxiv.org/abs/2601.00004",
+      "https://example.org/not-a-pdf"
+    ],
+    source_urls: [
+      "https://arxiv.org/abs/2601.00001",
+      "https://openreview.net/forum?id=abc123",
+      "https://aclanthology.org/2025.acl-main.10/"
+    ]
+  })).map((item) => item.url);
+
+  assert.deepEqual(resolved, [
+    "https://aclanthology.org/2026.acl-long.1.pdf",
+    "https://openreview.net/pdf?id=fromPdfUrls",
+    "https://arxiv.org/pdf/2601.00004",
+    "https://arxiv.org/pdf/2601.00001",
+    "https://openreview.net/pdf?id=abc123",
+    "https://aclanthology.org/2025.acl-main.10.pdf"
+  ]);
+
+  assert.deepEqual(resolvePublicPdfUrls(candidate({
+    doi: "10.18653/v1/2025.acl-main.1",
+    source_urls: ["https://doi.org/10.18653/v1/2025.acl-main.1"],
+    pdf_urls: []
+  })), []);
+
+  const openAlexResolved = await resolvePublicPdfUrlsAsync(candidate({ doi: "10.1234/example", source_urls: [], pdf_urls: [] }), {
+    allowNetwork: true,
+    fetchImpl: async (input) => {
+      assert.match(String(input), /api\.openalex\.org\/works\/doi:/);
+      return Response.json({
+        primary_location: { pdf_url: "https://arxiv.org/pdf/2601.00002" },
+        best_oa_location: { landing_page_url: "https://openreview.net/forum?id=openalex" },
+        open_access: { oa_url: "https://arxiv.org/abs/2601.00003" }
+      });
+    }
+  });
+  assert.deepEqual(openAlexResolved.map((item) => item.url), [
+    "https://arxiv.org/pdf/2601.00002",
+    "https://openreview.net/pdf?id=openalex",
+    "https://arxiv.org/pdf/2601.00003"
+  ]);
+});
+
+test("PDF acquisition downloads a resolved arXiv PDF when pdf_urls is absent", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-pdf-resolve-"));
+  let requested = "";
+  try {
+    const record = await acquirePdf(candidate({ pdf_urls: [], source_urls: ["https://arxiv.org/abs/1234.5678"] }), {
+      outputRoot: root,
+      allowNetwork: true,
+      downloadPdfs: true,
+      fetchImpl: async (input) => {
+        requested = String(input);
+        return new Response(tinyPdf, { status: 200, headers: { "content-type": "application/pdf" } });
+      },
+      now: () => "2026-05-11T00:00:00Z"
+    });
+    assert.equal(requested, "https://arxiv.org/pdf/1234.5678");
+    assert.equal(record.status, "downloaded");
+    assert.equal(record.source_url, "https://arxiv.org/pdf/1234.5678");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -110,9 +186,28 @@ test("PDF parse and chunk assign stable page chunk ids", async () => {
     const chunks = chunkPdf(parsed, 20);
     assert.equal(chunks[0]?.chunk_id, "p1-c1");
     assert.equal(chunks[0]?.page, 1);
+    assert.ok((chunks[0]?.text_density ?? 0) > 0);
+    assert.notEqual(chunks[0]?.extraction_quality, undefined);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("PDF extraction quality marks low-density pages as weak", () => {
+  const quality = assessPdfExtractionQuality({
+    path: "weak.pdf",
+    page_count: 2,
+    title_candidate: "",
+    pages: [
+      { page: 1, text: "Sparse text" },
+      { page: 2, text: "Agent Benchmark Evaluation ".repeat(20) }
+    ],
+    warnings: []
+  });
+  assert.equal(quality.pages[0]?.quality, "empty");
+  assert.equal(quality.pages[1]?.quality, "ok");
+  assert.equal(quality.quality, "weak");
+  assert.deepEqual(quality.weak_pages, [1]);
 });
 
 test("PDF chunk index propagates cancellation before hidden parse work", async () => {

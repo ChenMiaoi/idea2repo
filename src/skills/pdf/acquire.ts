@@ -3,8 +3,10 @@ import { dirname, join } from "node:path";
 import type { PaperCandidate } from "../literature/types.js";
 import { signalWithTimeout, throwIfAborted } from "../../runtime/abort.js";
 import { parsePdfBuffer } from "./parse.js";
+import { assessPdfExtractionQuality } from "./quality.js";
 import { assertPdf } from "./validate.js";
 import { licenseHint, sha256, titleMatchScore, type PdfManifestRecord } from "./provenance.js";
+import { resolvePublicPdfUrlsAsync, type ResolvedPdfUrl } from "./resolve.js";
 
 export type PdfAcquireOptions = {
   outputRoot: string;
@@ -18,10 +20,16 @@ export type PdfAcquireOptions = {
 export async function acquirePdf(candidate: PaperCandidate, options: PdfAcquireOptions): Promise<PdfManifestRecord> {
   throwIfAborted(options.signal);
   const paperId = safePaperId(candidate.candidate_id || candidate.title);
-  const sourceUrl = candidate.pdf_urls[0];
-  if (!sourceUrl) {
-    return { paper_id: paperId, license_hint: "unknown", status: "not_available", reason: "candidate has no PDF URL" };
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const resolved = selectResolvedPdfUrl(await resolvePublicPdfUrlsAsync(candidate, {
+    allowNetwork: Boolean(options.allowNetwork && options.downloadPdfs),
+    fetchImpl,
+    signal: options.signal
+  }));
+  if (!resolved) {
+    return { paper_id: paperId, license_hint: "unknown", status: "not_available", reason: "candidate has no public PDF URL" };
   }
+  const sourceUrl = resolved.url;
   const hint = licenseHint(sourceUrl);
   if (hint === "unknown") {
     return { paper_id: paperId, source_url: sourceUrl, license_hint: hint, status: "skipped_license", reason: "PDF URL is not from a recognized public source" };
@@ -33,7 +41,6 @@ export async function acquirePdf(candidate: PaperCandidate, options: PdfAcquireO
     return { paper_id: paperId, source_url: sourceUrl, license_hint: hint, status: "not_available", reason: "PDF download requires allowNetwork permission" };
   }
   try {
-    const fetchImpl = options.fetchImpl ?? fetch;
     const response = await fetchImpl(sourceUrl, { headers: { accept: "application/pdf" }, signal: signalWithTimeout(options.signal, 30_000) });
     throwIfAborted(options.signal);
     if (!response.ok) {
@@ -45,6 +52,7 @@ export async function acquirePdf(candidate: PaperCandidate, options: PdfAcquireO
     throwIfAborted(options.signal);
     assertPdf(buffer);
     const parsed = await parsePdfBuffer(buffer, sourceUrl, { signal: options.signal });
+    const extractionQuality = assessPdfExtractionQuality(parsed);
     const extractedText = parsed.pages.map((page) => page.text).join("\n");
     const matchScore = titleMatchScore(candidate.title, extractedText);
     if (matchScore < 0.2) throw new Error(`PDF title match too low: ${matchScore}`);
@@ -62,6 +70,7 @@ export async function acquirePdf(candidate: PaperCandidate, options: PdfAcquireO
       bytes: buffer.byteLength,
       license_hint: hint,
       title_match_score: matchScore,
+      extraction_quality: extractionQuality,
       status: "downloaded"
     };
   } catch (error) {
@@ -87,4 +96,8 @@ export async function acquirePdfs(candidates: PaperCandidate[], options: PdfAcqu
 
 function safePaperId(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "paper";
+}
+
+function selectResolvedPdfUrl(urls: ResolvedPdfUrl[]): ResolvedPdfUrl | undefined {
+  return urls.find((item) => licenseHint(item.url) !== "unknown") ?? urls[0];
 }

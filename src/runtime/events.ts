@@ -16,6 +16,13 @@ export type RuntimePlanItem = {
   updated_at: string;
 };
 
+export type PdfExtractionPageEvent = {
+  page: number;
+  char_count: number;
+  text_density: number;
+  quality: "empty" | "weak" | "ok";
+};
+
 export type Idea2RepoEvent =
   | { type: "run.started"; run_id: string; idea: string; output_root: string; timestamp: string }
   | { type: "run.completed"; run_id: string; timestamp: string }
@@ -60,6 +67,10 @@ export type Idea2RepoEvent =
       sha256: string;
       bytes: number;
       source_url?: string;
+      extraction_quality?: "empty" | "weak" | "ok";
+      mean_chars_per_page?: number;
+      weak_pages?: number[];
+      extraction_pages?: PdfExtractionPageEvent[];
       timestamp: string;
     }
   | {

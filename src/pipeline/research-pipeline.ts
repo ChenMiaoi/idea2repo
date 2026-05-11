@@ -414,6 +414,10 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
         sha256: record.pdf_sha256!,
         bytes: record.bytes!,
         source_url: record.source_url,
+        extraction_quality: record.extraction_quality?.quality,
+        mean_chars_per_page: record.extraction_quality?.mean_chars_per_page,
+        weak_pages: record.extraction_quality?.weak_pages,
+        extraction_pages: record.extraction_quality?.pages,
         timestamp: record.downloaded_at ?? runtimeTimestamp()
       });
     }

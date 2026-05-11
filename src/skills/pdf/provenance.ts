@@ -1,6 +1,25 @@
 import { createHash } from "node:crypto";
 
 export type PdfStatus = "downloaded" | "not_available" | "failed" | "skipped_license";
+export type PdfExtractionQualityStatus = "empty" | "weak" | "ok";
+
+export type PdfPageExtractionQuality = {
+  page: number;
+  char_count: number;
+  text_density: number;
+  quality: PdfExtractionQualityStatus;
+};
+
+export type PdfExtractionQuality = {
+  page_count: number;
+  extracted_pages: number;
+  mean_chars_per_page: number;
+  weak_pages: number[];
+  empty_pages: number[];
+  quality: PdfExtractionQualityStatus;
+  pages: PdfPageExtractionQuality[];
+  warnings: string[];
+};
 
 export type PdfManifestRecord = {
   paper_id: string;
@@ -11,6 +30,7 @@ export type PdfManifestRecord = {
   bytes?: number;
   license_hint: "arXiv" | "publisher" | "author-page" | "unknown";
   title_match_score?: number;
+  extraction_quality?: PdfExtractionQuality;
   status: PdfStatus;
   reason?: string;
 };

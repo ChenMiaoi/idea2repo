@@ -126,14 +126,29 @@ test("research-native runtime events round-trip through JSONL", async () => {
     const sink = new JsonlEventSink(path);
     const events: Idea2RepoEvent[] = [
       { type: "paper.found", run_id: "run-1", stage_id: "literature_search", paper_id: "p1", title: "Paper", venue: "ACL", year: 2025, relevance_score: 0.9, novelty_risk: "unknown", pdf_status: "available", timestamp: "2026-05-11T00:00:00Z" },
-      { type: "pdf.downloaded", run_id: "run-1", paper_id: "p1", path: "docs/reference/pdfs/p1.pdf", sha256: "abc", bytes: 100, timestamp: "2026-05-11T00:00:01Z" },
+      {
+        type: "pdf.downloaded",
+        run_id: "run-1",
+        paper_id: "p1",
+        path: "docs/reference/pdfs/p1.pdf",
+        sha256: "abc",
+        bytes: 100,
+        extraction_quality: "weak",
+        mean_chars_per_page: 120,
+        weak_pages: [1],
+        extraction_pages: [{ page: 1, char_count: 120, text_density: 120, quality: "weak" }],
+        timestamp: "2026-05-11T00:00:01Z"
+      },
       { type: "evidence.extracted", run_id: "run-1", evidence_id: "e1", paper_id: "p1", claim: "PDF evidence mentions baseline comparison.", claim_type: "baseline", page: 1, quote: "baseline comparison", chunk_id: "p1-p1-c1", confidence: 0.6, timestamp: "2026-05-11T00:00:02Z" },
       { type: "question.asked", run_id: "run-1", question_id: "q1", question: "Which dataset is primary?", why_it_matters: "Evaluation feasibility is underspecified.", related_score_dimensions: ["Evaluation Feasibility"], evidence_refs: ["e1"], options: ["A", "B"], required: true, timestamp: "2026-05-11T00:00:03Z" },
       { type: "stage.blocked", run_id: "run-1", stage_id: "pdf_acquisition", reason: "Waiting for PDF approval", timestamp: "2026-05-11T00:00:04Z" }
     ];
     for (const event of events) await sink.emit(event);
 
-    assert.deepEqual((await readJsonlEvents(path)).map((event) => event.type), events.map((event) => event.type));
+    const restored = await readJsonlEvents(path);
+    assert.deepEqual(restored.map((event) => event.type), events.map((event) => event.type));
+    const pdfEvent = restored.find((event) => event.type === "pdf.downloaded");
+    assert.deepEqual(pdfEvent?.extraction_pages, [{ page: 1, char_count: 120, text_density: 120, quality: "weak" }]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

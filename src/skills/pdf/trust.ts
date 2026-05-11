@@ -48,7 +48,8 @@ export async function validateDownloadedPdfManifest(root: string, manifest: PdfM
       typeof record.title_match_score !== "number" ||
       record.title_match_score < 0.2 ||
       record.license_hint === "unknown" ||
-      licenseHint(record.source_url) !== record.license_hint
+      licenseHint(record.source_url) !== record.license_hint ||
+      !validExtractionQuality(record.extraction_quality)
     ) {
       return false;
     }
@@ -67,4 +68,21 @@ export async function validateDownloadedPdfManifest(root: string, manifest: PdfM
     }
   }
   return true;
+}
+
+function validExtractionQuality(quality: PdfManifestRecord["extraction_quality"]): boolean {
+  if (!quality) return true;
+  if (!["empty", "weak", "ok"].includes(quality.quality)) return false;
+  if (!Number.isFinite(quality.page_count) || quality.page_count < 1) return false;
+  if (!Number.isFinite(quality.extracted_pages) || quality.extracted_pages < 0) return false;
+  if (!Number.isFinite(quality.mean_chars_per_page) || quality.mean_chars_per_page < 0) return false;
+  if (!Array.isArray(quality.pages) || quality.pages.length < 1) return false;
+  return quality.pages.every((page) =>
+    Number.isFinite(page.page) &&
+    Number.isFinite(page.char_count) &&
+    page.char_count >= 0 &&
+    Number.isFinite(page.text_density) &&
+    page.text_density >= 0 &&
+    ["empty", "weak", "ok"].includes(page.quality)
+  );
 }
