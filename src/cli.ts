@@ -18,6 +18,8 @@ import { proxyEnvForChild } from "./proxy.js";
 import { runResearchPipeline } from "./pipeline/research-pipeline.js";
 import { normalizeSources } from "./skills/literature/search.js";
 import type { LiteratureSource } from "./skills/literature/types.js";
+import { acquirePdfs } from "./skills/pdf/acquire.js";
+import { buildPdfChunkIndex } from "./skills/pdf/chunk.js";
 
 const commandNames = new Set(["research", "generate", "literature", "status", "resume", "validate", "doctor", "auth", "login", "logout", "provider", "venues", "github", "api", "web"]);
 
@@ -152,6 +154,23 @@ async function commandLiterature(argv: string[]): Promise<number> {
     console.log(`Literature candidates written: ${ensureChild(root, "docs/relative_work/candidates.json")}`);
     console.log(`Candidates: ${result.candidates.length}`);
     if (result.warnings.length) console.log(`Warnings: ${result.warnings.length}`);
+    return 0;
+  }
+  if (action === "download") {
+    const candidatesPath = ensureChild(root, "docs/relative_work/candidates.json");
+    if (!(await exists(candidatesPath))) throw new Error(`missing literature candidates: ${candidatesPath}`);
+    const candidates = JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(candidatesPath, "utf8"))) as never[];
+    const manifest = await acquirePdfs(candidates, {
+      outputRoot: root,
+      downloadPdfs: hasFlag(parsed, "download-pdfs")
+    });
+    await writeText(ensureChild(root, "docs/reference/pdf_manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
+    const chunks = await buildPdfChunkIndex(root, manifest);
+    await writeText(ensureChild(root, "docs/reference/pdf_chunks.json"), JSON.stringify(chunks, null, 2) + "\n");
+    console.log(`PDF manifest written: ${ensureChild(root, "docs/reference/pdf_manifest.json")}`);
+    console.log(`PDF chunk index written: ${ensureChild(root, "docs/reference/pdf_chunks.json")}`);
+    console.log(`Downloaded PDFs: ${manifest.filter((record) => record.status === "downloaded").length}`);
+    console.log(`Unavailable PDFs: ${manifest.filter((record) => record.status !== "downloaded").length}`);
     return 0;
   }
   throw new Error(`unknown literature action: ${action}`);
@@ -422,7 +441,7 @@ Usage:
   idea2repo "research idea" [--output dir] [--offline] [--stack python|ts]
   idea2repo research "research idea" [options]
   idea2repo generate "research idea" [options]  # legacy alias
-  idea2repo literature plan|search [--output dir] [--allow-network]
+  idea2repo literature plan|search|download [--output dir] [--allow-network]
   idea2repo status|resume|validate [--output dir]
   idea2repo auth status|login|logout
   idea2repo provider list|show|validate
@@ -443,6 +462,7 @@ Options:
   --max-papers n       Literature search result cap
   --query value        Literature query; repeatable
   --source value       Literature source; repeatable
+  --download-pdfs      Download public PDF URLs during literature download
 `);
 }
 

@@ -16,6 +16,11 @@ export * from "./pipeline/stages.js";
 export * from "./skills/literature/search.js";
 export * from "./skills/literature/dedupe.js";
 export * from "./skills/literature/rank.js";
+export * from "./skills/pdf/acquire.js";
+export * from "./skills/pdf/chunk.js";
+export * from "./skills/pdf/parse.js";
+export * from "./skills/pdf/provenance.js";
+export * from "./skills/pdf/validate.js";
 export {
   AuthStorage,
   CodexOAuthClient,

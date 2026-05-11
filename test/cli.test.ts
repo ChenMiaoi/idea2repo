@@ -23,6 +23,7 @@ test("CLI supports legacy idea invocation and project commands", async () => {
     assert.equal(await main(["status", "--output", output]), 0);
     assert.equal(await main(["literature", "plan", "Agent benchmark with baselines", "--output", output]), 0);
     assert.equal(await main(["literature", "search", "--output", output, "--query", "agent benchmark"]), 0);
+    assert.equal(await main(["literature", "download", "--output", output]), 0);
     assert.equal(await main(["validate", "--output", output]), 0);
     assert.equal(await main(["github", "dry-run", "--output", output]), 0);
     assert.equal(await main(["provider", "list"]), 0);
