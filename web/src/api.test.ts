@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildApiUrl, subscribeRunEvents, type EventSourceLike } from "./api";
+import { buildApiUrl, runtimeEventTypes, subscribeRunEvents, type EventSourceLike } from "./api";
 import type { RuntimeEvent } from "./types";
 
 describe("api helpers", () => {
@@ -43,6 +43,35 @@ describe("api helpers", () => {
     expect(events[0]?.type).toBe("stage.started");
     expect(source.closed).toBe(true);
     expect(closeCount).toBe(1);
+  });
+
+  it("subscribes to research-native runtime events", () => {
+    const sources: FakeEventSource[] = [];
+    const events: RuntimeEvent[] = [];
+    subscribeRunEvents(
+      "run-1",
+      { onEvent: (event) => events.push(event) },
+      "http://127.0.0.1:8000",
+      (url) => {
+        const source = new FakeEventSource(url);
+        sources.push(source);
+        return source;
+      }
+    );
+    const source = sources[0]!;
+    expect(runtimeEventTypes).toEqual(expect.arrayContaining(["stage.blocked", "paper.found", "pdf.downloaded", "evidence.extracted", "question.asked", "score.updated"]));
+
+    source.emit("score.updated", {
+      type: "score.updated",
+      run_id: "run-1",
+      score: 70,
+      max_score: 100,
+      confidence: 0.8,
+      hard_blockers: [],
+      timestamp: "2026-01-01T00:00:00Z"
+    });
+
+    expect(events[0]?.type).toBe("score.updated");
   });
 
   it("closes runtime SSE subscriptions on final events without error", () => {

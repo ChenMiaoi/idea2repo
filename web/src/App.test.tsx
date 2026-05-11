@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { App } from "./App";
+import { App, canCancelRuntimeStatus, runtimeStatusFromEvent } from "./App";
 
 describe("Idea2Repo app", () => {
   it("renders the operational dashboard instead of a landing page", () => {
@@ -32,5 +32,25 @@ describe("Idea2Repo app", () => {
     expect(screen.getByRole("button", { name: /^Publish$/i })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: /Toggle publish permission/i }));
     expect(screen.getByRole("button", { name: /^Publish$/i })).not.toBeDisabled();
+  });
+
+  it("keeps blocked runtime runs cancellable and restores running on stage restart", () => {
+    expect(canCancelRuntimeStatus("blocked")).toBe(true);
+    expect(canCancelRuntimeStatus("completed")).toBe(false);
+    const blocked = runtimeStatusFromEvent("running", {
+      type: "stage.blocked",
+      run_id: "run-1",
+      stage_id: "pdf_acquisition",
+      reason: "Pending PDF approval",
+      timestamp: "2026-01-01T00:00:00Z"
+    });
+    expect(blocked).toBe("blocked");
+    expect(runtimeStatusFromEvent(blocked, {
+      type: "stage.started",
+      run_id: "run-1",
+      stage_id: "pdf_acquisition",
+      label: "PDF acquisition",
+      timestamp: "2026-01-01T00:00:01Z"
+    })).toBe("running");
   });
 });

@@ -512,7 +512,11 @@ function RuntimeDashboard({
   const activeArtifacts = runtime?.artifacts.slice(0, 8) ?? [];
   const activeDecisions = runtime?.decisions.slice(-6).reverse() ?? [];
   const activeApprovals = runtime?.approvals.slice(-6).reverse() ?? [];
-  const canCancel = runtime?.status === "queued" || runtime?.status === "running";
+  const activePapers = runtime?.papers.slice(-6).reverse() ?? [];
+  const activeEvidence = runtime?.evidence.slice(-6).reverse() ?? [];
+  const activeQuestions = runtime?.questions.slice(-3).reverse() ?? [];
+  const latestScore = runtime?.scores.at(-1);
+  const canCancel = canCancelRuntimeStatus(runtime?.status);
 
   return (
     <section className="panel runtime-panel">
@@ -536,6 +540,10 @@ function RuntimeDashboard({
         <RuntimeList title="Run list" empty="No API runs loaded." rows={runs.slice(0, 5).map((run) => `${run.id.slice(0, 8)}  ${run.status}  ${run.output_root}`)} />
         <RuntimeList title="Live plan" empty="Waiting for plan.updated." rows={activePlan.slice(0, 8).map((item) => `${planMark(item.status)} ${item.step}`)} />
         <RuntimeList title="Event timeline" empty="Waiting for SSE events." rows={activeEvents.map((event) => `${event.timestamp} ${event.type}`)} />
+        <RuntimeList title="Papers" empty="No paper candidates yet." rows={activePapers.map((paper) => `${paper.title}${paper.venue ? ` (${paper.venue}${paper.year ? ` ${paper.year}` : ""})` : ""}${paper.pdf_status ? ` - ${paper.pdf_status}` : ""}`)} />
+        <RuntimeList title="Evidence" empty="No extracted evidence yet." rows={activeEvidence.map((item) => `${item.paper_id} p.${item.page}: ${item.claim}`)} />
+        <RuntimeList title="Score" empty="No score snapshot yet." rows={latestScore ? [`${latestScore.score}/${latestScore.max_score} confidence ${latestScore.confidence}`, ...latestScore.hard_blockers.slice(0, 3).map((blocker) => `Blocker: ${blocker}`)] : []} />
+        <RuntimeList title="Questions" empty="No clarification questions yet." rows={activeQuestions.map((question) => `${question.required ? "[required] " : ""}${question.question}`)} />
         <RuntimeList title="Artifact tree" empty="No artifact events yet." rows={activeArtifacts.map((artifact) => `${artifact.text ? "[txt]" : "[bin]"} ${artifact.path} (${artifact.bytes})`)} />
         <RuntimeList title="Decision records" empty="No decisions yet." rows={activeDecisions.map((decision) => `${decision.title}${decision.stage_id ? ` (${decision.stage_id})` : ""}`)} />
         <RuntimeList title="Approval queue" empty="No approvals requested." rows={activeApprovals.map((approval) => `${approval.action}${approval.decision ? ` -> ${approval.decision}` : approval.risk ? ` [${approval.risk}]` : ""}`)} />
@@ -954,11 +962,17 @@ function updateRunStatus(runs: RuntimeRunSummary[], event: RuntimeEvent): Runtim
   );
 }
 
-function runtimeStatusFromEvent(current: RuntimeRunSummary["status"], event: RuntimeEvent): RuntimeRunSummary["status"] {
+export function canCancelRuntimeStatus(status: RuntimeRunSummary["status"] | undefined): boolean {
+  return status === "queued" || status === "running" || status === "blocked";
+}
+
+export function runtimeStatusFromEvent(current: RuntimeRunSummary["status"], event: RuntimeEvent): RuntimeRunSummary["status"] {
   if (event.type === "run.started") return "running";
   if (event.type === "run.completed") return "completed";
   if (event.type === "run.failed") return "failed";
   if (event.type === "run.cancelled") return "cancelled";
+  if (event.type === "stage.blocked") return "blocked";
+  if (event.type === "stage.started" && current === "blocked") return "running";
   return current;
 }
 
@@ -969,6 +983,12 @@ function runtimeEventLabel(event: RuntimeEvent): string | null {
   if (event.type === "run.cancelled") return `Run cancelled ${event.run_id.slice(0, 8)}`;
   if (event.type === "stage.started") return `Stage started: ${event.label}`;
   if (event.type === "stage.completed") return `Stage completed: ${event.stage_id}`;
+  if (event.type === "stage.blocked") return `Stage blocked: ${event.stage_id}`;
+  if (event.type === "paper.found") return `Paper found: ${event.title}`;
+  if (event.type === "pdf.downloaded") return `PDF downloaded: ${event.paper_id}`;
+  if (event.type === "evidence.extracted") return `Evidence: ${event.paper_id} p.${event.page}`;
+  if (event.type === "question.asked") return `Question: ${event.question}`;
+  if (event.type === "score.updated") return `Score updated: ${event.score}/${event.max_score}`;
   if (event.type === "decision.recorded") return `Decision: ${event.title}`;
   if (event.type === "artifact.written") return `Artifact: ${event.path}`;
   if (event.type === "approval.requested") return `Approval requested: ${event.action}`;
@@ -976,15 +996,15 @@ function runtimeEventLabel(event: RuntimeEvent): string | null {
 }
 
 function runtimeEventTone(event: RuntimeEvent): RunLogEntry["tone"] {
-  if (event.type === "run.failed" || event.type === "stage.failed" || event.type === "approval.requested") return "blocked";
-  if (event.type === "stage.skipped" || event.type === "run.cancelled") return "warn";
+  if (event.type === "run.failed" || event.type === "stage.failed" || event.type === "stage.blocked" || event.type === "approval.requested") return "blocked";
+  if (event.type === "stage.skipped" || event.type === "run.cancelled" || event.type === "question.asked") return "warn";
   return "ok";
 }
 
 function statusTone(status: RuntimeRunSummary["status"]): "ok" | "warn" | "danger" | "neutral" {
   if (status === "completed") return "ok";
   if (status === "failed" || status === "cancelled") return "danger";
-  if (status === "running") return "warn";
+  if (status === "running" || status === "blocked") return "warn";
   return "neutral";
 }
 

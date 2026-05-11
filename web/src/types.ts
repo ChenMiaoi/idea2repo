@@ -86,6 +86,10 @@ export type RuntimeEvent =
   | { type: "plan.updated"; run_id: string; plan: RuntimePlanItem[]; timestamp: string }
   | { type: "decision.recorded"; run_id: string; decision_id: string; stage_id?: string; title: string; timestamp: string }
   | { type: "paper.found"; run_id: string; paper_id: string; title: string; stage_id?: string; venue?: string; year?: number | null; relevance_score?: number; ccf_rank?: "A" | "B" | "C" | "unknown"; venue_match?: "target" | "primary" | "secondary" | "ccf_a" | "known" | "unknown"; track_status?: "main_conference" | "journal" | "workshop" | "demo" | "short_paper" | "unknown"; novelty_risk?: "high" | "medium" | "low" | "unknown"; pdf_status?: "available" | "unavailable" | "needs_approval" | "downloaded"; reason?: string; timestamp: string }
+  | { type: "pdf.downloaded"; run_id: string; paper_id: string; path: string; sha256: string; bytes: number; source_url?: string; extraction_quality?: "empty" | "weak" | "ok"; mean_chars_per_page?: number; weak_pages?: number[]; extraction_pages?: Array<{ page: number; char_count: number; text_density: number; quality: "empty" | "weak" | "ok" }>; timestamp: string }
+  | { type: "evidence.extracted"; run_id: string; evidence_id: string; paper_id: string; title?: string; venue?: string; claim: string; claim_type: "method" | "dataset" | "metric" | "baseline" | "limitation" | "result" | "threat" | "future_work"; page: number; section?: string; quote: string; chunk_id: string; confidence: number; provenance?: { source: "pdf_chunk"; artifact: string; pdf_path?: string; pdf_sha256?: string; source_url?: string; extracted_at: string }; timestamp: string }
+  | { type: "question.asked"; run_id: string; question_id: string; question: string; why_it_matters: string; related_score_dimensions: string[]; evidence_refs: string[]; options?: string[]; required: boolean; timestamp: string }
+  | { type: "score.updated"; run_id: string; stage_id?: string; score: number; max_score: number; confidence: number; hard_blockers: string[]; timestamp: string }
   | { type: "artifact.written"; run_id: string; path: string; sha256: string; bytes: number; timestamp: string }
   | { type: "artifact.snapshot"; run_id: string; snapshot_id: string; path: string; timestamp: string }
   | { type: "artifact.restored"; run_id: string; snapshot_id: string; path: string; timestamp: string }
@@ -116,6 +120,49 @@ export type RuntimeApproval = {
   timestamp: string;
 };
 
+export type RuntimePaper = {
+  id: string;
+  title: string;
+  venue?: string;
+  year?: number | null;
+  pdf_status?: string;
+  novelty_risk?: string;
+  reason?: string;
+  timestamp: string;
+};
+
+export type RuntimeEvidence = {
+  id: string;
+  paper_id: string;
+  claim: string;
+  claim_type: string;
+  page: number;
+  quote: string;
+  chunk_id: string;
+  confidence: number;
+  timestamp: string;
+};
+
+export type RuntimeQuestion = {
+  id: string;
+  question: string;
+  why_it_matters: string;
+  related_score_dimensions: string[];
+  evidence_refs: string[];
+  options?: string[];
+  required: boolean;
+  timestamp: string;
+};
+
+export type RuntimeScoreSnapshot = {
+  score: number;
+  max_score: number;
+  confidence: number;
+  hard_blockers: string[];
+  stage_id?: string;
+  timestamp: string;
+};
+
 export type RuntimeRunSummary = {
   id: string;
   status: "queued" | "running" | "blocked" | "completed" | "failed" | "cancelled";
@@ -135,5 +182,9 @@ export type RuntimeViewState = {
   artifacts: RuntimeArtifact[];
   decisions: RuntimeDecision[];
   approvals: RuntimeApproval[];
+  papers: RuntimePaper[];
+  evidence: RuntimeEvidence[];
+  questions: RuntimeQuestion[];
+  scores: RuntimeScoreSnapshot[];
   error?: string;
 };
