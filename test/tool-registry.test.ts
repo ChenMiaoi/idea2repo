@@ -27,7 +27,7 @@ test("core tool registry logs artifact calls and emits runtime events", async ()
     assert.equal(read.content, "# A\n");
     assert.deepEqual(
       events.map((event) => event.type),
-      ["tool.started", "artifact.written", "tool.completed", "tool.started", "tool.completed"]
+      ["tool.started", "artifact.snapshot", "artifact.written", "tool.completed", "tool.started", "tool.completed"]
     );
     const records = await readToolCallRecords(root);
     assert.deepEqual(

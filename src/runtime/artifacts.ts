@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { artifactRecord, ensureChild, exists, MANIFEST_PATH, now, readManifest } from "../state.js";
 import type { ProjectManifest } from "../types.js";
@@ -11,6 +11,7 @@ export const ARTIFACT_SNAPSHOT_INDEX = join(ARTIFACT_SNAPSHOTS_DIR, "index.jsonl
 export type ArtifactSnapshotRecord = {
   id: string;
   run_id?: string;
+  operation: "create" | "overwrite";
   path: string;
   snapshot_path: string;
   bytes: number;
@@ -24,17 +25,21 @@ export async function snapshotArtifact(
   options: { runId?: string; events?: EventSink; timestamp?: string } = {}
 ): Promise<ArtifactSnapshotRecord | null> {
   const artifactPath = ensureChild(root, relativePath);
-  if (!(await exists(artifactPath))) return null;
-  const content = await readFile(artifactPath);
+  const artifactExists = await exists(artifactPath);
   const createdAt = options.timestamp ?? runtimeTimestamp();
   const id = `${createdAt.replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
-  const snapshotRelativePath = join(ARTIFACT_SNAPSHOTS_DIR, id, toPosix(relativePath));
+  const snapshotRelativePath = artifactExists
+    ? join(ARTIFACT_SNAPSHOTS_DIR, id, toPosix(relativePath))
+    : join(ARTIFACT_SNAPSHOTS_DIR, id, ".create.json");
   const snapshotPath = ensureChild(root, snapshotRelativePath);
   await mkdir(dirname(snapshotPath), { recursive: true });
-  await writeFile(snapshotPath, content);
+  const content = artifactExists ? await readFile(artifactPath) : Buffer.from("");
+  if (artifactExists) await writeFile(snapshotPath, content);
+  else await writeFile(snapshotPath, JSON.stringify({ operation: "create", path: toPosix(relativePath), created_at: createdAt }) + "\n", "utf8");
   const record: ArtifactSnapshotRecord = {
     id,
     ...(options.runId ? { run_id: options.runId } : {}),
+    operation: artifactExists ? "overwrite" : "create",
     path: toPosix(relativePath),
     snapshot_path: toPosix(snapshotRelativePath),
     bytes: content.byteLength,
@@ -75,6 +80,18 @@ export async function restoreArtifactSnapshot(
   if (!record) throw new Error(options.snapshotId ? `snapshot not found: ${options.snapshotId}` : `snapshot not found for artifact: ${options.artifactPath ?? ""}`);
   const snapshotPath = ensureChild(root, record.snapshot_path);
   const artifactPath = ensureChild(root, record.path);
+  if ((record.operation ?? "overwrite") === "create") {
+    await rm(artifactPath, { force: true });
+    await refreshManifestArtifactHashes(root, [record.path]);
+    await options.events?.emit({
+      type: "artifact.restored",
+      run_id: options.runId ?? record.run_id ?? "manual",
+      snapshot_id: record.id,
+      path: record.path,
+      timestamp: runtimeTimestamp()
+    });
+    return record;
+  }
   const content = await readFile(snapshotPath);
   await mkdir(dirname(artifactPath), { recursive: true });
   await writeFile(artifactPath, content);
@@ -112,7 +129,7 @@ export async function refreshManifestArtifactHashes(root: string, relativePaths?
 
 export function formatSnapshots(records: ArtifactSnapshotRecord[]): string {
   if (!records.length) return "No artifact snapshots recorded.";
-  return records.map((record) => `${record.id}\t${record.path}\t${record.bytes} bytes\t${record.created_at}`).join("\n");
+  return records.map((record) => `${record.id}\t${record.path}\t${record.operation ?? "overwrite"}\t${record.bytes} bytes\t${record.created_at}`).join("\n");
 }
 
 function toPosix(value: string): string {

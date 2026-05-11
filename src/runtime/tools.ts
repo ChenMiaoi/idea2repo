@@ -10,7 +10,7 @@ import { buildPdfChunkIndex, type PdfChunkIndexEntry } from "../skills/pdf/chunk
 import type { PdfManifestRecord } from "../skills/pdf/provenance.js";
 import type { PaperCandidate } from "../skills/literature/types.js";
 import { ensureChild, exists } from "../state.js";
-import { snapshotArtifact } from "./artifacts.js";
+import { refreshManifestArtifactHashes, snapshotArtifact } from "./artifacts.js";
 import { DecisionRecorder, type DecisionInput } from "./decisions.js";
 import { runtimeTimestamp, type EventSink } from "./events.js";
 import { writePlanState, type PlanState } from "./plan.js";
@@ -170,6 +170,7 @@ export function createCoreToolRegistry(): ToolRegistry {
       await mkdir(dirname(path), { recursive: true });
       await writeFile(path, content);
       const sha256 = createHash("sha256").update(content).digest("hex");
+      await refreshManifestArtifactHashes(ctx.outputRoot, [input.path]);
       await ctx.events.emit({ type: "artifact.written", run_id: ctx.runId, path: input.path, sha256, bytes: content.byteLength, timestamp: runtimeTimestamp() });
       return { path: input.path, bytes: content.byteLength, sha256 };
     }
@@ -185,6 +186,7 @@ export function createCoreToolRegistry(): ToolRegistry {
     summarizeOutput: (output) => `adopted ${output.path} (${output.bytes} bytes)`,
     async handler(input, ctx) {
       ensureChild(ctx.outputRoot, input.path);
+      await refreshManifestArtifactHashes(ctx.outputRoot, [input.path]);
       await ctx.events.emit({ type: "artifact.written", run_id: ctx.runId, path: input.path, sha256: input.sha256, bytes: input.bytes, timestamp: runtimeTimestamp() });
       return { path: input.path, bytes: input.bytes, sha256: input.sha256 };
     }

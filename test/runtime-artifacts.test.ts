@@ -7,7 +7,7 @@ import { approvalPolicyForMode } from "../src/runtime/approvals.js";
 import { refreshManifestArtifactHashes, restoreArtifactSnapshot, snapshotArtifact, listArtifactSnapshots } from "../src/runtime/artifacts.js";
 import { EventBus } from "../src/runtime/events.js";
 import { createCoreToolRegistry, createToolContext } from "../src/runtime/tools.js";
-import { status, writeManifest, writeText } from "../src/state.js";
+import { exists, status, writeManifest, writeText } from "../src/state.js";
 
 test("artifact snapshots restore old content and refresh manifest hashes", async () => {
   const root = await mkdtemp(join(tmpdir(), "idea2repo-artifacts-"));
@@ -63,6 +63,52 @@ test("artifact.write snapshots overwritten artifacts before writing", async () =
     assert.equal((await listArtifactSnapshots(root)).length, 1);
     assert.ok(events.includes("artifact.snapshot"));
     assert.ok(events.includes("artifact.written"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("artifact.write records create snapshots and restore removes created artifacts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-artifact-create-snapshot-"));
+  try {
+    await writeManifest(root, {
+      projectName: "project",
+      idea: "snapshot create idea",
+      timelineWeeks: 12,
+      resources: [],
+      stack: "python",
+      createdAt: "2026-05-11",
+      files: [],
+      permissions: {},
+      workspace: {}
+    });
+    const events: string[] = [];
+    const bus = new EventBus();
+    bus.subscribe((event) => events.push(event.type));
+    const registry = createCoreToolRegistry();
+    await registry.execute(
+      "artifact.write",
+      { path: "docs/new.md", content: "new\n" },
+      createToolContext({
+        runId: "run-1",
+        outputRoot: root,
+        events: bus,
+        permissions: approvalPolicyForMode("generate", { allowOverwrite: true })
+      })
+    );
+
+    const snapshots = await listArtifactSnapshots(root);
+    assert.equal(snapshots.length, 1);
+    assert.equal(snapshots[0]?.operation, "create");
+    assert.equal(snapshots[0]?.path, "docs/new.md");
+    assert.equal((await status(root)).total_artifacts, 1);
+
+    await restoreArtifactSnapshot(root, { snapshotId: snapshots[0]?.id, runId: "run-1", events: bus });
+    assert.equal(await exists(join(root, "docs", "new.md")), false);
+    assert.equal((await status(root)).total_artifacts, 0);
+    assert.ok(events.includes("artifact.snapshot"));
+    assert.ok(events.includes("artifact.written"));
+    assert.ok(events.includes("artifact.restored"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
