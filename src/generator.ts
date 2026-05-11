@@ -27,6 +27,7 @@ import { CompositeEventSink, JsonlEventSink, runtimeTimestamp, type EventSink, t
 import { PlanEventSink } from "./runtime/plan.js";
 import { approvalPolicyFromPermissions } from "./runtime/approvals.js";
 import { createCoreToolRegistry, createToolContext, type ToolContext, type ToolRegistry } from "./runtime/tools.js";
+import { restoreRuntimeState } from "./runtime/runs.js";
 import { writeResearchPipelineState } from "./pipeline/stage-state.js";
 import { resolveTemplateProfile, templateDecisionMarkdown } from "./skills/templates/resolve.js";
 import { renderPaper } from "./skills/templates/render.js";
@@ -417,7 +418,15 @@ export async function resumeResearchRepo(output: string, options: { force?: bool
   const manifest = await readManifest(root);
   await appendRunLog(root, "resume_started", { force: Boolean(options.force) });
   const result = await regenerateFromManifest(root, manifest, options.force ?? false, policy);
+  const restored = await restoreRuntimeState(root);
   await appendRunLog(root, "resume_completed", { files: result.files.length });
+  await appendRunLog(root, "runtime_state_restored", {
+    run_id: restored.run_id,
+    trace_rebuilt: restored.trace_rebuilt,
+    blocked_stages: restored.blocked_stages.length,
+    missing_artifacts: restored.missing_artifacts.length,
+    modified_artifacts: restored.modified_artifacts.length
+  });
   return result;
 }
 

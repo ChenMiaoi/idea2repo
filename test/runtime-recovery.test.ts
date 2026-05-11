@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { main } from "../src/cli.js";
-import { generateResearchRepo } from "../src/generator.js";
+import { generateResearchRepo, resumeResearchRepo } from "../src/generator.js";
 import { runResearchPipeline } from "../src/pipeline/research-pipeline.js";
-import { readResearchPipelineState } from "../src/pipeline/stage-state.js";
+import { markStage, readResearchPipelineState, writeResearchPipelineState } from "../src/pipeline/stage-state.js";
 import { listArtifactSnapshots } from "../src/runtime/artifacts.js";
 import { readDecisionRecords } from "../src/runtime/decisions.js";
 import { readJsonlEvents } from "../src/runtime/events.js";
@@ -76,6 +76,42 @@ test("executed retry snapshots pipeline artifacts outside the stage artifact tab
     const result = await retryRuntimeStage(output, "search_planning", { execute: true, reason: "Execute retry with full artifact protection." });
     assert.equal(result.executed, true);
     assert.ok((await listArtifactSnapshots(output)).some((snapshot) => snapshot.path === "docs/reference/claim_evidence_matrix.csv"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("resume restores runtime plan trace approvals and blocks missing stage artifacts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-resume-runtime-"));
+  const output = join(root, "project");
+  try {
+    await generateResearchRepo("A local-first literature agent with CCF-A scoring.", output, {
+      offline: true,
+      provider: "offline",
+      runResearchPipeline: true,
+      jsonlEvents: true
+    });
+    const runningState = await readResearchPipelineState(output);
+    assert.ok(runningState);
+    await writeResearchPipelineState(output, markStage(runningState, "search_planning", "running"));
+    await rm(join(output, ".idea2repo", "plan.json"), { force: true });
+    await rm(join(output, ".idea2repo", "trace.jsonl"), { force: true });
+    await rm(join(output, ".idea2repo", "approvals.jsonl"), { force: true });
+    await rm(join(output, "docs", "relative_work", "search_plan.json"), { force: true });
+
+    await resumeResearchRepo(output);
+
+    const state = await readResearchPipelineState(output);
+    const searchStage = state?.stages.find((stage) => stage.id === "search_planning");
+    assert.equal(searchStage?.status, "failed");
+    assert.match(searchStage?.error ?? "", /search_plan\.json/);
+    const plan = await readPlanState(output);
+    assert.equal(plan.items.find((item) => item.stage_id === "search_planning")?.status, "blocked");
+    assert.match(plan.items.find((item) => item.stage_id === "search_planning")?.blocker ?? "", /search_plan\.json/);
+    const trace = await readJsonlEvents(join(output, ".idea2repo", "trace.jsonl"));
+    assert.ok(trace.some((event) => event.type === "stage.failed" && event.stage_id === "search_planning"));
+    assert.ok(trace.some((event) => event.type === "plan.updated"));
+    assert.equal(await readFile(join(output, ".idea2repo", "approvals.jsonl"), "utf8"), "");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

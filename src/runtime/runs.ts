@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { runResearchPipeline } from "../pipeline/research-pipeline.js";
 import { createResearchPipelineState, markStage, readResearchPipelineState, writeResearchPipelineState, type ResearchPipelineState } from "../pipeline/stage-state.js";
 import { researchStages, stageDefinition, type ResearchStageId } from "../pipeline/stages.js";
-import { ensureChild, readManifest } from "../state.js";
+import { ensureChild, exists, readManifest, status as projectStatus } from "../state.js";
+import { APPROVALS_PATH, readApprovalRecords } from "./approvals.js";
 import { DecisionRecorder } from "./decisions.js";
 import { readPlanState, writePlanState, type PlanState } from "./plan.js";
-import { JsonlEventSink, EventBus, runtimeTimestamp, type EventSink, type EventListener, type Idea2RepoEvent } from "./events.js";
+import { JsonlEventSink, EventBus, readJsonlEvents, runtimeTimestamp, type EventSink, type EventListener, type Idea2RepoEvent } from "./events.js";
 import { refreshManifestArtifactHashes, snapshotArtifact, type ArtifactSnapshotRecord } from "./artifacts.js";
 
 export type RuntimeRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -158,6 +159,50 @@ export type StageControlResult = {
   snapshots: ArtifactSnapshotRecord[];
 };
 
+export type RuntimeStateRestoreResult = {
+  root: string;
+  run_id: string;
+  plan: PlanState;
+  pipeline_state: ResearchPipelineState;
+  trace_rebuilt: boolean;
+  blocked_stages: Array<{ stage_id: ResearchStageId; artifacts: string[] }>;
+  missing_artifacts: string[];
+  modified_artifacts: string[];
+  approvals: number;
+};
+
+export async function restoreRuntimeState(
+  root: string,
+  options: { runId?: string; events?: EventSink } = {}
+): Promise<RuntimeStateRestoreResult> {
+  const resolvedRoot = resolve(root);
+  const manifest = await readManifest(resolvedRoot);
+  const current = await projectStatus(resolvedRoot);
+  const runId = options.runId ?? (await currentPlanRunId(resolvedRoot)) ?? (await latestTraceRunId(resolvedRoot)) ?? randomUUID();
+  const existingState = await readResearchPipelineState(resolvedRoot);
+  const repaired = repairPipelineStateForArtifacts(
+    existingState ?? inferPipelineStateFromManifest(manifest.request.idea, resolvedRoot, manifest.artifacts.map((artifact) => artifact.path), current),
+    current
+  );
+  await writeResearchPipelineState(resolvedRoot, repaired.state);
+  const plan = planFromPipelineState(runId, repaired.state);
+  await writePlanState(resolvedRoot, plan);
+  await ensureRuntimeLogFile(resolvedRoot, APPROVALS_PATH);
+  const traceRebuilt = await rebuildTraceIfMissing(resolvedRoot, runId, manifest.request.idea, repaired.state, plan, options.events);
+  if (!traceRebuilt) await options.events?.emit({ type: "plan.updated", run_id: runId, plan: plan.items, timestamp: plan.updated_at });
+  return {
+    root: resolvedRoot,
+    run_id: runId,
+    plan,
+    pipeline_state: repaired.state,
+    trace_rebuilt: traceRebuilt,
+    blocked_stages: repaired.blockedStages,
+    missing_artifacts: current.missing_artifacts,
+    modified_artifacts: current.modified_artifacts,
+    approvals: (await readApprovalRecords(resolvedRoot)).length
+  };
+}
+
 export async function skipRuntimeStage(
   root: string,
   stageId: ResearchStageId,
@@ -276,6 +321,52 @@ async function readOrCreatePipelineState(root: string): Promise<ResearchPipeline
   return createResearchPipelineState(manifest.request.idea, root);
 }
 
+function repairPipelineStateForArtifacts(
+  state: ResearchPipelineState,
+  current: Awaited<ReturnType<typeof projectStatus>>
+): { state: ResearchPipelineState; blockedStages: Array<{ stage_id: ResearchStageId; artifacts: string[] }> } {
+  const missingOrModified = new Set([...current.missing_artifacts, ...current.modified_artifacts]);
+  let next = state;
+  const blockedStages: Array<{ stage_id: ResearchStageId; artifacts: string[] }> = [];
+  for (const stage of researchStages) {
+    const snapshot = next.stages.find((candidate) => candidate.id === stage.id);
+    if (!snapshot) continue;
+    const affected = (snapshot.artifacts.length ? snapshot.artifacts : stage.artifactPaths).filter((artifact) => missingOrModified.has(artifact));
+    if (!affected.length) continue;
+    blockedStages.push({ stage_id: stage.id, artifacts: affected });
+    next = markStage(next, stage.id, "failed", {
+      artifacts: snapshot.artifacts,
+      error: `Artifact missing or modified: ${affected.join(", ")}`
+    });
+  }
+  return { state: next, blockedStages };
+}
+
+function inferPipelineStateFromManifest(
+  idea: string,
+  root: string,
+  manifestArtifacts: string[],
+  current: Awaited<ReturnType<typeof projectStatus>>
+): ResearchPipelineState {
+  let state = createResearchPipelineState(idea, root);
+  const missingOrModified = new Set([...current.missing_artifacts, ...current.modified_artifacts]);
+  const manifestArtifactSet = new Set(manifestArtifacts);
+  for (const stage of researchStages) {
+    const declared = stage.artifactPaths.filter((artifact) => manifestArtifactSet.has(artifact));
+    if (!declared.length) continue;
+    const affected = declared.filter((artifact) => missingOrModified.has(artifact));
+    if (affected.length) {
+      state = markStage(state, stage.id, "failed", {
+        artifacts: stage.artifactPaths,
+        error: `Artifact missing or modified: ${affected.join(", ")}`
+      });
+    } else {
+      state = markStage(state, stage.id, "completed", { artifacts: stage.artifactPaths });
+    }
+  }
+  return state;
+}
+
 function resetPipelineStateFrom(state: ResearchPipelineState, stageId: ResearchStageId): ResearchPipelineState {
   const target = stageDefinition(stageId);
   const affected = new Set(researchStages.filter((stage) => stage.index >= target.index).map((stage) => stage.id));
@@ -323,6 +414,57 @@ async function currentPlanRunId(root: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+async function latestTraceRunId(root: string): Promise<string | null> {
+  try {
+    const events = await readJsonlEvents(join(root, ".idea2repo", "trace.jsonl"));
+    return [...events].reverse().find((event) => event.run_id)?.run_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function rebuildTraceIfMissing(
+  root: string,
+  runId: string,
+  idea: string,
+  state: ResearchPipelineState,
+  plan: PlanState,
+  downstream?: EventSink
+): Promise<boolean> {
+  const tracePath = join(root, ".idea2repo", "trace.jsonl");
+  const shouldRebuild = !(await exists(tracePath)) || !(await readFile(tracePath, "utf8").catch(() => "")).trim();
+  if (!shouldRebuild) return false;
+  const trace = new JsonlEventSink(tracePath);
+  const emit = async (event: Idea2RepoEvent): Promise<void> => {
+    await trace.emit(event);
+    await downstream?.emit(event);
+  };
+  await emit({ type: "run.started", run_id: runId, idea, output_root: root, timestamp: state.created_at || runtimeTimestamp() });
+  for (const snapshot of state.stages) {
+    const stage = researchStages.find((candidate) => candidate.id === snapshot.id);
+    const label = stage?.label ?? snapshot.id;
+    const startedAt = snapshot.started_at ?? snapshot.completed_at ?? state.updated_at;
+    if (snapshot.status === "running") {
+      await emit({ type: "stage.started", run_id: runId, stage_id: snapshot.id, label, timestamp: startedAt });
+    } else if (snapshot.status === "completed") {
+      await emit({ type: "stage.completed", run_id: runId, stage_id: snapshot.id, artifacts: snapshot.artifacts, timestamp: snapshot.completed_at ?? state.updated_at });
+    } else if (snapshot.status === "skipped") {
+      await emit({ type: "stage.skipped", run_id: runId, stage_id: snapshot.id, reason: snapshot.error ?? "stage skipped", timestamp: snapshot.completed_at ?? state.updated_at });
+    } else if (snapshot.status === "failed") {
+      await emit({ type: "stage.failed", run_id: runId, stage_id: snapshot.id, error: snapshot.error ?? "stage failed", timestamp: snapshot.completed_at ?? state.updated_at });
+    }
+  }
+  await emit({ type: "plan.updated", run_id: runId, plan: plan.items, timestamp: plan.updated_at });
+  if (state.stages.every((stage) => stage.status === "completed" || stage.status === "skipped")) await emit({ type: "run.completed", run_id: runId, timestamp: plan.updated_at });
+  return true;
+}
+
+async function ensureRuntimeLogFile(root: string, relativePath: string): Promise<void> {
+  const path = ensureChild(root, relativePath);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, "", { encoding: "utf8", flag: "a" });
 }
 
 class SuppressRunCompletedSink implements EventSink {
