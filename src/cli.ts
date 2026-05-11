@@ -17,6 +17,8 @@ import { runTui } from "./tui/App.js";
 import { loadCodexModelCatalog } from "./models.js";
 import { proxyEnvForChild } from "./proxy.js";
 import { runResearchPipeline } from "./pipeline/research-pipeline.js";
+import { readJsonlEvents } from "./runtime/events.js";
+import { formatPlan, readPlanState } from "./runtime/plan.js";
 import { normalizeSources } from "./skills/literature/search.js";
 import type { LiteratureSource } from "./skills/literature/types.js";
 import { acquirePdfs } from "./skills/pdf/acquire.js";
@@ -38,7 +40,7 @@ import { compilePaper } from "./skills/templates/compile.js";
 import { packagePaper } from "./skills/templates/package.js";
 import type { ReviewMode, TemplateResolveInput, VenueTemplateProfile } from "./skills/templates/types.js";
 
-const commandNames = new Set(["research", "generate", "literature", "papers", "score", "refine", "templates", "paper", "status", "resume", "validate", "doctor", "auth", "login", "logout", "provider", "venues", "github", "api", "web"]);
+const commandNames = new Set(["research", "generate", "plan", "trace", "literature", "papers", "score", "refine", "templates", "paper", "status", "resume", "validate", "doctor", "auth", "login", "logout", "provider", "venues", "github", "api", "web"]);
 
 type ParsedArgs = {
   _: string[];
@@ -66,6 +68,10 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         return await commandGenerate(rest, false);
       case "research":
         return await commandGenerate(rest, true);
+      case "plan":
+        return await commandPlan(rest);
+      case "trace":
+        return await commandTrace(rest);
       case "literature":
         return await commandLiterature(rest);
       case "papers":
@@ -114,6 +120,22 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     console.error("error: unknown failure");
     return 2;
   }
+}
+
+async function commandPlan(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv);
+  const root = stringFlag(parsed, "output") ?? "generated_repos/idea2repo-project";
+  console.log(formatPlan(await readPlanState(root)));
+  return 0;
+}
+
+async function commandTrace(argv: string[]): Promise<number> {
+  const parsed = parseArgs(argv);
+  const root = stringFlag(parsed, "output") ?? "generated_repos/idea2repo-project";
+  const limit = numberFlag(parsed, "limit", 20);
+  const events = await readJsonlEvents(ensureChild(root, ".idea2repo/trace.jsonl"));
+  for (const event of events.slice(-limit)) console.log(JSON.stringify(event));
+  return 0;
 }
 
 async function commandPapers(argv: string[]): Promise<number> {
@@ -814,6 +836,8 @@ Usage:
   idea2repo "research idea" [--output dir] [--offline] [--stack python|ts]
   idea2repo research "research idea" [options]
   idea2repo generate "research idea" [options]  # legacy alias
+  idea2repo plan --output generated_repos/demo
+  idea2repo trace --output generated_repos/demo
   idea2repo literature plan|search|download [--output dir] [--allow-network]
   idea2repo papers analyze [--output dir]
   idea2repo score [--output dir] [--strict-ccf-a]

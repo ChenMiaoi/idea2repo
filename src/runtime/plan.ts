@@ -1,0 +1,120 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { researchStages, type ResearchStageId } from "../pipeline/stages.js";
+import { runtimeTimestamp, type EventSink, type Idea2RepoEvent, type RuntimePlanItem } from "./events.js";
+
+export const PLAN_STATE_PATH = join(".idea2repo", "plan.json");
+
+export type PlanItemStatus = "pending" | "in_progress" | "completed" | "blocked";
+
+export type PlanItem = RuntimePlanItem & {
+  status: PlanItemStatus;
+};
+
+export type PlanState = {
+  version: 1;
+  run_id: string;
+  items: PlanItem[];
+  updated_at: string;
+};
+
+export function createPlanState(runId: string, now = runtimeTimestamp()): PlanState {
+  return {
+    version: 1,
+    run_id: runId,
+    updated_at: now,
+    items: researchStages.map((stage) => ({
+      id: stage.id,
+      stage_id: stage.id,
+      step: stage.label,
+      status: "pending",
+      artifacts: [...stage.artifactPaths],
+      updated_at: now
+    }))
+  };
+}
+
+export function updatePlanForStageEvent(state: PlanState, event: Idea2RepoEvent, now = event.timestamp): PlanState {
+  if (!isStageEvent(event)) return state;
+  const status = planStatusForEvent(event);
+  const items = state.items.map((item) => {
+    if (item.stage_id !== event.stage_id) {
+      if (status === "in_progress" && item.status === "in_progress") return { ...item, status: "pending" as const, updated_at: now };
+      return item;
+    }
+    return {
+      ...item,
+      status,
+      blocker: blockerForEvent(event),
+      artifacts: event.type === "stage.completed" ? event.artifacts : item.artifacts,
+      updated_at: now
+    };
+  });
+  return { ...state, items, updated_at: now };
+}
+
+export async function writePlanState(root: string, state: PlanState): Promise<string> {
+  const path = join(root, PLAN_STATE_PATH);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(state, null, 2) + "\n", "utf8");
+  return path;
+}
+
+export async function readPlanState(root: string): Promise<PlanState> {
+  return JSON.parse(await readFile(join(root, PLAN_STATE_PATH), "utf8")) as PlanState;
+}
+
+export function formatPlan(state: PlanState): string {
+  return state.items.map((item) => `${mark(item.status)} ${item.step}${item.blocker ? ` - ${item.blocker}` : ""}`).join("\n");
+}
+
+export function stageIdFromPlanItem(item: PlanItem): ResearchStageId | undefined {
+  return researchStages.find((stage) => stage.id === item.stage_id)?.id;
+}
+
+function isStageEvent(event: Idea2RepoEvent): event is Extract<Idea2RepoEvent, { stage_id: string }> {
+  return event.type === "stage.started" || event.type === "stage.completed" || event.type === "stage.skipped" || event.type === "stage.failed";
+}
+
+function planStatusForEvent(event: Extract<Idea2RepoEvent, { stage_id: string }>): PlanItemStatus {
+  if (event.type === "stage.started") return "in_progress";
+  if (event.type === "stage.completed") return "completed";
+  return "blocked";
+}
+
+function blockerForEvent(event: Extract<Idea2RepoEvent, { stage_id: string }>): string | undefined {
+  if (event.type === "stage.skipped") return event.reason;
+  if (event.type === "stage.failed") return event.error;
+  return undefined;
+}
+
+function mark(status: PlanItemStatus): string {
+  if (status === "completed") return "[x]";
+  if (status === "in_progress") return "[>]";
+  if (status === "blocked") return "[!]";
+  return "[ ]";
+}
+
+export class PlanEventSink implements EventSink {
+  private state: PlanState;
+
+  constructor(
+    private readonly root: string,
+    runId: string,
+    private readonly downstream?: EventSink
+  ) {
+    this.state = createPlanState(runId);
+  }
+
+  current(): PlanState {
+    return this.state;
+  }
+
+  async emit(event: Idea2RepoEvent): Promise<void> {
+    await this.downstream?.emit(event);
+    if (!isStageEvent(event)) return;
+    this.state = updatePlanForStageEvent(this.state, event);
+    await writePlanState(this.root, this.state);
+    await this.downstream?.emit({ type: "plan.updated", run_id: this.state.run_id, plan: this.state.items, timestamp: this.state.updated_at });
+  }
+}
