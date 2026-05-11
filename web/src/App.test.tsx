@@ -9,6 +9,7 @@ describe("Idea2Repo app", () => {
     expect(screen.getByRole("heading", { name: /Local research agent workspace/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Idea form/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Route and score/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Runtime runs/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Artifact viewer/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Literature matrix/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Execution board/i })).toBeInTheDocument();

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -30,7 +30,8 @@ import {
   navItems,
   providerServices
 } from "./data";
-import { getApiBase, postJson } from "./api";
+import { getApiBase, getJson, postJson, subscribeRunEvents, type RuntimeEventSubscription, type RuntimeRunListResponse, type RuntimeRunStartResponse } from "./api";
+import { applyRuntimeEvent, createRuntimeView, disconnectRuntimeView } from "./runtime";
 import type {
   ArtifactNode,
   BoardColumn,
@@ -38,7 +39,10 @@ import type {
   PermissionKey,
   PermissionState,
   RouteScore,
-  RunLogEntry
+  RunLogEntry,
+  RuntimeEvent,
+  RuntimeRunSummary,
+  RuntimeViewState
 } from "./types";
 
 const defaultIdea =
@@ -82,6 +86,9 @@ export function App() {
   const [providerMode, setProviderMode] = useState("offline");
   const [draftIssues, setDraftIssues] = useState(7);
   const [apiStatus, setApiStatus] = useState<"idle" | "syncing" | "error" | "ok">("idle");
+  const [runtimeView, setRuntimeView] = useState<RuntimeViewState | null>(null);
+  const [runtimeRuns, setRuntimeRuns] = useState<RuntimeRunSummary[]>([]);
+  const runtimeSubscription = useRef<RuntimeEventSubscription | null>(null);
 
   const selectedPapers = literature.filter((record) => record.selected).length;
   const gateReady = selectedPapers >= 3 && routes[0].gate !== "blocked";
@@ -94,6 +101,21 @@ export function App() {
       score: index === 0 ? Math.min(route.score + evidenceBoost, 92) : route.score
     }));
   }, [routes, selectedPapers]);
+
+  useEffect(() => {
+    if (!apiBase) return;
+    let cancelled = false;
+    void getJson<RuntimeRunListResponse>("/runs").then((response) => {
+      if (!cancelled && response.ok) setRuntimeRuns(response.data.runs);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase]);
+
+  useEffect(() => {
+    return () => runtimeSubscription.current?.close();
+  }, []);
 
   function appendLog(label: string, tone: RunLogEntry["tone"] = "ok") {
     const time = new Date().toLocaleTimeString("en-US", {
@@ -112,15 +134,40 @@ export function App() {
       domains: [domain],
       weeks: Number(weeks),
       stack,
-      force: false
+      force: false,
+      offline: providerMode === "offline",
+      provider: providerMode === "offline" ? "offline" : null,
+      run_research_pipeline: true,
+      jsonl_events: true,
+      allow_network: permissions.network
     };
     if (apiBase) {
-      const response = await postJson<{ project_name: string }>("/generate", body);
+      const response = await postJson<RuntimeRunStartResponse>("/runs", body);
       setApiStatus(response.ok ? "ok" : "error");
-      appendLog(
-        response.ok ? `Generated ${response.data.project_name}` : response.error,
-        response.ok ? "ok" : "blocked"
-      );
+      if (!response.ok) {
+        appendLog(response.error, "blocked");
+        return;
+      }
+      const view = createRuntimeView(response.data);
+      setRuntimeView(view);
+      setRuntimeRuns((runs) => upsertRun(runs, {
+        id: response.data.run_id,
+        status: response.data.status,
+        idea,
+        output_root: response.data.output_root,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }));
+      runtimeSubscription.current?.close();
+      runtimeSubscription.current = subscribeRunEvents(response.data.run_id, {
+        onEvent: handleRuntimeEvent,
+        onError: (message) => {
+          setApiStatus("error");
+          setRuntimeView((current) => (current ? disconnectRuntimeView(current, message) : current));
+          appendLog(message, "blocked");
+        }
+      });
+      appendLog(`Started runtime run ${response.data.run_id.slice(0, 8)}`, "ok");
       return;
     }
     setRoutes((items) =>
@@ -131,6 +178,31 @@ export function App() {
       )
     );
     appendLog("Generated local plan preview without backend", "ok");
+  }
+
+  function handleRuntimeEvent(event: RuntimeEvent) {
+    setRuntimeView((current) => (current ? applyRuntimeEvent(current, event) : current));
+    setRuntimeRuns((runs) => updateRunStatus(runs, event));
+    const label = runtimeEventLabel(event);
+    if (label) appendLog(label, runtimeEventTone(event));
+    if (event.type === "run.completed") setApiStatus("ok");
+    if (event.type === "run.failed" || event.type === "run.cancelled") setApiStatus(event.type === "run.failed" ? "error" : "ok");
+    if (event.type === "run.completed" || event.type === "run.failed" || event.type === "run.cancelled") {
+      runtimeSubscription.current = null;
+      setRuntimeView((current) => (current ? { ...current, connected: false } : current));
+    }
+  }
+
+  async function handleCancelRun() {
+    if (!runtimeView || !apiBase) return;
+    const response = await postJson<{ run_id: string; status: RuntimeRunSummary["status"] }>(
+      `/runs/${encodeURIComponent(runtimeView.runId)}/cancel`,
+      { reason: "cancel requested from web dashboard" }
+    );
+    appendLog(response.ok ? `Cancel requested for ${response.data.run_id.slice(0, 8)}` : response.error, response.ok ? "warn" : "blocked");
+    if (response.ok) {
+      setRuntimeView((current) => (current ? { ...current, status: response.data.status } : current));
+    }
   }
 
   function handleValidate() {
@@ -215,6 +287,12 @@ export function App() {
             onResume={handleResume}
           />
           <ScoreDashboard routes={scoredRoutes} gateReady={gateReady} selectedPapers={selectedPapers} />
+          <RuntimeDashboard
+            runtime={runtimeView}
+            runs={runtimeRuns}
+            apiBase={apiBase}
+            onCancel={handleCancelRun}
+          />
           <ArtifactViewer artifact={selectedArtifact} onSelect={setSelectedArtifact} />
           <LiteratureMatrix
             records={literature}
@@ -415,6 +493,67 @@ function IdeaComposer({
         <CommandButton icon={ClipboardCheck} label="Validate" onClick={onValidate} />
       </div>
     </section>
+  );
+}
+
+function RuntimeDashboard({
+  runtime,
+  runs,
+  apiBase,
+  onCancel
+}: {
+  runtime: RuntimeViewState | null;
+  runs: RuntimeRunSummary[];
+  apiBase: string;
+  onCancel: () => void;
+}) {
+  const activePlan = runtime?.plan ?? [];
+  const activeEvents = runtime?.events.slice(-8).reverse() ?? [];
+  const activeArtifacts = runtime?.artifacts.slice(0, 8) ?? [];
+  const activeDecisions = runtime?.decisions.slice(-6).reverse() ?? [];
+  const activeApprovals = runtime?.approvals.slice(-6).reverse() ?? [];
+  const canCancel = runtime?.status === "queued" || runtime?.status === "running";
+
+  return (
+    <section className="panel runtime-panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Runtime runs</h2>
+          <p>Live plan, trace, artifacts, decisions, and approvals are streamed from /runs SSE.</p>
+        </div>
+        <StatusChip tone={!apiBase ? "neutral" : runtime?.connected === false ? "danger" : runtime ? statusTone(runtime.status) : "neutral"} label={!apiBase ? "demo" : runtime ? runtime.status : "idle"} />
+      </div>
+      <div className="runtime-summary">
+        <div>
+          <span>Active run</span>
+          <strong>{runtime ? runtime.runId.slice(0, 8) : "none"}</strong>
+          <small>{runtime?.outputRoot ?? "Start Generate with an API base to create a runtime run."}</small>
+        </div>
+        <CommandButton icon={AlertTriangle} label="Cancel" onClick={onCancel} disabled={!canCancel} />
+      </div>
+      {runtime?.error ? <div className="runtime-error">{runtime.error}</div> : null}
+      <div className="runtime-grid">
+        <RuntimeList title="Run list" empty="No API runs loaded." rows={runs.slice(0, 5).map((run) => `${run.id.slice(0, 8)}  ${run.status}  ${run.output_root}`)} />
+        <RuntimeList title="Live plan" empty="Waiting for plan.updated." rows={activePlan.slice(0, 8).map((item) => `${planMark(item.status)} ${item.step}`)} />
+        <RuntimeList title="Event timeline" empty="Waiting for SSE events." rows={activeEvents.map((event) => `${event.timestamp} ${event.type}`)} />
+        <RuntimeList title="Artifact tree" empty="No artifact events yet." rows={activeArtifacts.map((artifact) => `${artifact.text ? "[txt]" : "[bin]"} ${artifact.path} (${artifact.bytes})`)} />
+        <RuntimeList title="Decision records" empty="No decisions yet." rows={activeDecisions.map((decision) => `${decision.title}${decision.stage_id ? ` (${decision.stage_id})` : ""}`)} />
+        <RuntimeList title="Approval queue" empty="No approvals requested." rows={activeApprovals.map((approval) => `${approval.action}${approval.decision ? ` -> ${approval.decision}` : approval.risk ? ` [${approval.risk}]` : ""}`)} />
+      </div>
+    </section>
+  );
+}
+
+function RuntimeList({ title, empty, rows }: { title: string; empty: string; rows: string[] }) {
+  return (
+    <div className="runtime-list">
+      <h3>{title}</h3>
+      {rows.length ? (
+        rows.map((row, index) => <span key={`${title}-${index}`}>{row}</span>)
+      ) : (
+        <em>{empty}</em>
+      )}
+    </div>
   );
 }
 
@@ -797,4 +936,61 @@ function Guardrail({
       {ok ? <CheckCircle2 size={16} aria-label="ok" /> : <Loader2 size={16} aria-label="needs review" />}
     </div>
   );
+}
+
+function upsertRun(runs: RuntimeRunSummary[], next: RuntimeRunSummary): RuntimeRunSummary[] {
+  return [next, ...runs.filter((run) => run.id !== next.id)].slice(0, 12);
+}
+
+function updateRunStatus(runs: RuntimeRunSummary[], event: RuntimeEvent): RuntimeRunSummary[] {
+  return runs.map((run) =>
+    run.id === event.run_id
+      ? {
+          ...run,
+          status: runtimeStatusFromEvent(run.status, event),
+          updated_at: event.timestamp
+        }
+      : run
+  );
+}
+
+function runtimeStatusFromEvent(current: RuntimeRunSummary["status"], event: RuntimeEvent): RuntimeRunSummary["status"] {
+  if (event.type === "run.started") return "running";
+  if (event.type === "run.completed") return "completed";
+  if (event.type === "run.failed") return "failed";
+  if (event.type === "run.cancelled") return "cancelled";
+  return current;
+}
+
+function runtimeEventLabel(event: RuntimeEvent): string | null {
+  if (event.type === "run.started") return `Run started ${event.run_id.slice(0, 8)}`;
+  if (event.type === "run.completed") return `Run completed ${event.run_id.slice(0, 8)}`;
+  if (event.type === "run.failed") return `Run failed: ${event.error}`;
+  if (event.type === "run.cancelled") return `Run cancelled ${event.run_id.slice(0, 8)}`;
+  if (event.type === "stage.started") return `Stage started: ${event.label}`;
+  if (event.type === "stage.completed") return `Stage completed: ${event.stage_id}`;
+  if (event.type === "decision.recorded") return `Decision: ${event.title}`;
+  if (event.type === "artifact.written") return `Artifact: ${event.path}`;
+  if (event.type === "approval.requested") return `Approval requested: ${event.action}`;
+  return null;
+}
+
+function runtimeEventTone(event: RuntimeEvent): RunLogEntry["tone"] {
+  if (event.type === "run.failed" || event.type === "stage.failed" || event.type === "approval.requested") return "blocked";
+  if (event.type === "stage.skipped" || event.type === "run.cancelled") return "warn";
+  return "ok";
+}
+
+function statusTone(status: RuntimeRunSummary["status"]): "ok" | "warn" | "danger" | "neutral" {
+  if (status === "completed") return "ok";
+  if (status === "failed" || status === "cancelled") return "danger";
+  if (status === "running") return "warn";
+  return "neutral";
+}
+
+function planMark(status: RuntimeViewState["plan"][number]["status"]): string {
+  if (status === "completed") return "[x]";
+  if (status === "in_progress") return "[>]";
+  if (status === "blocked") return "[!]";
+  return "[ ]";
 }
