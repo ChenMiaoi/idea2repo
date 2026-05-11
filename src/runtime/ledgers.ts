@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { StrictScoreResult } from "../skills/analysis/ccf-a-score.js";
-import type { ClaimEvidenceRow } from "../skills/analysis/evidence-extract.js";
+import type { ClaimEvidenceRow, EvidenceClaimType } from "../skills/analysis/evidence-extract.js";
 import type { PaperCandidate } from "../skills/literature/types.js";
+import type { PdfChunkIndexEntry } from "../skills/pdf/chunk.js";
 import type { PdfManifestRecord } from "../skills/pdf/provenance.js";
 import { runtimeTimestamp } from "./events.js";
 
@@ -11,8 +12,6 @@ export const EVIDENCE_LEDGER_PATH = join(".idea2repo", "evidence.jsonl");
 export const SCORE_SNAPSHOTS_LEDGER_PATH = join(".idea2repo", "score_snapshots.jsonl");
 
 const ledgerWriteQueues = new Map<string, Promise<void>>();
-
-export type EvidenceClaimType = "method" | "dataset" | "metric" | "baseline" | "limitation" | "result" | "threat" | "future_work";
 
 export type EvidenceItem = {
   id: string;
@@ -95,6 +94,9 @@ export async function replaceEvidenceItems(
         ? { ...item, current: false, superseded_at: supersededAt }
         : item
     );
+    for (const item of items) {
+      if (!validateEvidenceItem(item)) throw new Error(`Invalid evidence item: ${item.id || item.paper_id || "unknown"}`);
+    }
     next.push(...items.map((item) => ({ ...item, current: true })));
     await writeJsonlFile(path, next);
   });
@@ -128,24 +130,28 @@ export function evidenceItemsFromRows(input: {
   rows: ClaimEvidenceRow[];
   candidates?: PaperCandidate[];
   manifest?: PdfManifestRecord[];
+  chunks?: PdfChunkIndexEntry[];
   timestamp?: string;
   confidence?: number;
 }): EvidenceItem[] {
   const timestamp = input.timestamp ?? runtimeTimestamp();
   const candidates = candidateLookup(input.candidates ?? []);
   const manifestByPaper = new Map((input.manifest ?? []).map((record) => [record.paper_id, record]));
+  const chunksByRef = chunkLookup(input.chunks);
   return input.rows.flatMap((row) => {
     const page = row.page ? Number(row.page) : NaN;
-    if (row.status !== "verified" || !Number.isFinite(page) || !row.quote || !row.chunk_id) return [];
+    const verified = verifiedEvidenceRow(row, page, chunksByRef);
+    if (!verified) return [];
     const candidate = candidates.get(row.paper_id);
     const record = manifestByPaper.get(row.paper_id);
     const sourceUrl = record?.source_url ?? candidate?.pdf_urls[0] ?? candidate?.source_urls[0];
+    const confidence = confidenceForRow(row, input.confidence);
     return [{
       id: `${input.runId}:${input.stageId ?? "pdf_reading"}:${row.paper_id}:${row.chunk_id}:${stableHash([
         timestamp,
         row.claim,
-        row.quote,
-        input.confidence ?? 0.6,
+        verified.quote,
+        confidence,
         record?.pdf_sha256 ?? ""
       ].join("|"))}`,
       run_id: input.runId,
@@ -160,14 +166,15 @@ export function evidenceItemsFromRows(input: {
       doi: candidate?.doi,
       arxiv_id: candidate?.arxiv_id,
       page,
-      quote: row.quote,
-      chunk_id: row.chunk_id,
+      section: row.section,
+      quote: verified.quote,
+      chunk_id: row.chunk_id!,
       paraphrase: row.claim,
-      claim_type: claimTypeForText(row.claim),
-      confidence: input.confidence ?? 0.6,
+      claim_type: row.claim_type ?? claimTypeForText(row.claim),
+      confidence,
       provenance: {
         source: "pdf_chunk" as const,
-        artifact: row.planned_artifact,
+        artifact: "docs/reference/pdf_chunks.json",
         pdf_path: record?.pdf_path,
         pdf_sha256: record?.pdf_sha256,
         source_url: sourceUrl,
@@ -176,6 +183,27 @@ export function evidenceItemsFromRows(input: {
       timestamp
     }];
   });
+}
+
+export function validateEvidenceItem(item: EvidenceItem): boolean {
+  return Boolean(
+    item.id &&
+      item.run_id &&
+      item.stage_id &&
+      item.paper_id &&
+      item.title &&
+      Number.isFinite(item.page) &&
+      item.page >= 1 &&
+      item.quote?.trim() &&
+      item.chunk_id?.trim() &&
+      isEvidenceClaimType(item.claim_type) &&
+      Number.isFinite(item.confidence) &&
+      item.confidence >= 0 &&
+      item.confidence <= 1 &&
+      item.provenance?.source === "pdf_chunk" &&
+      item.provenance.artifact &&
+      item.provenance.extracted_at
+  );
 }
 
 export function scoreSnapshotFromStrictScore(input: {
@@ -269,6 +297,35 @@ function candidateLookup(candidates: PaperCandidate[]): Map<string, PaperCandida
   return byId;
 }
 
+function chunkLookup(chunks: PdfChunkIndexEntry[] | undefined): Map<string, PdfChunkIndexEntry> | undefined {
+  if (!chunks) return undefined;
+  return new Map(chunks.map((chunk) => [`${chunk.paper_id}:${chunk.chunk_id}`, chunk]));
+}
+
+function verifiedEvidenceRow(
+  row: ClaimEvidenceRow,
+  page: number,
+  chunksByRef: Map<string, PdfChunkIndexEntry> | undefined
+): { quote: string; chunk?: PdfChunkIndexEntry } | null {
+  if (row.status !== "verified" || !Number.isFinite(page) || page < 1 || !row.quote?.trim() || !row.chunk_id?.trim()) return null;
+  const quote = row.quote.trim();
+  if (!chunksByRef) return null;
+  const chunk = chunksByRef.get(`${row.paper_id}:${row.chunk_id}`);
+  if (!chunk || chunk.page !== page) return null;
+  if (!normalizeEvidenceText(chunk.text).includes(normalizeEvidenceText(quote))) return null;
+  return { quote, chunk };
+}
+
+function confidenceForRow(row: ClaimEvidenceRow, override: number | undefined): number {
+  const raw = override ?? row.confidence;
+  if (!Number.isFinite(raw)) return 0.6;
+  return Math.min(1, Math.max(0, Math.round(raw * 1000) / 1000));
+}
+
+function normalizeEvidenceText(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 function claimTypeForText(text: string): EvidenceClaimType {
   const normalized = text.toLowerCase();
   if (normalized.includes("dataset") || normalized.includes("benchmark")) return "dataset";
@@ -279,6 +336,10 @@ function claimTypeForText(text: string): EvidenceClaimType {
   if (normalized.includes("future work")) return "future_work";
   if (normalized.includes("result")) return "result";
   return "method";
+}
+
+function isEvidenceClaimType(value: string): value is EvidenceClaimType {
+  return ["method", "dataset", "metric", "baseline", "limitation", "result", "threat", "future_work"].includes(value);
 }
 
 function strictDimensionMax(name: string, fallback: number): number {

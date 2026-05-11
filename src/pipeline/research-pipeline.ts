@@ -34,7 +34,7 @@ import { CodexOAuthClient } from "../auth/codex-oauth.js";
 import { paperCandidateToRecord, type LiteratureSearchOptions, type LiteratureSearchResult, type PaperRecord } from "../literature.js";
 import { diagnoseIdea } from "../scoring.js";
 import { exists } from "../state.js";
-import { evidenceRowsCsv, evidenceRowsMarkdown, evidenceText, extractEvidenceRows } from "../skills/analysis/evidence-extract.js";
+import { evidenceRowsCsv, evidenceRowsMarkdown, evidenceText, extractEvidenceRows, type ClaimEvidenceRow } from "../skills/analysis/evidence-extract.js";
 import { strictScoreMarkdown, type StrictScoreInput, type StrictScoreResult } from "../skills/analysis/ccf-a-score.js";
 import { experimentPlanMarkdown, feasibilityMarkdown, revisedIdeaMarkdown } from "../skills/analysis/idea-refine.js";
 import { assessNovelty, noveltyMatrixMarkdown } from "../skills/analysis/novelty-matrix.js";
@@ -107,11 +107,22 @@ export type ResearchPipelineResult = {
   baselineRecommendations: string[];
   datasetRecommendations: string[];
   metricRecommendations: string[];
-  claimEvidenceRows: Record<string, string>[];
+  claimEvidenceRows: PipelineClaimEvidenceRow[];
   artifacts: Record<string, string>;
   warnings: string[];
   decisionSummaries: string[];
 };
+
+type PlannedClaimEvidenceRow = {
+  claim: string;
+  claim_type: "method";
+  confidence: number;
+  required_evidence: string;
+  planned_artifact: string;
+  status: "planned";
+};
+
+type PipelineClaimEvidenceRow = ClaimEvidenceRow | PlannedClaimEvidenceRow;
 
 export async function runResearchPipeline(idea: string, options: ResearchPipelineOptions = {}): Promise<ResearchPipelineResult> {
   if (!idea.trim()) throw new Error("idea must not be empty");
@@ -454,29 +465,34 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     stageId: "pdf_reading",
     rows: evidenceRows,
     candidates,
-    manifest
+    manifest,
+    chunks
   });
   if (options.outputRoot) await replaceEvidenceItems(outputRoot, { runId, stageId: "pdf_reading" }, evidenceItems);
   if (evidenceItems.length) {
     state = updateStageRefs(state, "pdf_reading", { evidence_refs: evidenceItems.map((item) => item.id) });
     if (options.outputRoot) await writeResearchPipelineState(outputRoot, state);
   }
-  for (const row of verifiedEvidenceRows) {
+  for (const item of evidenceItems) {
     await emitRuntimeEvent({
       type: "evidence.extracted",
       run_id: runId,
-      evidence_id: `${row.paper_id}:${row.chunk_id}`,
-      paper_id: row.paper_id,
-      claim: row.claim,
-      claim_type: claimTypeForEvidence(row.claim),
-      page: Number(row.page),
-      quote: row.quote!,
-      chunk_id: row.chunk_id!,
-      confidence: 0.6,
+      evidence_id: item.id,
+      paper_id: item.paper_id,
+      title: item.title,
+      venue: item.venue,
+      claim: item.paraphrase,
+      claim_type: item.claim_type,
+      page: item.page,
+      section: item.section,
+      quote: item.quote,
+      chunk_id: item.chunk_id,
+      confidence: item.confidence,
+      provenance: item.provenance,
       timestamp: runtimeTimestamp()
     });
   }
-  const hasVerifiedPdfEvidence = verifiedEvidenceRows.length > 0;
+  const hasVerifiedPdfEvidence = evidenceItems.length > 0;
   const noteArtifacts = { ...evidenceRowsMarkdown(evidenceRows), ...paperNoteArtifacts(agentPaperNotes, chunks) };
   if (!canResumePdfReading) {
     await recordDecision({
@@ -657,9 +673,11 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
   const claimEvidenceRows = evidenceRows.length ? evidenceRows : [
     {
       claim: "Main contribution improves over verified baselines.",
+      claim_type: "method" as const,
+      confidence: 0,
       required_evidence: "At least one result table linked to verified baseline, dataset, and metric.",
       planned_artifact: "results/tables/main_results.csv",
-      status: "planned"
+      status: "planned" as const
     }
   ];
 
@@ -834,7 +852,7 @@ function pipelineArtifacts(input: {
   baselineRecommendations: string[];
   datasetRecommendations: string[];
   metricRecommendations: string[];
-  claimEvidenceRows: Record<string, string>[];
+  claimEvidenceRows: PipelineClaimEvidenceRow[];
   strict: boolean;
   agentTriage: CandidateTriage | null;
   agentRelatedWork: RelatedWorkAnalysis | null;
@@ -1472,18 +1490,6 @@ function agentScoreMarkdown(score: StrictCcfAReview): string {
 - Cap reasons: ${score.cap_reasons.join("; ") || "none"}
 - Recommendations: ${score.recommendations.join("; ") || "none"}
 `;
-}
-
-function claimTypeForEvidence(claim: string): Extract<Idea2RepoEvent, { type: "evidence.extracted" }>["claim_type"] {
-  const normalized = claim.toLowerCase();
-  if (normalized.includes("dataset") || normalized.includes("benchmark")) return "dataset";
-  if (normalized.includes("metric") || normalized.includes("accuracy") || normalized.includes("latency")) return "metric";
-  if (normalized.includes("baseline")) return "baseline";
-  if (normalized.includes("limitation")) return "limitation";
-  if (normalized.includes("threat")) return "threat";
-  if (normalized.includes("future work")) return "future_work";
-  if (normalized.includes("result")) return "result";
-  return "method";
 }
 
 function verifiedEvidencePaperCount(rows: ReturnType<typeof extractEvidenceRows>): number {

@@ -261,11 +261,14 @@ function evidence(paperId: string, quote = "verified quote") {
   return {
     paper_id: paperId,
     claim: "claim",
+    claim_type: "method" as const,
     required_evidence: "page quote chunk",
     planned_artifact: "note",
     status: "verified" as const,
     page: "1",
+    section: "unknown",
     quote,
-    chunk_id: "p1-c1"
+    chunk_id: "p1-c1",
+    confidence: 0.6
   };
 }

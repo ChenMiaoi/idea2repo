@@ -13,6 +13,7 @@ import {
   readScoreSnapshots,
   replaceEvidenceItems,
   scoreSnapshotFromStrictScore,
+  validateEvidenceItem,
 } from "../src/runtime/ledgers.js";
 
 test("evidence ledger versions verified PDF evidence by run scope", async () => {
@@ -22,18 +23,31 @@ test("evidence ledger versions verified PDF evidence by run scope", async () => 
       {
         paper_id: "paper-1",
         claim: "PDF evidence mentions baseline comparison.",
+        claim_type: "baseline",
         required_evidence: "page, quote, and chunk id",
         planned_artifact: "docs/reference/paper_notes/paper-1.md",
         status: "verified",
         page: "2",
+        section: "evaluation",
         quote: "baseline comparison",
-        chunk_id: "paper-1-p2-c1"
+        chunk_id: "paper-1-p2-c1",
+        confidence: 0.7
       }
     ];
+    const chunks = [{
+      paper_id: "paper-1",
+      chunk_id: "paper-1-p2-c1",
+      page: 2,
+      text: "The evaluation reports a baseline comparison against prior benchmarks.",
+      char_count: 69,
+      text_density: 69,
+      extraction_quality: "weak" as const
+    }];
     const firstItems = evidenceItemsFromRows({
       runId: "run-1",
       stageId: "pdf_reading",
       rows,
+      chunks,
       candidates: [
         {
           candidate_id: "paper-1",
@@ -78,14 +92,29 @@ test("evidence ledger versions verified PDF evidence by run scope", async () => 
           status: "downloaded"
         }
       ],
+      chunks,
       timestamp: "2026-05-11T00:01:00Z",
       confidence: 0.8
     });
 
     assert.equal(firstItems.length, 1);
     assert.equal(secondItems.length, 1);
+    assert.equal(validateEvidenceItem(firstItems[0]!), true);
     assert.notEqual(firstItems[0]?.id, secondItems[0]?.id);
     assert.equal(firstItems[0]?.claim_type, "baseline");
+    assert.equal(firstItems[0]?.section, "evaluation");
+    assert.equal(firstItems[0]?.provenance.artifact, "docs/reference/pdf_chunks.json");
+    assert.deepEqual(evidenceItemsFromRows({
+      runId: "run-1",
+      stageId: "pdf_reading",
+      rows: [{ ...rows[0]!, quote: "fabricated claim not present in chunk" }],
+      chunks
+    }), []);
+    assert.deepEqual(evidenceItemsFromRows({
+      runId: "run-1",
+      stageId: "pdf_reading",
+      rows
+    }), []);
     await replaceEvidenceItems(root, { runId: "run-1", stageId: "pdf_reading", timestamp: "2026-05-11T00:00:30Z" }, firstItems);
     await appendScoreSnapshot(root, scoreSnapshotFromStrictScore({
       runId: "run-1",

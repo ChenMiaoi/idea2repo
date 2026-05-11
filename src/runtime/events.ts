@@ -23,6 +23,15 @@ export type PdfExtractionPageEvent = {
   quality: "empty" | "weak" | "ok";
 };
 
+export type EvidenceProvenanceEvent = {
+  source: "pdf_chunk";
+  artifact: string;
+  pdf_path?: string;
+  pdf_sha256?: string;
+  source_url?: string;
+  extracted_at: string;
+};
+
 export type Idea2RepoEvent =
   | { type: "run.started"; run_id: string; idea: string; output_root: string; timestamp: string }
   | { type: "run.completed"; run_id: string; timestamp: string }
@@ -78,12 +87,16 @@ export type Idea2RepoEvent =
       run_id: string;
       evidence_id: string;
       paper_id: string;
+      title?: string;
+      venue?: string;
       claim: string;
       claim_type: "method" | "dataset" | "metric" | "baseline" | "limitation" | "result" | "threat" | "future_work";
       page: number;
+      section?: string;
       quote: string;
       chunk_id: string;
       confidence: number;
+      provenance?: EvidenceProvenanceEvent;
       timestamp: string;
     }
   | {

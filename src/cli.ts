@@ -215,7 +215,7 @@ async function commandPapers(argv: string[]): Promise<number> {
   const evidenceRows = extractEvidenceRows(chunks);
   const runId = "cli-analysis";
   await ensureRuntimeLedgers(root);
-  await replaceEvidenceItems(root, { runId, stageId: "pdf_reading" }, evidenceItemsFromRows({ runId, stageId: "pdf_reading", rows: evidenceRows, candidates, manifest }));
+  await replaceEvidenceItems(root, { runId, stageId: "pdf_reading" }, evidenceItemsFromRows({ runId, stageId: "pdf_reading", rows: evidenceRows, candidates, manifest, chunks }));
   await writeText(ensureChild(root, "docs/reference/pdf_chunks.json"), JSON.stringify(chunks, null, 2) + "\n");
   await writeText(ensureChild(root, "docs/reference/claim_evidence_matrix.csv"), evidenceRowsCsv(evidenceRows));
   for (const [relativePath, content] of Object.entries(evidenceRowsMarkdown(evidenceRows))) await writeText(ensureChild(root, relativePath), content);
@@ -238,7 +238,7 @@ async function commandScore(argv: string[]): Promise<number> {
   const { manifest, chunks, warnings } = await trustedPdfChunksFromProject(root);
   const evidenceRows = extractEvidenceRows(chunks);
   const runId = "cli-analysis";
-  const evidenceItems = evidenceItemsFromRows({ runId, stageId: "pdf_reading", rows: evidenceRows, candidates, manifest });
+  const evidenceItems = evidenceItemsFromRows({ runId, stageId: "pdf_reading", rows: evidenceRows, candidates, manifest, chunks });
   const text = evidenceText(evidenceRows);
   const novelty = assessNovelty(idea, candidates, evidenceRows);
   const verifiedPaperCount = verifiedEvidencePaperCount(evidenceRows);

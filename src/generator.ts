@@ -52,7 +52,7 @@ export type GenerateOptions = {
   baselines?: string[];
   datasets?: string[];
   metrics?: string[];
-  claimEvidenceRows?: Record<string, string>[];
+  claimEvidenceRows?: Array<Record<string, unknown>>;
   stack?: Stack;
   offline?: boolean;
   provider?: string | null;
@@ -853,7 +853,7 @@ function buildFiles(options: {
   workspace: Record<string, unknown>;
   verifiedPapers: PaperRecord[];
   literatureTasks: string[];
-  claimEvidenceRows?: Record<string, string>[];
+  claimEvidenceRows?: Array<Record<string, unknown>>;
   evidenceGate: EvidenceGate;
   stack: Stack;
   analysis: ResearchAnalysis | null;
@@ -953,10 +953,14 @@ function buildFiles(options: {
   return files;
 }
 
-function claimEvidenceRows(rows: Record<string, string>[] | undefined): string[][] {
-  const header = ["claim", "required_evidence", "planned_artifact", "status"];
-  if (!rows?.length) return [header, ["TODO: paper claim", "TODO: metric/table/figure", "results/tables/", "planned"]];
-  return [header, ...rows.map((row) => [row.claim ?? "", row.required_evidence ?? "", row.planned_artifact ?? "", row.status ?? "planned"])];
+function claimEvidenceRows(rows: Array<Record<string, unknown>> | undefined): string[][] {
+  const header = ["claim", "claim_type", "confidence", "required_evidence", "planned_artifact", "status"];
+  if (!rows?.length) return [header, ["TODO: paper claim", "method", "0", "TODO: metric/table/figure", "results/tables/", "planned"]];
+  return [header, ...rows.map((row) => [stringCell(row.claim), stringCell(row.claim_type), stringCell(row.confidence), stringCell(row.required_evidence), stringCell(row.planned_artifact), stringCell(row.status) || "planned"])];
+}
+
+function stringCell(value: unknown): string {
+  return value == null ? "" : String(value);
 }
 
 function generationMetadata(options: {

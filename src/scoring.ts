@@ -87,7 +87,7 @@ export function diagnoseIdea(
     baselines?: string[];
     datasets?: string[];
     metrics?: string[];
-    claimEvidenceRows?: Record<string, string>[];
+    claimEvidenceRows?: Array<Record<string, unknown>>;
   } = {}
 ): Diagnosis {
   const database = options.database ?? loadVenueDatabase();

@@ -1,14 +1,19 @@
 import type { PdfChunkIndexEntry } from "../pdf/chunk.js";
 
+export type EvidenceClaimType = "method" | "dataset" | "metric" | "baseline" | "limitation" | "result" | "threat" | "future_work";
+
 export type ClaimEvidenceRow = {
   paper_id: string;
   claim: string;
+  claim_type: EvidenceClaimType;
   required_evidence: string;
   planned_artifact: string;
   status: "verified" | "planned" | "missing";
   page?: string;
+  section?: string;
   quote?: string;
   chunk_id?: string;
+  confidence: number;
 };
 
 export function extractEvidenceRows(chunks: PdfChunkIndexEntry[]): ClaimEvidenceRow[] {
@@ -19,12 +24,15 @@ export function extractEvidenceRows(chunks: PdfChunkIndexEntry[]): ClaimEvidence
     return {
       paper_id: paperId,
       claim: chunk ? inferClaim(chunk.text) : "Verified paper evidence extracted from PDF chunk.",
+      claim_type: chunk ? inferClaimType(chunk.text) : "method",
       required_evidence: "page, quote, and chunk id",
       planned_artifact: `docs/reference/paper_notes/${paperId}.md`,
       status: chunk ? "verified" : "missing",
       page: chunk ? String(chunk.page) : undefined,
+      section: chunk ? inferSectionLabel(chunk.text) : undefined,
       quote: chunk?.text.slice(0, 240),
-      chunk_id: chunk?.chunk_id
+      chunk_id: chunk?.chunk_id,
+      confidence: chunk ? evidenceConfidence(chunk) : 0
     };
   });
 }
@@ -35,7 +43,7 @@ export function evidenceRowsMarkdown(rows: ClaimEvidenceRow[]): Record<string, s
   const files: Record<string, string> = {};
   for (const [paperId, paperRows] of grouped) {
     const text = evidenceText(paperRows);
-    files[`docs/reference/paper_notes/${paperId}.md`] = `# ${paperId}\n\n## Problem\n\n${inferSection(text, "problem")}\n\n## Method\n\n${inferSection(text, "method")}\n\n## Claims And Evidence\n\n${paperRows.map((row) => `- Claim: ${row.claim}\n  - Page: ${row.page ?? "missing"}\n  - Quote: ${row.quote ?? "missing"}\n  - Chunk: ${row.chunk_id ?? "missing"}`).join("\n")}\n\n## Limitations\n\n${inferSection(text, "limitation")}\n\n## Analysis Confidence\n\n${paperRows.some((row) => row.page && row.quote && row.chunk_id) ? "medium" : "low"}\n`;
+    files[`docs/reference/paper_notes/${paperId}.md`] = `# ${paperId}\n\n## Problem\n\n${inferSection(text, "problem")}\n\n## Method\n\n${inferSection(text, "method")}\n\n## Claims And Evidence\n\n${paperRows.map((row) => `- Claim: ${row.claim}\n  - Type: ${row.claim_type}\n  - Confidence: ${row.confidence}\n  - Page: ${row.page ?? "missing"}\n  - Section: ${row.section ?? "missing"}\n  - Quote: ${row.quote ?? "missing"}\n  - Chunk: ${row.chunk_id ?? "missing"}`).join("\n")}\n\n## Limitations\n\n${inferSection(text, "limitation")}\n\n## Analysis Confidence\n\n${paperRows.some((row) => row.page && row.quote && row.chunk_id) ? "medium" : "low"}\n`;
   }
   return files;
 }
@@ -51,6 +59,33 @@ function inferClaim(text: string): string {
   if (lowered.includes("metric") || lowered.includes("accuracy") || lowered.includes("latency")) return "PDF evidence mentions metric.";
   if (lowered.includes("limitation")) return "PDF evidence mentions limitation.";
   return "Verified paper evidence extracted from PDF chunk.";
+}
+
+function inferClaimType(text: string): EvidenceClaimType {
+  const lowered = text.toLowerCase();
+  if (lowered.includes("dataset") || lowered.includes("benchmark")) return "dataset";
+  if (lowered.includes("metric") || lowered.includes("accuracy") || lowered.includes("latency")) return "metric";
+  if (lowered.includes("baseline")) return "baseline";
+  if (lowered.includes("limitation")) return "limitation";
+  if (lowered.includes("threat")) return "threat";
+  if (lowered.includes("future work")) return "future_work";
+  if (lowered.includes("result")) return "result";
+  return "method";
+}
+
+function inferSectionLabel(text: string): string {
+  const lowered = text.toLowerCase();
+  if (lowered.includes("experiment") || lowered.includes("evaluation")) return "evaluation";
+  if (lowered.includes("limitation") || lowered.includes("threat")) return "limitations";
+  if (lowered.includes("method") || lowered.includes("approach") || lowered.includes("system")) return "method";
+  if (lowered.includes("dataset") || lowered.includes("benchmark") || lowered.includes("metric")) return "evaluation";
+  return "unknown";
+}
+
+function evidenceConfidence(chunk: PdfChunkIndexEntry): number {
+  if (chunk.extraction_quality === "empty") return 0.2;
+  if (chunk.extraction_quality === "weak") return 0.45;
+  return 0.65;
 }
 
 function inferSection(text: string, kind: "problem" | "method" | "limitation"): string {
@@ -70,8 +105,8 @@ function capitalize(value: string): string {
 }
 
 export function evidenceRowsCsv(rows: ClaimEvidenceRow[]): string {
-  const header = ["paper_id", "claim", "required_evidence", "planned_artifact", "status", "page", "quote", "chunk_id"];
-  return [header, ...rows.map((row) => [row.paper_id, row.claim, row.required_evidence, row.planned_artifact, row.status, row.page ?? "", row.quote ?? "", row.chunk_id ?? ""])]
+  const header = ["paper_id", "claim", "claim_type", "confidence", "required_evidence", "planned_artifact", "status", "page", "section", "quote", "chunk_id"];
+  return [header, ...rows.map((row) => [row.paper_id, row.claim, row.claim_type, String(row.confidence), row.required_evidence, row.planned_artifact, row.status, row.page ?? "", row.section ?? "", row.quote ?? "", row.chunk_id ?? ""])]
     .map((row) => row.map(csvCell).join(","))
     .join("\n") + "\n";
 }

@@ -87,16 +87,28 @@ test("runtime API starts runs and streams shared runtime events over SSE", async
     assert.ok(scores.score_snapshots.some((snapshot: { score: number; hard_blockers: string[] }) => snapshot.score === 45 && snapshot.hard_blockers.includes("No PDF read")));
     await replaceEvidenceItems(output, { runId: "other-run", stageId: "pdf_reading" }, evidenceItemsFromRows({
       runId: "other-run",
+      chunks: [{
+        paper_id: "paper-1",
+        chunk_id: "paper-1-c1",
+        page: 1,
+        text: "The paper reports a baseline comparison for the evaluation.",
+        char_count: 60,
+        text_density: 60,
+        extraction_quality: "weak"
+      }],
       rows: [
         {
           paper_id: "paper-1",
           claim: "PDF evidence mentions baseline comparison.",
+          claim_type: "baseline",
           required_evidence: "page, quote, and chunk id",
           planned_artifact: "docs/reference/paper_notes/paper-1.md",
           status: "verified",
           page: "1",
+          section: "evaluation",
           quote: "baseline comparison",
-          chunk_id: "paper-1-c1"
+          chunk_id: "paper-1-c1",
+          confidence: 0.7
         }
       ]
     }));

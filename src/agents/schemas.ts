@@ -200,7 +200,7 @@ export const ResearchPipelineResultSchema = Type.Object(
     baselineRecommendations: Type.Array(Type.String()),
     datasetRecommendations: Type.Array(Type.String()),
     metricRecommendations: Type.Array(Type.String()),
-    claimEvidenceRows: Type.Array(Type.Record(Type.String(), Type.String())),
+    claimEvidenceRows: Type.Array(Type.Record(Type.String(), Type.Unknown())),
     warnings: Type.Array(Type.String())
   },
   { additionalProperties: true }

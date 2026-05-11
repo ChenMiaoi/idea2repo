@@ -29,17 +29,11 @@ export function evaluateEvidenceGate(
     baselines?: string[];
     datasets?: string[];
     metrics?: string[];
-    claimEvidenceRows?: Record<string, string>[];
+    claimEvidenceRows?: Array<Record<string, unknown>>;
   } = {}
 ): EvidenceGate {
   const rows = options.claimEvidenceRows ?? [];
-  const mapped = rows.some(
-    (row) =>
-      verifiedText(row.claim ?? "") &&
-      verifiedText(row.required_evidence ?? "") &&
-      verifiedText(row.planned_artifact ?? "") &&
-      ["verified", "measured"].includes(row.status ?? "")
-  );
+  const mapped = rows.some(structuredEvidenceRow);
   return {
     related_work_verified: verifiedRecords(papers).length > 0,
     strong_baseline_defined: (options.baselines ?? []).some(verifiedText),
@@ -72,8 +66,41 @@ function yesNo(value: boolean): string {
   return value ? "yes" : "no";
 }
 
-function verifiedText(value: string): boolean {
+function verifiedText(value: unknown): boolean {
+  if (typeof value !== "string") return false;
   const normalized = value.trim().toLowerCase();
   if (!normalized) return false;
   return !["todo", "tbd", "placeholder", "planned", "unknown", "unspecified"].some((marker) => normalized.includes(marker));
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function structuredEvidenceRow(row: Record<string, unknown>): boolean {
+  const confidence = typeof row.confidence === "number" ? row.confidence : Number.NaN;
+  return Boolean(
+    verifiedText(row.paper_id) &&
+      verifiedText(row.claim) &&
+      isEvidenceClaimType(row.claim_type) &&
+      Number.isFinite(confidence) &&
+      confidence > 0 &&
+      confidence <= 1 &&
+      Number.isFinite(Number(row.page)) &&
+      Number(row.page) >= 1 &&
+      verifiedText(row.quote) &&
+      verifiedText(row.chunk_id) &&
+      ["verified", "measured"].includes(stringValue(row.status)) &&
+      hasPdfChunkProvenance(row.provenance)
+  );
+}
+
+function hasPdfChunkProvenance(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const provenance = value as Record<string, unknown>;
+  return provenance.source === "pdf_chunk" && verifiedText(provenance.artifact) && verifiedText(provenance.extracted_at);
+}
+
+function isEvidenceClaimType(value: unknown): boolean {
+  return typeof value === "string" && ["method", "dataset", "metric", "baseline", "limitation", "result", "threat", "future_work"].includes(value);
 }
