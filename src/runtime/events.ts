@@ -1,0 +1,82 @@
+import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { dirname } from "node:path";
+
+export type RuntimePlanItem = {
+  id: string;
+  stage_id?: string;
+  step: string;
+  status: "pending" | "in_progress" | "completed" | "blocked";
+  blocker?: string;
+  artifacts: string[];
+  updated_at: string;
+};
+
+export type Idea2RepoEvent =
+  | { type: "run.started"; run_id: string; idea: string; output_root: string; timestamp: string }
+  | { type: "run.completed"; run_id: string; timestamp: string }
+  | { type: "run.failed"; run_id: string; error: string; timestamp: string }
+  | { type: "run.cancelled"; run_id: string; reason?: string; timestamp: string }
+  | { type: "stage.started"; run_id: string; stage_id: string; label: string; timestamp: string }
+  | { type: "stage.completed"; run_id: string; stage_id: string; artifacts: string[]; timestamp: string }
+  | { type: "stage.skipped"; run_id: string; stage_id: string; reason: string; timestamp: string }
+  | { type: "stage.failed"; run_id: string; stage_id: string; error: string; timestamp: string }
+  | { type: "plan.updated"; run_id: string; plan: RuntimePlanItem[]; timestamp: string }
+  | { type: "decision.recorded"; run_id: string; decision_id: string; stage_id?: string; title: string; timestamp: string }
+  | { type: "artifact.written"; run_id: string; path: string; sha256: string; bytes: number; timestamp: string }
+  | { type: "artifact.snapshot"; run_id: string; snapshot_id: string; path: string; timestamp: string }
+  | { type: "artifact.restored"; run_id: string; snapshot_id: string; path: string; timestamp: string }
+  | { type: "tool.started"; run_id: string; tool_call_id: string; tool_name: string; timestamp: string }
+  | { type: "tool.completed"; run_id: string; tool_call_id: string; success: boolean; summary: string; timestamp: string }
+  | { type: "approval.requested"; run_id: string; approval_id: string; action: string; risk: string; timestamp: string }
+  | { type: "approval.resolved"; run_id: string; approval_id: string; decision: "approved" | "denied"; timestamp: string };
+
+export interface EventSink {
+  emit(event: Idea2RepoEvent): Promise<void> | void;
+}
+
+export type EventListener = (event: Idea2RepoEvent) => void;
+
+export class EventBus implements EventSink {
+  private readonly listeners = new Set<EventListener>();
+
+  subscribe(listener: EventListener): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  emit(event: Idea2RepoEvent): void {
+    for (const listener of [...this.listeners]) listener(event);
+  }
+}
+
+export class JsonlEventSink implements EventSink {
+  constructor(private readonly path: string) {}
+
+  async emit(event: Idea2RepoEvent): Promise<void> {
+    await mkdir(dirname(this.path), { recursive: true });
+    await appendFile(this.path, `${JSON.stringify(event)}\n`, "utf8");
+  }
+}
+
+export class CompositeEventSink implements EventSink {
+  constructor(private readonly sinks: EventSink[]) {}
+
+  async emit(event: Idea2RepoEvent): Promise<void> {
+    for (const sink of this.sinks) await sink.emit(event);
+  }
+}
+
+export function runtimeTimestamp(date = new Date()): string {
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+export async function readJsonlEvents(path: string): Promise<Idea2RepoEvent[]> {
+  const raw = await readFile(path, "utf8");
+  return raw
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Idea2RepoEvent);
+}
+
