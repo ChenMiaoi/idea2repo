@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import chalk from "chalk";
+import { randomUUID } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -12,7 +13,7 @@ import { AuthStorage, CodexOAuthClient, openaiCodexOAuthProvider, type CodexUsag
 import { buildGithubExportPlan } from "../github-export.js";
 import { approvalPolicyForMode, formatApprovals, readApprovalRecords, type RuntimeMode } from "../runtime/approvals.js";
 import { formatDecisions, readDecisionRecords } from "../runtime/decisions.js";
-import { readJsonlEvents } from "../runtime/events.js";
+import { readJsonlEvents, runtimeTimestamp, type EventSink, type Idea2RepoEvent } from "../runtime/events.js";
 import { formatPlan, readPlanState } from "../runtime/plan.js";
 import { retryRuntimeStage, skipRuntimeStage } from "../runtime/runs.js";
 import type { ResearchStageId } from "../pipeline/stages.js";
@@ -28,7 +29,10 @@ import {
 } from "./presentation.js";
 import { completeSlashInput, getSlashHint, getSlashSuggestions, resolveSlashCommandInput, selectedSlashSuggestion, slashCommands } from "./slash-commands.js";
 import { addHistoryEntry, readTuiInputHistory, writeTuiInputHistory } from "./history.js";
-import type { RuntimeArtifactEntry } from "./ArtifactPanel.js";
+import { ArtifactPanel, type RuntimeArtifactEntry } from "./ArtifactPanel.js";
+import { PlanPanel } from "./PlanPanel.js";
+import { TracePanel } from "./TracePanel.js";
+import { applyTuiRuntimeEvent, createTuiRuntimeSnapshot, liveApprovalDetails, liveDecisionDetails, type TuiRuntimeSnapshot } from "./runtime-view.js";
 
 type Message = {
   role: "system" | "user" | "assistant" | "error";
@@ -170,6 +174,7 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
   const [activePrompt, setActivePrompt] = useState<ActivePrompt | null>(null);
   const [activeSelect, setActiveSelect] = useState<ActiveSelect | null>(null);
   const [activeDirectoryPicker, setActiveDirectoryPicker] = useState<ActiveDirectoryPicker | null>(null);
+  const [runtimeSnapshot, setRuntimeSnapshot] = useState<TuiRuntimeSnapshot | null>(null);
   const activeAbortController = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -371,8 +376,8 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
       prompt.resolve(trimmed);
       return;
     }
-    if (!trimmed || busy) return;
     const submitted = trimmed.startsWith("/") ? resolveSlashCommandInput(trimmed, selectedSlashIndex) : trimmed;
+    if (!trimmed || (busy && submitted !== "/cancel")) return;
     replaceInput("");
     append({ role: "user", text: submitted });
     rememberInput(submitted);
@@ -439,24 +444,54 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
         return;
       case "/plan":
         await runBusy(async () => {
+          const live = currentRuntimeSnapshot(output);
+          if (live) {
+            append({ role: "assistant", title: "Runtime plan", text: `Live plan has ${live.plan.items.length} stage items.`, details: formatPlan(live.plan).split("\n").slice(0, 8) });
+            return;
+          }
           const plan = await readPlanState(output);
           append({ role: "assistant", title: "Runtime plan", text: `Plan has ${plan.items.length} stage items.`, details: formatPlan(plan).split("\n").slice(0, 8) });
         });
         return;
       case "/trace":
         await runBusy(async () => {
+          const live = currentRuntimeSnapshot(output);
+          if (live) {
+            append({ role: "assistant", title: "Runtime trace", text: `${live.events.length} live event${live.events.length === 1 ? "" : "s"} recorded.`, details: live.events.slice(-8).map((event) => `${event.timestamp} ${event.type}`) });
+            return;
+          }
           const events = await readJsonlEvents(resolve(output, ".idea2repo", "trace.jsonl"));
           append({ role: "assistant", title: "Runtime trace", text: `${events.length} event${events.length === 1 ? "" : "s"} recorded.`, details: events.slice(-8).map((event) => `${event.timestamp} ${event.type}`) });
         });
         return;
       case "/decisions":
         await runBusy(async () => {
+          const live = currentRuntimeSnapshot(output);
+          if (live) {
+            append({
+              role: "assistant",
+              title: "Decision records",
+              text: `${live.decisions.length} live decision${live.decisions.length === 1 ? "" : "s"} recorded.`,
+              details: live.decisions.length ? liveDecisionDetails(live) : ["No live decisions recorded yet."]
+            });
+            return;
+          }
           const records = await readDecisionRecords(output);
           append({ role: "assistant", title: "Decision records", text: `${records.length} visible decision${records.length === 1 ? "" : "s"} recorded.`, details: formatDecisions(records).split("\n").slice(0, 8) });
         });
         return;
       case "/artifacts":
         await runBusy(async () => {
+          const live = currentRuntimeSnapshot(output);
+          if (live) {
+            append({
+              role: "assistant",
+              title: "Artifacts",
+              text: `${live.artifacts.length} live artifact${live.artifacts.length === 1 ? "" : "s"} found.`,
+              details: live.artifacts.length ? live.artifacts.slice(0, 8).map((artifact) => `${artifact.path} (${artifact.bytes} bytes)`) : ["No live artifacts recorded yet."]
+            });
+            return;
+          }
           const artifacts = await runtimeArtifactEntries(output);
           append({ role: "assistant", title: "Artifacts", text: `${artifacts.length} artifact${artifacts.length === 1 ? "" : "s"} found.`, details: artifacts.slice(0, 8).map((artifact) => `${artifact.path} (${artifact.bytes} bytes)`) });
         });
@@ -552,6 +587,16 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
         return;
       case "/approvals":
         await runBusy(async () => {
+          const live = currentRuntimeSnapshot(output);
+          if (live) {
+            append({
+              role: "assistant",
+              title: "Approval log",
+              text: `${live.approvals.length} live approval entr${live.approvals.length === 1 ? "y" : "ies"} recorded.`,
+              details: live.approvals.length ? liveApprovalDetails(live) : ["No live approvals recorded yet."]
+            });
+            return;
+          }
           const records = await readApprovalRecords(output);
           append({
             role: "assistant",
@@ -575,6 +620,17 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
       append({ role: "error", title: "Missing idea", text: "Use /research, then enter an idea when prompted." });
       return;
     }
+    const runId = randomUUID();
+    const outputRoot = resolve(outputOverride);
+    const policy = approvalPolicyForMode(runtimeMode);
+    setRuntimeSnapshot(createTuiRuntimeSnapshot(runId, outputRoot));
+    let terminalRuntimeEvent = false;
+    const runtimeEvents: EventSink = {
+      emit: (event) => {
+        if (event.type === "run.completed" || event.type === "run.failed" || event.type === "run.cancelled") terminalRuntimeEvent = true;
+        recordRuntimeEvent(runId, outputRoot, event);
+      }
+    };
     startGenerationRoute(idea, outputOverride);
     await runBusy(async () => {
       const controller = new AbortController();
@@ -585,7 +641,30 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
         model,
         reasoningEffort: reasoning,
         progressCallback: recordProgress,
+        runResearchPipeline: true,
+        jsonlEvents: true,
+        runId,
+        eventSink: runtimeEvents,
+        allowNetwork: policy.allowNetwork,
+        permissionPolicy: {
+          allowWrite: policy.allowWrite,
+          allowOverwrite: policy.allowOverwrite,
+          allowNetwork: policy.allowNetwork,
+          allowLogin: false,
+          allowInstall: false,
+          allowPublish: policy.allowPublish
+        },
         signal: controller.signal
+      }).catch((error: unknown) => {
+        if (!terminalRuntimeEvent) {
+          recordRuntimeEvent(runId, outputRoot, {
+            type: "run.failed",
+            run_id: runId,
+            error: error instanceof Error ? error.message : String(error || "unknown error"),
+            timestamp: runtimeTimestamp()
+          });
+        }
+        throw error;
       });
       activeAbortController.current = null;
       setWorkflowSteps((current) => completeWorkflowSteps(current));
@@ -1036,6 +1115,21 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
     }
   }
 
+  function currentRuntimeSnapshot(root: string): TuiRuntimeSnapshot | null {
+    if (!runtimeSnapshot) return null;
+    return runtimeSnapshot.outputRoot === resolve(root) ? runtimeSnapshot : null;
+  }
+
+  function recordRuntimeEvent(runId: string, outputRoot: string, event: Idea2RepoEvent): void {
+    setRuntimeSnapshot((current) => applyTuiRuntimeEvent(current?.runId === runId ? current : createTuiRuntimeSnapshot(runId, outputRoot), event));
+    const activity = runtimeActivityForEvent(event);
+    if (activity) {
+      if (event.type === "run.completed") setWorkflowSteps((current) => completeWorkflowSteps(current));
+      else setWorkflowSteps((current) => activateWorkflowStep(current, activity.stage));
+      setActivities((current) => mergeActivity(current, activity));
+    }
+  }
+
   function append(message: Message): void {
     setMessages((current) => [...current, message].slice(-10));
   }
@@ -1155,6 +1249,7 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
           model={model}
           reasoning={reasoning}
           busy={busy}
+          runtimeSnapshot={currentRuntimeSnapshot(output)}
         />
       ) : null}
       <ComposerPanel
@@ -1473,7 +1568,8 @@ function MainPanels({
   provider,
   model,
   reasoning,
-  busy
+  busy,
+  runtimeSnapshot
 }: {
   height: number;
   layout: TuiLayout;
@@ -1485,6 +1581,7 @@ function MainPanels({
   model: string;
   reasoning: ReasoningEffort;
   busy: boolean;
+  runtimeSnapshot: TuiRuntimeSnapshot | null;
 }): React.ReactElement {
   if (height < 3) {
     return (
@@ -1502,7 +1599,11 @@ function MainPanels({
           <ThinkingPanel height={height} width={columnWidth} workflowSteps={workflowSteps} activities={activities} nextAction={nextAction} provider={provider} model={model} reasoning={reasoning} busy={busy} />
         </Box>
         <Box flexGrow={1}>
-          <ExecutionPanel height={height} width={columnWidth} layout={layout} workflowSteps={workflowSteps} activities={activities} notice={notice} busy={busy} />
+          {runtimeSnapshot ? (
+            <RuntimeLivePanel height={height} width={columnWidth} layout={layout} snapshot={runtimeSnapshot} />
+          ) : (
+            <ExecutionPanel height={height} width={columnWidth} layout={layout} workflowSteps={workflowSteps} activities={activities} notice={notice} busy={busy} />
+          )}
         </Box>
       </Box>
     );
@@ -1514,7 +1615,13 @@ function MainPanels({
   return (
     <Box height={height} flexShrink={0} flexDirection="column">
       <ThinkingPanel height={thinkingRows} width={width} workflowSteps={workflowSteps} activities={activities} nextAction={nextAction} provider={provider} model={model} reasoning={reasoning} busy={busy} />
-      {executionRows ? <ExecutionPanel height={executionRows} width={width} layout={layout} workflowSteps={workflowSteps} activities={activities} notice={notice} busy={busy} /> : null}
+      {executionRows ? (
+        runtimeSnapshot ? (
+          <RuntimeLivePanel height={executionRows} width={width} layout={layout} snapshot={runtimeSnapshot} />
+        ) : (
+          <ExecutionPanel height={executionRows} width={width} layout={layout} workflowSteps={workflowSteps} activities={activities} notice={notice} busy={busy} />
+        )
+      ) : null}
     </Box>
   );
 }
@@ -1579,6 +1686,46 @@ function ThinkingPanel({
   return (
     <Box height={height} flexShrink={0} borderStyle="round" borderColor={theme.command} paddingX={1} flexDirection="column">
       {lines}
+    </Box>
+  );
+}
+
+function RuntimeLivePanel({
+  height,
+  width,
+  layout,
+  snapshot
+}: {
+  height: number;
+  width: number;
+  layout: TuiLayout;
+  snapshot: TuiRuntimeSnapshot;
+}): React.ReactElement {
+  if (height < 3) {
+    return (
+      <Box height={height} flexShrink={0}>
+        <Text color={statusColor(snapshot.status)}>{compactText(`Runtime ${snapshot.status}: ${snapshot.runId}`, width)}</Text>
+      </Box>
+    );
+  }
+  const innerRows = Math.max(0, height - 2);
+  const showArtifacts = innerRows >= 8;
+  const sectionCount = showArtifacts ? 3 : 2;
+  const sectionLimit = Math.max(1, Math.min(layout.tiny ? 1 : 4, Math.floor(Math.max(1, innerRows - 3 - sectionCount) / sectionCount)));
+  return (
+    <Box height={height} flexShrink={0} borderStyle="round" borderColor={theme.panel} paddingX={1} flexDirection="column">
+      <SectionTitle label="Runtime" />
+      <Text>
+        <Text color={statusColor(snapshot.status)}>{snapshot.status}</Text>
+        <Text color={theme.dim}>  run {snapshot.runId.slice(0, 8)}</Text>
+        <Text color={theme.dim}>  events {snapshot.events.length}</Text>
+        {snapshot.decisions.length ? <Text color={theme.dim}>  decisions {snapshot.decisions.length}</Text> : null}
+        {snapshot.approvals.length ? <Text color={theme.dim}>  approvals {snapshot.approvals.length}</Text> : null}
+      </Text>
+      {snapshot.message ? <Text color={snapshot.status === "failed" ? theme.danger : theme.warning}>{compactText(snapshot.message, width)}</Text> : null}
+      <PlanPanel plan={snapshot.plan} limit={sectionLimit} />
+      <TracePanel events={snapshot.events} limit={sectionLimit} />
+      {showArtifacts ? <ArtifactPanel artifacts={snapshot.artifacts} limit={sectionLimit} /> : null}
     </Box>
   );
 }
@@ -2058,6 +2205,112 @@ function placeholderDetail(step: TuiWorkflowStep | undefined, busy: boolean): st
   return `${step.label} stage is queued.`;
 }
 
+function runtimeActivityForEvent(event: Idea2RepoEvent): TuiActivity | null {
+  switch (event.type) {
+    case "run.started":
+      return {
+        title: "Runtime run started",
+        detail: compactText(event.output_root, 90),
+        stage: "plan"
+      };
+    case "run.completed":
+      return {
+        title: "Runtime run completed",
+        detail: "Trace, plan, decisions, tools, and artifacts were recorded.",
+        stage: "review",
+        tone: "success"
+      };
+    case "run.failed":
+      return {
+        title: "Runtime run failed",
+        detail: compactText(event.error, 90),
+        stage: "review",
+        tone: "warning"
+      };
+    case "run.cancelled":
+      return {
+        title: "Runtime run cancelled",
+        detail: compactText(event.reason ?? "cancel requested", 90),
+        stage: "review",
+        tone: "warning"
+      };
+    case "stage.started":
+      return {
+        title: event.label,
+        detail: "started",
+        stage: workflowStepForRuntimeStage(event.stage_id)
+      };
+    case "stage.completed":
+      return {
+        title: `${humanRuntimeStage(event.stage_id)} completed`,
+        detail: `${event.artifacts.length} artifact${event.artifacts.length === 1 ? "" : "s"}`,
+        stage: workflowStepForRuntimeStage(event.stage_id),
+        tone: "success"
+      };
+    case "stage.skipped":
+      return {
+        title: `${humanRuntimeStage(event.stage_id)} skipped`,
+        detail: compactText(event.reason, 90),
+        stage: workflowStepForRuntimeStage(event.stage_id),
+        tone: "warning"
+      };
+    case "stage.failed":
+      return {
+        title: `${humanRuntimeStage(event.stage_id)} failed`,
+        detail: compactText(event.error, 90),
+        stage: workflowStepForRuntimeStage(event.stage_id),
+        tone: "warning"
+      };
+    case "decision.recorded":
+      return {
+        title: "Decision recorded",
+        detail: compactText(event.title, 90),
+        stage: workflowStepForRuntimeStage(event.stage_id)
+      };
+    case "artifact.written":
+      return {
+        title: "Artifact written",
+        detail: compactText(`${event.path} (${event.bytes} bytes)`, 90),
+        stage: "artifacts",
+        tone: "success"
+      };
+    case "approval.requested":
+      return {
+        title: "Approval requested",
+        detail: compactText(`${event.action} [${event.risk}]`, 90),
+        stage: "review",
+        tone: "warning"
+      };
+    case "approval.resolved":
+      return {
+        title: "Approval resolved",
+        detail: `${event.approval_id} -> ${event.decision}`,
+        stage: "review",
+        tone: event.decision === "approved" ? "success" : "warning"
+      };
+    case "tool.started":
+    case "tool.completed":
+    case "plan.updated":
+    case "artifact.snapshot":
+    case "artifact.restored":
+      return null;
+  }
+}
+
+function workflowStepForRuntimeStage(stageId?: string): WorkflowStepId {
+  if (stageId === "idea_intake") return "intake";
+  if (stageId === "search_planning") return "plan";
+  if (stageId === "artifact_writing" || stageId === "venue_template_packaging" || stageId === "better_idea_synthesis") return "artifacts";
+  return "analysis";
+}
+
+function humanRuntimeStage(stageId: string): string {
+  return stageId
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function visibleStageId(stage: WorkflowStepId): Exclude<WorkflowStepId, "route" | "provider"> {
   if (stage === "route" || stage === "provider") return "plan";
   return stage;
@@ -2149,6 +2402,13 @@ function workflowColor(status: TuiWorkflowStep["status"]): string {
   if (status === "done") return theme.success;
   if (status === "active") return theme.accent;
   return theme.dim;
+}
+
+function statusColor(status: TuiRuntimeSnapshot["status"]): string {
+  if (status === "completed") return theme.success;
+  if (status === "failed") return theme.danger;
+  if (status === "cancelled") return theme.warning;
+  return theme.accent;
 }
 
 function activityMark(activity: TuiActivity): string {
