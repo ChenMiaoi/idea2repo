@@ -31,7 +31,7 @@ import {
   type StrictCcfAReview
 } from "../agents/schemas.js";
 import { CodexOAuthClient } from "../auth/codex-oauth.js";
-import { paperCandidateToRecord, type LiteratureSearchOptions, type LiteratureSearchResult, type PaperRecord } from "../literature.js";
+import { paperCandidateToRecord, referencesBib, type LiteratureSearchOptions, type LiteratureSearchResult, type PaperRecord } from "../literature.js";
 import { diagnoseIdea } from "../scoring.js";
 import { exists } from "../state.js";
 import { evidenceRowsCsv, evidenceRowsMarkdown, evidenceText, extractEvidenceRows, type ClaimEvidenceRow } from "../skills/analysis/evidence-extract.js";
@@ -927,7 +927,25 @@ function pipelineArtifacts(input: {
   agentStrategy: ResearchStrategy | null;
   templatePackage: PipelineTemplatePackage;
 }): Record<string, string> {
+  const relatedWorkReport = input.agentRelatedWork ? agentRelatedWorkMarkdown(input.agentRelatedWork) : topicClustersMarkdown(input.candidates);
+  const noveltyReport = input.agentNovelty ? `${noveltyMatrixMarkdown(input.novelty)}\n## Agent Novelty Review\n\n${agentNoveltyMarkdown(input.agentNovelty)}` : noveltyMatrixMarkdown(input.novelty);
+  const feasibilityReport = input.agentFeasibility ? agentFeasibilityMarkdown(input.agentFeasibility) : feasibilityMarkdown(input.ideaBrief.resource_constraints, 12);
+  const experimentPlan = `${experimentPlanMarkdown()}\n## Evidence Status\n\n- Baselines evidence-backed: ${input.baselineRecommendations.length ? "yes" : "no"}\n- Datasets evidence-backed: ${input.datasetRecommendations.length ? "yes" : "no"}\n- Metrics evidence-backed: ${input.metricRecommendations.length ? "yes" : "no"}\n`;
+  const revisedIdea = input.agentStrategy ? agentStrategyRevisedIdeaMarkdown(input.agentStrategy) : revisedIdeaMarkdown(input.idea, input.novelty, input.score);
+  const firstFourWeekPlan = input.agentStrategy ? agentFirstFourWeekPlanMarkdown(input.agentStrategy) : "# First 4 Week Plan\n\n1. Plan search and triage candidates.\n2. Acquire and read PDFs.\n3. Build evidence matrices.\n4. Lock experiments and paper story.\n";
+  const paperStory = input.agentStrategy ? `# Paper Story\n\n${input.agentStrategy.paper_story}\n` : "# Paper Story\n\nPaper story is blocked until related work, novelty, and experiment evidence are verified.\n";
+  const scorecard = `${strictScoreMarkdown(input.score)}${input.agentScore ? `\n## Agent Review\n\n${agentScoreMarkdown(input.agentScore)}` : ""}\nStrict mode: ${input.strict ? "enabled" : "disabled"}\n`;
+  const verifiedPapers = verifiedPaperRecords(input.candidates, input.manifest, input.evidenceRows);
   return {
+    "reports/ccf_a_readiness_report.md": canonicalReadinessReportMarkdown(input),
+    "reports/novelty_matrix.md": noveltyReport,
+    "reports/related_work.md": canonicalRelatedWorkReportMarkdown(input, relatedWorkReport),
+    "reports/evidence_ledger.md": canonicalEvidenceLedgerMarkdown(input),
+    "plans/12_week_execution_plan.md": canonicalExecutionPlanMarkdown(input),
+    "plans/experiment_plan.md": experimentPlan,
+    "paper/abstract.md": paperAbstractMarkdown(input),
+    "paper/related_work.md": paperRelatedWorkMarkdown(input, relatedWorkReport),
+    "papers/papers.bib": referencesBib(verifiedPapers),
     "docs/idea/idea_brief.md": `# Idea Brief\n\n${JSON.stringify(input.ideaBrief, null, 2)}\n`,
     "docs/idea/assumptions.md": `# Assumptions\n\n${input.ideaBrief.assumptions.map((item) => `- ${item}`).join("\n")}\n`,
     "docs/relative_work/search_plan.json": JSON.stringify(input.searchPlan, null, 2) + "\n",
@@ -939,21 +957,182 @@ function pipelineArtifacts(input: {
     ...input.noteArtifacts,
     "docs/relative_work/related_work_matrix.csv": relatedWorkMatrixCsv(input.candidates, input.manifest, input.evidenceRows),
     "docs/reference/claim_evidence_matrix.csv": evidenceRowsCsv(input.evidenceRows),
-    "docs/relative_work/topic_clusters.md": input.agentRelatedWork ? agentRelatedWorkMarkdown(input.agentRelatedWork) : topicClustersMarkdown(input.candidates),
-    "docs/relative_work/novelty_gap_matrix.md": input.agentNovelty ? `${noveltyMatrixMarkdown(input.novelty)}\n## Agent Novelty Review\n\n${agentNoveltyMarkdown(input.agentNovelty)}` : noveltyMatrixMarkdown(input.novelty),
+    "docs/relative_work/topic_clusters.md": relatedWorkReport,
+    "docs/relative_work/novelty_gap_matrix.md": noveltyReport,
     "docs/relative_work/collision_risk.md": `# Collision Risk\n\n${input.novelty.collision_risk}\n\n${input.novelty.reasons.map((reason) => `- ${reason}`).join("\n")}\n`,
     "docs/relative_work/baseline_recommendations.md": `# Baseline Recommendations\n\n${input.baselineRecommendations.length ? input.baselineRecommendations.map((item) => `- ${item}`).join("\n") : "- Blocked until verified PDF evidence identifies reviewer-expected baselines."}\n`,
     "docs/diagnosis/clarification_questions.md": clarificationQuestionsMarkdown(input.clarificationQuestions),
     "docs/reference/pdf_chunks.json": JSON.stringify(input.chunks, null, 2) + "\n",
-    "docs/diagnosis/feasibility_report.md": input.agentFeasibility ? agentFeasibilityMarkdown(input.agentFeasibility) : feasibilityMarkdown(input.ideaBrief.resource_constraints, 12),
+    "docs/diagnosis/feasibility_report.md": feasibilityReport,
     "docs/diagnosis/reviewer_panel.md": agentReviewerPanelMarkdown(input.agentRelatedWork, input.agentNovelty, input.agentScore, input.agentFeasibility),
-    "docs/proposal/experiment_plan.md": `${experimentPlanMarkdown()}\n## Evidence Status\n\n- Baselines evidence-backed: ${input.baselineRecommendations.length ? "yes" : "no"}\n- Datasets evidence-backed: ${input.datasetRecommendations.length ? "yes" : "no"}\n- Metrics evidence-backed: ${input.metricRecommendations.length ? "yes" : "no"}\n`,
-    "docs/proposal/revised_idea.md": input.agentStrategy ? agentStrategyRevisedIdeaMarkdown(input.agentStrategy) : revisedIdeaMarkdown(input.idea, input.novelty, input.score),
-    "docs/proposal/first_4_week_plan.md": input.agentStrategy ? agentFirstFourWeekPlanMarkdown(input.agentStrategy) : "# First 4 Week Plan\n\n1. Plan search and triage candidates.\n2. Acquire and read PDFs.\n3. Build evidence matrices.\n4. Lock experiments and paper story.\n",
-    "docs/proposal/paper_story.md": input.agentStrategy ? `# Paper Story\n\n${input.agentStrategy.paper_story}\n` : "# Paper Story\n\nPaper story is blocked until related work, novelty, and experiment evidence are verified.\n",
-    "docs/diagnosis/ccf_a_strict_scorecard.md": `${strictScoreMarkdown(input.score)}${input.agentScore ? `\n## Agent Review\n\n${agentScoreMarkdown(input.agentScore)}` : ""}\nStrict mode: ${input.strict ? "enabled" : "disabled"}\n`,
+    "docs/proposal/experiment_plan.md": experimentPlan,
+    "docs/proposal/revised_idea.md": revisedIdea,
+    "docs/proposal/first_4_week_plan.md": firstFourWeekPlan,
+    "docs/proposal/paper_story.md": paperStory,
+    "docs/diagnosis/ccf_a_strict_scorecard.md": scorecard,
     ...input.templatePackage.files
   };
+}
+
+type PipelineArtifactInput = Parameters<typeof pipelineArtifacts>[0];
+
+function canonicalReadinessReportMarkdown(input: PipelineArtifactInput): string {
+  return `# CCF-A Readiness Report
+
+## Idea Summary
+
+${input.ideaBrief.idea_summary}
+
+## Current Readiness
+
+- Overall CCF-A readiness: ${input.score.total} / 100
+- Confidence: ${input.score.confidence}
+- Novelty collision risk: ${input.novelty.collision_risk}
+- Verified evidence rows: ${input.evidenceRows.filter((row) => row.status === "verified").length}
+- Candidate papers: ${input.candidates.length}
+- Downloaded PDFs: ${input.manifest.filter((record) => record.status === "downloaded").length}
+
+## Hard Blockers
+
+${markdownList(input.score.hard_blockers)}
+
+## Soft Weaknesses
+
+${markdownList(input.score.soft_weaknesses)}
+
+## Path To 70+
+
+${numberedMarkdown(input.score.path_to_70)}
+
+## Path To 80+
+
+${numberedMarkdown(input.score.path_to_80)}
+
+## Evidence Gate
+
+- Baselines evidence-backed: ${input.baselineRecommendations.length ? "yes" : "no"}
+- Datasets evidence-backed: ${input.datasetRecommendations.length ? "yes" : "no"}
+- Metrics evidence-backed: ${input.metricRecommendations.length ? "yes" : "no"}
+
+## Canonical Artifact Bundle
+
+- \`reports/novelty_matrix.md\`
+- \`reports/related_work.md\`
+- \`reports/evidence_ledger.md\`
+- \`plans/12_week_execution_plan.md\`
+- \`plans/experiment_plan.md\`
+- \`paper/main.tex\`
+- \`paper/abstract.md\`
+- \`paper/related_work.md\`
+- \`papers/papers.bib\`
+
+## Compatibility Mirrors
+
+Legacy \`docs/...\` artifacts remain available for existing CLI and API consumers.
+`;
+}
+
+function canonicalRelatedWorkReportMarkdown(input: PipelineArtifactInput, relatedWorkReport: string): string {
+  return `# Related Work Report
+
+## Candidate Summary
+
+- Candidates collected: ${input.candidates.length}
+- Verified PDF-backed papers: ${verifiedPaperRecords(input.candidates, input.manifest, input.evidenceRows).length}
+- CCF-A or target-matched candidates: ${input.candidates.filter((candidate) => candidate.ccf_rank === "A" || candidate.venue_match === "target").length}
+
+## Related Work Synthesis
+
+${relatedWorkReport}
+
+## Matrix Mirror
+
+The compatibility CSV remains at \`docs/relative_work/related_work_matrix.csv\`.
+`;
+}
+
+function canonicalEvidenceLedgerMarkdown(input: PipelineArtifactInput): string {
+  const rows = input.evidenceRows.filter((row) => row.status === "verified" && row.page && row.quote && row.chunk_id);
+  return `# Evidence Ledger
+
+## Summary
+
+- Verified page-level evidence rows: ${rows.length}
+- Candidate papers: ${input.candidates.length}
+- Downloaded PDFs: ${input.manifest.filter((record) => record.status === "downloaded").length}
+
+## Evidence Rows
+
+${rows.length ? rows.map((row) => `- ${row.paper_id} p.${row.page} [${row.claim_type}] ${row.claim}\n  - Quote: ${row.quote}\n  - Chunk: ${row.chunk_id}\n  - Confidence: ${row.confidence}`).join("\n") : "- No verified page-level evidence yet. Use `.idea2repo/evidence.jsonl` for structured rows once PDFs are read."}
+
+## Compatibility Mirrors
+
+- Structured ledger: \`.idea2repo/evidence.jsonl\`
+- CSV mirror: \`docs/reference/claim_evidence_matrix.csv\`
+- Paper notes: \`docs/reference/paper_notes/\`
+`;
+}
+
+function canonicalExecutionPlanMarkdown(input: PipelineArtifactInput): string {
+  const strategySteps = input.agentStrategy?.first_4_week_plan ?? [
+    "Complete CCF-A venue-aware related-work verification.",
+    "Acquire and read public PDFs with page-level evidence.",
+    "Lock baseline, dataset, metric, and ablation design.",
+    "Draft the paper story around the strongest evidence-backed novelty delta."
+  ];
+  return `# 12 Week Execution Plan
+
+## Weeks 1-4: Evidence Lock
+
+${numberedMarkdown(strategySteps)}
+
+## Weeks 5-8: Experiments
+
+1. Reproduce the strongest reviewer-expected baseline.
+2. Run the first main-result experiment on the selected dataset or benchmark.
+3. Add ablations for method components and failure cases.
+4. Refresh the score snapshot after each evidence-producing milestone.
+
+## Weeks 9-12: Paper And Release
+
+1. Write the main paper sections from evidence-backed claims only.
+2. Fill tables and figures with reproducible commands and artifact paths.
+3. Run a reviewer-style weakness pass against novelty, soundness, and feasibility.
+4. Package the venue template and prepare GitHub issue milestones.
+
+## Current Blockers
+
+${markdownList(input.score.hard_blockers)}
+`;
+}
+
+function paperAbstractMarkdown(input: PipelineArtifactInput): string {
+  return `# Abstract Draft
+
+${input.ideaBrief.idea_summary}
+
+This draft is intentionally evidence-gated. The current readiness score is ${input.score.total}/100 with confidence ${input.score.confidence}. Claims should not be promoted into the final abstract until the evidence ledger contains page-level quotes for novelty, baselines, datasets, metrics, and evaluation results.
+`;
+}
+
+function paperRelatedWorkMarkdown(input: PipelineArtifactInput, relatedWorkReport: string): string {
+  return `# Related Work Draft
+
+This section must cite only verified entries from \`papers/papers.bib\` or \`paper/references.bib\`.
+
+## Current Evidence Status
+
+- Verified evidence rows: ${input.evidenceRows.filter((row) => row.status === "verified").length}
+- Missing evidence items: ${input.score.score_dimensions.flatMap((dimension) => dimension.missingEvidence).length}
+
+## Synthesis Notes
+
+${relatedWorkReport}
+`;
+}
+
+function numberedMarkdown(items: string[]): string {
+  return items.length ? items.map((item, index) => `${index + 1}. ${item}`).join("\n") : "1. No action required under the current evidence gate.";
 }
 
 function searchPlanQueries(searchPlan: SearchPlan): string[] {

@@ -134,7 +134,17 @@ export const researchStages: ResearchStageDefinition[] = [
     label: "Artifact writing",
     prompt: "09_artifact_writer.md",
     deterministic: false,
-    artifactPaths: []
+    artifactPaths: [
+      "reports/ccf_a_readiness_report.md",
+      "reports/novelty_matrix.md",
+      "reports/related_work.md",
+      "reports/evidence_ledger.md",
+      "plans/12_week_execution_plan.md",
+      "plans/experiment_plan.md",
+      "paper/abstract.md",
+      "paper/related_work.md",
+      "papers/papers.bib"
+    ]
   },
   {
     id: "venue_template_packaging",

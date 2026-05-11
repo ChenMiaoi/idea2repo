@@ -81,6 +81,10 @@ test("runtime API starts runs and streams shared runtime events over SSE", async
     assert.ok(Array.isArray(artifacts.projections.runtime));
     assert.ok(Array.isArray(artifacts.projections.evidence));
     assert.ok(artifacts.projections.runtime.some((entry: { path: string }) => entry.path === ".idea2repo/trace.jsonl"));
+    assert.ok(artifacts.projections.reports.some((entry: { path: string }) => entry.path === "reports/ccf_a_readiness_report.md"));
+    assert.ok(artifacts.projections.reports.some((entry: { path: string }) => entry.path === "reports/evidence_ledger.md"));
+    assert.ok(artifacts.projections.plans.some((entry: { path: string }) => entry.path === "plans/12_week_execution_plan.md"));
+    assert.ok(artifacts.projections.paper.some((entry: { path: string }) => entry.path === "papers/papers.bib"));
 
     const evidence = await getJson(`${server.url}/runs/${started.run_id}/evidence`);
     assert.ok(Array.isArray(evidence.evidence));

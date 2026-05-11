@@ -47,7 +47,7 @@ test("research pipeline emits run and stage events to a sink", async () => {
   }
 });
 
-test("CLI research --jsonl-events writes trace.jsonl", async () => {
+test("CLI research writes canonical runtime and report artifacts", async () => {
   const root = await mkdtemp(join(tmpdir(), "idea2repo-cli-events-"));
   const output = join(root, "project");
   try {
@@ -58,7 +58,6 @@ test("CLI research --jsonl-events writes trace.jsonl", async () => {
         "--offline",
         "--provider",
         "offline",
-        "--jsonl-events",
         "--output",
         output
       ]),
@@ -69,6 +68,15 @@ test("CLI research --jsonl-events writes trace.jsonl", async () => {
     assert.match(raw, /"stage\.started"/);
     assert.match(raw, /"score\.updated"/);
     assert.match(raw, /"run\.completed"/);
+    assert.match(await readFile(join(output, "reports", "ccf_a_readiness_report.md"), "utf8"), /Canonical Artifact Bundle/);
+    assert.match(await readFile(join(output, "reports", "novelty_matrix.md"), "utf8"), /Novelty Gap Matrix/);
+    assert.match(await readFile(join(output, "reports", "related_work.md"), "utf8"), /Related Work Report/);
+    assert.match(await readFile(join(output, "reports", "evidence_ledger.md"), "utf8"), /Evidence Ledger/);
+    assert.match(await readFile(join(output, "plans", "12_week_execution_plan.md"), "utf8"), /12 Week Execution Plan/);
+    assert.match(await readFile(join(output, "plans", "experiment_plan.md"), "utf8"), /Experiment Plan/);
+    assert.match(await readFile(join(output, "paper", "abstract.md"), "utf8"), /Abstract Draft/);
+    assert.match(await readFile(join(output, "paper", "related_work.md"), "utf8"), /Related Work Draft/);
+    assert.match(await readFile(join(output, "papers", "papers.bib"), "utf8"), /Do not invent paper titles/);
     const runState = JSON.parse(await readFile(join(output, ".idea2repo", "run_state.json"), "utf8")) as { status: string; event_count: number; last_event_type: string; result?: { project_name?: string } };
     assert.equal(runState.status, "completed");
     assert.equal(runState.last_event_type, "run.completed");

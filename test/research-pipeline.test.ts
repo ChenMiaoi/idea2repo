@@ -33,6 +33,15 @@ test("offline research pipeline returns resumable stage state and core artifacts
   assert.equal(result.searchPlan.recall_queries.length >= 5, true);
   assert.equal(validateWithSchema<ResearchPipelineSchemaResult>(ResearchPipelineResultSchema, result, "ResearchPipelineResult"), result);
   assert.ok(result.artifacts["docs/relative_work/search_plan.json"]);
+  assert.match(result.artifacts["reports/ccf_a_readiness_report.md"] ?? "", /CCF-A Readiness Report/);
+  assert.match(result.artifacts["reports/novelty_matrix.md"] ?? "", /Novelty Gap Matrix/);
+  assert.match(result.artifacts["reports/related_work.md"] ?? "", /Related Work Report/);
+  assert.match(result.artifacts["reports/evidence_ledger.md"] ?? "", /Evidence Ledger/);
+  assert.match(result.artifacts["plans/12_week_execution_plan.md"] ?? "", /12 Week Execution Plan/);
+  assert.match(result.artifacts["plans/experiment_plan.md"] ?? "", /Experiment Plan/);
+  assert.match(result.artifacts["paper/abstract.md"] ?? "", /Abstract Draft/);
+  assert.match(result.artifacts["paper/related_work.md"] ?? "", /Related Work Draft/);
+  assert.match(result.artifacts["papers/papers.bib"] ?? "", /Do not invent paper titles/);
   assert.ok(result.artifacts["docs/diagnosis/ccf_a_strict_scorecard.md"]?.includes("Strict mode: enabled"));
   assert.ok(result.artifacts["docs/diagnosis/clarification_questions.md"]?.includes("Why it matters"));
   assert.ok(result.artifacts["docs/diagnosis/feasibility_report.md"]);
