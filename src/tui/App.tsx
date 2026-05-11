@@ -2484,6 +2484,46 @@ function runtimeActivityForEvent(event: Idea2RepoEvent): TuiActivity | null {
         stage: workflowStepForRuntimeStage(event.stage_id),
         tone: "warning"
       };
+    case "stage.blocked":
+      return {
+        title: `${humanRuntimeStage(event.stage_id)} blocked`,
+        detail: compactText(event.reason, 90),
+        stage: workflowStepForRuntimeStage(event.stage_id),
+        tone: "warning"
+      };
+    case "paper.found":
+      return {
+        title: "Paper candidate found",
+        detail: compactText(`${event.title}${event.venue ? ` (${event.venue})` : ""}`, 90),
+        stage: "analysis"
+      };
+    case "pdf.downloaded":
+      return {
+        title: "PDF downloaded",
+        detail: compactText(`${event.paper_id} -> ${event.path}`, 90),
+        stage: "analysis",
+        tone: "success"
+      };
+    case "evidence.extracted":
+      return {
+        title: "Evidence extracted",
+        detail: compactText(`${event.paper_id} p.${event.page}: ${event.claim}`, 90),
+        stage: "analysis",
+        tone: "success"
+      };
+    case "question.asked":
+      return {
+        title: "Clarification question",
+        detail: compactText(event.question, 90),
+        stage: "analysis",
+        tone: "warning"
+      };
+    case "score.updated":
+      return {
+        title: "Score updated",
+        detail: `${event.score}/${event.max_score} confidence ${event.confidence}`,
+        stage: "analysis"
+      };
     case "decision.recorded":
       return {
         title: "Decision recorded",

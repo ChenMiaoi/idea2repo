@@ -25,6 +25,7 @@ import { createProviderAdapter } from "./providers/index.js";
 import { runResearchPipeline, type ResearchPipelineResult } from "./pipeline/research-pipeline.js";
 import { CompositeEventSink, JsonlEventSink, runtimeTimestamp, type EventSink, type Idea2RepoEvent } from "./runtime/events.js";
 import { PlanEventSink } from "./runtime/plan.js";
+import { RunStateEventSink, attachRunStateResult } from "./runtime/run-state.js";
 import { ApprovalRecorder, approvalPolicyFromPermissions } from "./runtime/approvals.js";
 import { createCoreToolRegistry, createToolContext, type ToolContext, type ToolRegistry } from "./runtime/tools.js";
 import { restoreRuntimeState, type RuntimeStateRestoreResult } from "./runtime/runs.js";
@@ -104,14 +105,16 @@ type ProviderAnalysis = {
 };
 
 export async function generateResearchRepo(idea: string, output: string, options: GenerateOptions = {}): Promise<GeneratedProject> {
-  if (!idea.trim()) throw new Error("idea must not be empty");
   const root = resolve(output);
   const runId = options.runId ?? randomUUID();
   const traceEvents = options.jsonlEvents ? new JsonlEventSink(join(root, ".idea2repo", "trace.jsonl")) : undefined;
   const baseEvents = combineEventSinks(traceEvents, options.eventSink);
-  const rawRuntimeEvents = options.runResearchPipeline ? new PlanEventSink(root, runId, baseEvents) : baseEvents;
+  const runStateEvents = new RunStateEventSink(root, runId, { idea, outputRoot: root }, baseEvents);
+  const rawRuntimeEvents = options.runResearchPipeline ? new PlanEventSink(root, runId, runStateEvents) : runStateEvents;
   const terminalEvents = rawRuntimeEvents ? new TerminalEventTrackingSink(rawRuntimeEvents) : undefined;
   const runtimeEvents: EventSink | undefined = terminalEvents;
+  try {
+  if (!idea.trim()) throw new Error("idea must not be empty");
   if (options.signal?.aborted) {
     await runtimeEvents?.emit({ type: "run.cancelled", run_id: runId, reason: abortReason(options.signal), timestamp: runtimeTimestamp() });
     throwIfAborted(options.signal);
@@ -149,7 +152,6 @@ export async function generateResearchRepo(idea: string, output: string, options
     approvals: new ApprovalRecorder(root, approvalPolicy, runtimeEvents),
     signal: options.signal
   });
-  try {
   const pipeline = options.runResearchPipeline
     ? await runResearchPipeline(idea, {
         allowNetwork: Boolean(options.allowNetwork && policy.allowNetwork),
@@ -325,7 +327,7 @@ export async function generateResearchRepo(idea: string, output: string, options
   options.progressCallback?.("Artifacts: manifest and status written");
   await runtimeEvents?.emit({ type: "run.completed", run_id: runId, timestamp: runtimeTimestamp() });
 
-  return {
+  const generated: GeneratedProject = {
     root,
     project_name: projectName,
     files: written,
@@ -342,6 +344,14 @@ export async function generateResearchRepo(idea: string, output: string, options
     research_pipeline: pipeline,
     template_profile_id: templateArtifacts?.profile.profile_id ?? null
   };
+  await attachRunStateResult(root, runId, {
+    root: generated.root,
+    project_name: generated.project_name,
+    analysis_source: generated.analysis_source,
+    fallback_reason: generated.fallback_reason,
+    files: generated.files.length
+  });
+  return generated;
   } catch (error) {
     if (!terminalEvents?.terminalEmitted) {
       await runtimeEvents?.emit(options.signal?.aborted

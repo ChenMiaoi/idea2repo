@@ -73,7 +73,7 @@ export function stageIdFromPlanItem(item: PlanItem): ResearchStageId | undefined
 }
 
 function isStageEvent(event: Idea2RepoEvent): event is Extract<Idea2RepoEvent, { stage_id: string }> {
-  return event.type === "stage.started" || event.type === "stage.completed" || event.type === "stage.skipped" || event.type === "stage.failed";
+  return event.type === "stage.started" || event.type === "stage.completed" || event.type === "stage.skipped" || event.type === "stage.failed" || event.type === "stage.blocked";
 }
 
 function planStatusForEvent(event: Extract<Idea2RepoEvent, { stage_id: string }>): PlanItemStatus {
@@ -85,6 +85,7 @@ function planStatusForEvent(event: Extract<Idea2RepoEvent, { stage_id: string }>
 function blockerForEvent(event: Extract<Idea2RepoEvent, { stage_id: string }>): string | undefined {
   if (event.type === "stage.skipped") return event.reason;
   if (event.type === "stage.failed") return event.error;
+  if (event.type === "stage.blocked") return event.reason;
   return undefined;
 }
 

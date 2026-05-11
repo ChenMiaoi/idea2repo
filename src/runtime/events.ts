@@ -20,6 +20,7 @@ export type Idea2RepoEvent =
   | { type: "stage.completed"; run_id: string; stage_id: string; artifacts: string[]; timestamp: string }
   | { type: "stage.skipped"; run_id: string; stage_id: string; reason: string; timestamp: string }
   | { type: "stage.failed"; run_id: string; stage_id: string; error: string; timestamp: string }
+  | { type: "stage.blocked"; run_id: string; stage_id: string; reason: string; timestamp: string }
   | { type: "plan.updated"; run_id: string; plan: RuntimePlanItem[]; timestamp: string }
   | { type: "decision.recorded"; run_id: string; decision_id: string; stage_id?: string; title: string; timestamp: string }
   | { type: "artifact.written"; run_id: string; path: string; sha256: string; bytes: number; timestamp: string }
@@ -28,7 +29,65 @@ export type Idea2RepoEvent =
   | { type: "tool.started"; run_id: string; tool_call_id: string; tool_name: string; timestamp: string }
   | { type: "tool.completed"; run_id: string; tool_call_id: string; success: boolean; summary: string; timestamp: string }
   | { type: "approval.requested"; run_id: string; approval_id: string; action: string; risk: string; timestamp: string }
-  | { type: "approval.resolved"; run_id: string; approval_id: string; decision: "approved" | "denied"; timestamp: string };
+  | { type: "approval.resolved"; run_id: string; approval_id: string; decision: "approved" | "denied"; timestamp: string }
+  | {
+      type: "paper.found";
+      run_id: string;
+      paper_id: string;
+      title: string;
+      stage_id?: string;
+      venue?: string;
+      year?: number | null;
+      relevance_score?: number;
+      novelty_risk?: "high" | "medium" | "low" | "unknown";
+      pdf_status?: "available" | "unavailable" | "needs_approval" | "downloaded";
+      timestamp: string;
+    }
+  | {
+      type: "pdf.downloaded";
+      run_id: string;
+      paper_id: string;
+      path: string;
+      sha256: string;
+      bytes: number;
+      source_url?: string;
+      timestamp: string;
+    }
+  | {
+      type: "evidence.extracted";
+      run_id: string;
+      evidence_id: string;
+      paper_id: string;
+      claim: string;
+      claim_type: "method" | "dataset" | "metric" | "baseline" | "limitation" | "result" | "threat" | "future_work";
+      page: number;
+      quote: string;
+      chunk_id: string;
+      confidence: number;
+      timestamp: string;
+    }
+  | {
+      type: "question.asked";
+      run_id: string;
+      question_id: string;
+      question: string;
+      why_it_matters: string;
+      related_score_dimensions: string[];
+      evidence_refs: string[];
+      options?: string[];
+      required: boolean;
+      timestamp: string;
+    }
+  | {
+      type: "score.updated";
+      run_id: string;
+      stage_id?: string;
+      score: number;
+      max_score: number;
+      confidence: number;
+      hard_blockers: string[];
+      timestamp: string;
+    };
 
 export interface EventSink {
   emit(event: Idea2RepoEvent): Promise<void> | void;
@@ -79,4 +138,3 @@ export async function readJsonlEvents(path: string): Promise<Idea2RepoEvent[]> {
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Idea2RepoEvent);
 }
-

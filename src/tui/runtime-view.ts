@@ -134,7 +134,7 @@ function statusForRuntimeEvent(event: Idea2RepoEvent): Partial<Pick<TuiRuntimeSn
 }
 
 function isStageRuntimeEvent(event: Idea2RepoEvent): event is Extract<Idea2RepoEvent, { stage_id: string }> {
-  return event.type === "stage.started" || event.type === "stage.completed" || event.type === "stage.skipped" || event.type === "stage.failed";
+  return event.type === "stage.started" || event.type === "stage.completed" || event.type === "stage.skipped" || event.type === "stage.failed" || event.type === "stage.blocked";
 }
 
 function isTextRuntimeArtifact(path: string): boolean {

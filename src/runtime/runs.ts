@@ -10,8 +10,9 @@ import { DecisionRecorder } from "./decisions.js";
 import { readPlanState, writePlanState, type PlanState } from "./plan.js";
 import { JsonlEventSink, EventBus, readJsonlEvents, runtimeTimestamp, type EventSink, type EventListener, type Idea2RepoEvent } from "./events.js";
 import { refreshManifestArtifactHashes, snapshotArtifact, type ArtifactSnapshotRecord } from "./artifacts.js";
+import { createRunState, writeRunState, type RuntimeRunStatus } from "./run-state.js";
 
-export type RuntimeRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type { RuntimeRunStatus } from "./run-state.js";
 
 export type RuntimeRunSnapshot = {
   id: string;
@@ -68,10 +69,12 @@ export class RunManager {
       promise: Promise.resolve()
     };
     bus.subscribe((event) => this.recordEvent(run, event));
+    void writeRunState(input.outputRoot, createRunState({ runId, idea: input.idea, outputRoot: input.outputRoot, now })).catch(() => undefined);
     run.promise = Promise.resolve()
       .then(async () => {
         const result = await job({ runId, events: bus, signal: controller.signal });
         run.result = result;
+        this.persistRunState(run);
         if (!run.finalEventSeen) {
           await run.bus.emit({ type: "run.completed", run_id: runId, timestamp: runtimeTimestamp() });
         }
@@ -79,6 +82,7 @@ export class RunManager {
       .catch(async (error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         run.error = message;
+        this.persistRunState(run);
         if (!run.finalEventSeen) {
           const event: Idea2RepoEvent = controller.signal.aborted
             ? { type: "run.cancelled", run_id: runId, reason: controller.signal.reason ? String(controller.signal.reason) : message, timestamp: runtimeTimestamp() }
@@ -134,6 +138,23 @@ export class RunManager {
       run.status = "cancelled";
       run.finalEventSeen = true;
     }
+    this.persistRunState(run, event.type);
+  }
+
+  private persistRunState(run: ManagedRun, lastEventType = run.events.at(-1)?.type): void {
+    void writeRunState(run.output_root, {
+      version: 1,
+      id: run.id,
+      idea: run.idea,
+      output_root: run.output_root,
+      status: run.status,
+      created_at: run.created_at,
+      updated_at: run.updated_at,
+      event_count: run.event_count,
+      ...(lastEventType ? { last_event_type: lastEventType } : {}),
+      ...(run.result ? { result: run.result } : {}),
+      ...(run.error ? { error: run.error } : {})
+    }).catch(() => undefined);
   }
 
   private snapshot(run: ManagedRun): RuntimeRunSnapshot {

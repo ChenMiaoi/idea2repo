@@ -304,6 +304,21 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     warnings.push(...literature.warnings);
     candidates = literature.candidates;
     searchReport = literature.search_report;
+    for (const candidate of candidates) {
+      await emitRuntimeEvent({
+        type: "paper.found",
+        run_id: runId,
+        stage_id: "literature_search",
+        paper_id: safePaperId(candidate.candidate_id || candidate.title),
+        title: candidate.title,
+        venue: candidate.venue,
+        year: candidate.year,
+        relevance_score: candidate.relevance_score,
+        novelty_risk: "unknown",
+        pdf_status: candidate.pdf_urls.length ? "available" : "unavailable",
+        timestamp: runtimeTimestamp()
+      });
+    }
     await setStage("literature_search", "completed");
   }
 
@@ -353,6 +368,18 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
       allowNetwork: Boolean(options.allowNetwork),
       downloadPdfs: Boolean(options.downloadPdfs)
     }, toolContext);
+    for (const record of manifest.filter((candidate) => candidate.status === "downloaded" && candidate.pdf_path && candidate.pdf_sha256 && candidate.bytes)) {
+      await emitRuntimeEvent({
+        type: "pdf.downloaded",
+        run_id: runId,
+        paper_id: record.paper_id,
+        path: record.pdf_path!,
+        sha256: record.pdf_sha256!,
+        bytes: record.bytes!,
+        source_url: record.source_url,
+        timestamp: record.downloaded_at ?? runtimeTimestamp()
+      });
+    }
     await setStage("pdf_acquisition", candidates.length ? "completed" : "skipped", candidates.length ? undefined : "No candidates available for PDF acquisition.");
   }
 
@@ -381,6 +408,21 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
 
   const evidenceRows = await toolRegistry.execute<{ chunks: PdfChunkIndexEntry[] }, ReturnType<typeof extractEvidenceRows>>("evidence.extract", { chunks }, toolContext);
   const verifiedEvidenceRows = evidenceRows.filter((row) => row.status === "verified" && row.page && row.quote && row.chunk_id);
+  for (const row of verifiedEvidenceRows) {
+    await emitRuntimeEvent({
+      type: "evidence.extracted",
+      run_id: runId,
+      evidence_id: `${row.paper_id}:${row.chunk_id}`,
+      paper_id: row.paper_id,
+      claim: row.claim,
+      claim_type: claimTypeForEvidence(row.claim),
+      page: Number(row.page),
+      quote: row.quote!,
+      chunk_id: row.chunk_id!,
+      confidence: 0.6,
+      timestamp: runtimeTimestamp()
+    });
+  }
   const hasVerifiedPdfEvidence = verifiedEvidenceRows.length > 0;
   const noteArtifacts = { ...evidenceRowsMarkdown(evidenceRows), ...paperNoteArtifacts(agentPaperNotes, chunks) };
   if (!canResumePdfReading) {
@@ -484,6 +526,16 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     venueExpectsStrongMlBaselines: /neurips|icml|iclr|acl/i.test(options.venue ?? ""),
     hasStrongMlBaselines: evidence.includes("baseline")
   }, toolContext);
+  await emitRuntimeEvent({
+    type: "score.updated",
+    run_id: runId,
+    stage_id: "ccf_a_strict_scoring",
+    score: score.total,
+    max_score: 100,
+    confidence: hasVerifiedPdfEvidence ? 0.65 : 0.4,
+    hard_blockers: score.caps.map((cap) => cap.reason),
+    timestamp: runtimeTimestamp()
+  });
   let agentScore: StrictCcfAReview | null = null;
   const strictScoreResumed = canResumePdfReading && hasVerifiedPdfEvidence && (await canResumeStage("ccf_a_strict_scoring"));
   if (!strictScoreResumed) {
@@ -1353,6 +1405,18 @@ function agentScoreMarkdown(score: StrictCcfAReview): string {
 - Cap reasons: ${score.cap_reasons.join("; ") || "none"}
 - Recommendations: ${score.recommendations.join("; ") || "none"}
 `;
+}
+
+function claimTypeForEvidence(claim: string): Extract<Idea2RepoEvent, { type: "evidence.extracted" }>["claim_type"] {
+  const normalized = claim.toLowerCase();
+  if (normalized.includes("dataset") || normalized.includes("benchmark")) return "dataset";
+  if (normalized.includes("metric") || normalized.includes("accuracy") || normalized.includes("latency")) return "metric";
+  if (normalized.includes("baseline")) return "baseline";
+  if (normalized.includes("limitation")) return "limitation";
+  if (normalized.includes("threat")) return "threat";
+  if (normalized.includes("future work")) return "future_work";
+  if (normalized.includes("result")) return "result";
+  return "method";
 }
 
 function verifiedEvidencePaperCount(rows: ReturnType<typeof extractEvidenceRows>): number {
