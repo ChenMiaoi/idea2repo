@@ -10,6 +10,7 @@ import { OFFLINE_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../providers.js";
 import { ensureChild, readManifest, status as projectStatus, validate as validateProject } from "../state.js";
 import { AuthStorage, CodexOAuthClient, openaiCodexOAuthProvider, type CodexUsageSnapshot, type CreditsSnapshot, type RateLimitWindow } from "../auth/codex-oauth.js";
 import { buildGithubExportPlan } from "../github-export.js";
+import { approvalPolicyForMode, formatApprovals, readApprovalRecords, type RuntimeMode } from "../runtime/approvals.js";
 import { formatDecisions, readDecisionRecords } from "../runtime/decisions.js";
 import { readJsonlEvents } from "../runtime/events.js";
 import { formatPlan, readPlanState } from "../runtime/plan.js";
@@ -159,6 +160,7 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
   const [provider, setProvider] = useState<string>(OPENAI_CODEX_PROVIDER_ID);
   const [model, setModel] = useState(initialModel);
   const [reasoning, setReasoning] = useState<ReasoningEffort>(initialReasoning);
+  const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>("generate");
   const [output, setOutput] = useState(defaultOutput);
   const [busy, setBusy] = useState(false);
   const [authStatus, setAuthStatus] = useState("checking");
@@ -502,7 +504,7 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
           role: "assistant",
           title: "Session diagnostics",
           text: "Current TUI route and provider state.",
-          details: [`Provider: ${providerLabel(provider)}`, `Model: ${model}`, `Reasoning: ${reasoning}`, `Auth: ${authLabel(authStatus)}`, `Output: ${output}`]
+          details: [`Provider: ${providerLabel(provider)}`, `Model: ${model}`, `Reasoning: ${reasoning}`, `Mode: ${runtimeMode}`, `Auth: ${authLabel(authStatus)}`, `Output: ${output}`]
         });
         return;
       case "/history":
@@ -514,9 +516,21 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
       case "/retry":
       case "/skip":
       case "/cancel":
-      case "/mode":
-      case "/approvals":
         append({ role: "assistant", title: "Runtime action pending", text: `${command} is registered; the underlying runtime action is implemented in the recovery and approval runtime phases.` });
+        return;
+      case "/mode":
+        chooseRuntimeMode(rest);
+        return;
+      case "/approvals":
+        await runBusy(async () => {
+          const records = await readApprovalRecords(output);
+          append({
+            role: "assistant",
+            title: "Approval log",
+            text: `${records.length} approval log entr${records.length === 1 ? "y" : "ies"} recorded.`,
+            details: formatApprovals(records).split("\n").slice(0, 8)
+          });
+        });
         return;
       case "/research":
       case "/generate":
@@ -699,6 +713,21 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
     openSelect("Choose GitHub action", [dryRun], async () => runGithubDryRun());
   }
 
+  function chooseRuntimeMode(value: string): void {
+    const normalized = value.trim();
+    const options = runtimeModeOptions();
+    if (normalized) {
+      const exact = options.find((option) => option.value === normalized);
+      if (exact) {
+        applyRuntimeMode(exact);
+        return;
+      }
+      append({ role: "error", title: "Unknown runtime mode", text: `${normalized} is not available.`, details: options.map((option) => option.value) });
+      return;
+    }
+    openSelect("Choose runtime mode", options, applyRuntimeMode);
+  }
+
   function chooseAuthAction(value: string): void {
     const normalized = value.trim();
     const options: SelectOption[] = [
@@ -761,6 +790,24 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
   function applyReasoning(option: SelectOption): void {
     setReasoning(option.value as ReasoningEffort);
     append({ role: "assistant", title: "Reasoning updated", text: `${option.value} will be used for the current model.` });
+  }
+
+  function applyRuntimeMode(option: SelectOption): void {
+    const next = option.value as RuntimeMode;
+    const policy = approvalPolicyForMode(next);
+    setRuntimeMode(next);
+    append({
+      role: "assistant",
+      title: "Runtime mode updated",
+      text: next,
+      details: [
+        `write=${policy.allowWrite}`,
+        `overwrite=${policy.allowOverwrite}`,
+        `network=${policy.allowNetwork}`,
+        `publish=${policy.allowPublish}`,
+        `shell=${policy.allowShell}`
+      ]
+    });
   }
 
   function showHistory(): void {
@@ -2149,6 +2196,15 @@ function providerOptions(): SelectOption[] {
       value: OFFLINE_PROVIDER_ID,
       description: "Generate deterministic offline artifacts without network calls."
     }
+  ];
+}
+
+function runtimeModeOptions(): SelectOption[] {
+  return [
+    { label: "generate", value: "generate", description: "Write generated artifacts; network and publish require approval." },
+    { label: "plan", value: "plan", description: "Read and plan only; writing and publishing are denied." },
+    { label: "publish", value: "publish", description: "Prepare publish actions; publish still requires explicit approval." },
+    { label: "danger-full-access", value: "danger-full-access", description: "Allow write and network operations; publish and shell remain gated." }
   ];
 }
 

@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { defaultPolicy, requirePermission, type PermissionPolicy } from "./permissions.js";
 import { containsSecretMaterial } from "./providers.js";
 import { proxyEnvForChild } from "./proxy.js";
+import { ApprovalRecorder, approvalPolicyFromPermissions, enforceApproval, type ApprovalPolicy } from "./runtime/approvals.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -60,10 +61,32 @@ export async function buildGithubExportPlan(
 
 export async function publishWithGh(
   plan: GithubExportPlan,
-  options: { permissionPolicy?: PermissionPolicy; runner?: CommandRunner } = {}
+  options: { permissionPolicy?: PermissionPolicy; approvalPolicy?: ApprovalPolicy; approvalRecorder?: ApprovalRecorder; runner?: CommandRunner } = {}
 ): Promise<GithubExportPlan> {
   const policy = options.permissionPolicy ?? defaultPolicy();
+  const approvalPolicy =
+    options.approvalPolicy ??
+    approvalPolicyFromPermissions(
+      {
+        allowWrite: policy.allowWrite,
+        allowOverwrite: policy.allowOverwrite,
+        allowNetwork: policy.allowNetwork,
+        allowPublish: policy.allowPublish,
+        allowShell: false
+      },
+      "publish"
+    );
+  await enforceApproval(
+    approvalPolicy,
+    {
+      run_id: "github-publish",
+      action: "GitHub export publish",
+      risk: ["write", "network", "publish"]
+    },
+    options.approvalRecorder ?? new ApprovalRecorder(plan.source, approvalPolicy)
+  );
   requirePermission(policy, "publish", "GitHub export");
+  requirePermission(policy, "network", "GitHub export");
   rejectSecretPayloads(plan.issues);
   const publishFiles = await scannedPublishFiles(plan.source);
   const runner = options.runner ?? defaultRunner;
