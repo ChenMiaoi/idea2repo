@@ -54,6 +54,50 @@ test("Codex CLI adapter invokes codex exec with structured output schema and val
   assert.match(calls[0]?.input ?? "", /JSON Schema/);
 });
 
+test("Codex CLI adapter forwards abort signals to the runner", async () => {
+  const controller = new AbortController();
+  const runner: CodexCliRunner = async (_command, _args, options) => {
+    assert.equal(options.signal, controller.signal);
+    return { stdout: JSON.stringify(validAnalysis), stderr: "", code: 0 };
+  };
+  const adapter = new CodexCliAdapter({ runner, cwd: "D:/repo" });
+  const analysis = await adapter.structured({
+    task: "Analyze idea",
+    schemaName: "ResearchAnalysis",
+    context: { idea: "signal" },
+    outputSchema: researchAnalysisJsonSchema(),
+    validate: validateResearchAnalysis,
+    signal: controller.signal
+  });
+
+  assert.equal(analysis.idea_summary, "Codex CLI adapter");
+});
+
+test("Codex CLI adapter rejects pre-aborted structured requests before spawning", async () => {
+  const controller = new AbortController();
+  controller.abort("codex cancelled");
+  let called = false;
+  const adapter = new CodexCliAdapter({
+    cwd: "D:/repo",
+    runner: async () => {
+      called = true;
+      return { stdout: JSON.stringify(validAnalysis), stderr: "", code: 0 };
+    }
+  });
+  await assert.rejects(
+    adapter.structured({
+      task: "Analyze idea",
+      schemaName: "ResearchAnalysis",
+      context: { idea: "signal" },
+      outputSchema: researchAnalysisJsonSchema(),
+      validate: validateResearchAnalysis,
+      signal: controller.signal
+    }),
+    /codex cancelled/
+  );
+  assert.equal(called, false);
+});
+
 test("Codex CLI adapter rejects invalid JSON before fallback can hide schema errors", async () => {
   const adapter = new CodexCliAdapter({
     cwd: "D:/repo",

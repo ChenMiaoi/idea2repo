@@ -1,5 +1,6 @@
 import { CodexOAuthClient, openaiCodexOAuthProvider } from "../auth/codex-oauth.js";
 import { OPENAI_CODEX_PROVIDER_ID, apiShapeForProvider } from "../providers.js";
+import { throwIfAborted } from "../runtime/abort.js";
 import type { ResearchAnalysis } from "../types.js";
 import type { ProviderAdapter, StructuredRequest } from "./adapter.js";
 import type { IdeaBrief, SearchPlan, CandidateTriage, PdfPaperNote, RelatedWorkAnalysis, NoveltyGapAnalysis, StrictCcfAReview, FeasibilityReview, ResearchStrategy } from "../agents/schemas.js";
@@ -10,7 +11,8 @@ export class OpenAICodexOAuthAdapter implements ProviderAdapter {
   constructor(private readonly clientFactory: (request?: StructuredRequest<unknown>) => CodexOAuthClient = (request) =>
     new CodexOAuthClient({
       model: request?.model,
-      reasoningEffort: request?.reasoningEffort
+      reasoningEffort: request?.reasoningEffort,
+      signal: request?.signal
     })
   ) {}
 
@@ -34,6 +36,7 @@ export class OpenAICodexOAuthAdapter implements ProviderAdapter {
   }
 
   async structured<T>(request: StructuredRequest<T>): Promise<T> {
+    throwIfAborted(request.signal);
     const context = request.context as {
       idea?: string;
       requestedDomains?: string[];
@@ -43,7 +46,9 @@ export class OpenAICodexOAuthAdapter implements ProviderAdapter {
     };
     const client = this.clientFactory(request as StructuredRequest<unknown>);
     if (request.schemaName !== "ResearchAnalysis") {
-      return await runStagedStructured(client, request);
+      const result = await runStagedStructured(client, request);
+      throwIfAborted(request.signal);
+      return result;
     }
     if (!context.idea) throw new Error(`Codex OAuth adapter cannot satisfy structured schema: ${request.schemaName}`);
     const result = await client.analyzeIdea(context.idea, {
@@ -53,7 +58,9 @@ export class OpenAICodexOAuthAdapter implements ProviderAdapter {
       stack: context.stack,
       progress: request.progress
     });
-    return request.validate(result.analysis as ResearchAnalysis);
+    const parsed = request.validate(result.analysis as ResearchAnalysis);
+    throwIfAborted(request.signal);
+    return parsed;
   }
 }
 

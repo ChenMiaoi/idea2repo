@@ -15,6 +15,7 @@ import { renderPaper } from "../skills/templates/render.js";
 import type { PaperRenderInput, PaperRenderResult, TemplateComplianceResult, TemplateResolveInput, TemplateResolveResult, VenueTemplateProfile } from "../skills/templates/types.js";
 import { ensureChild, exists } from "../state.js";
 import { refreshManifestArtifactHashes, snapshotArtifact } from "./artifacts.js";
+import { throwIfAborted } from "./abort.js";
 import { DecisionRecorder, type DecisionInput } from "./decisions.js";
 import { runtimeTimestamp, type EventSink } from "./events.js";
 import { writePlanState, type PlanState } from "./plan.js";
@@ -37,6 +38,7 @@ export type ToolContext = {
   permissions: ApprovalPolicy;
   approvals?: ApprovalRecorder;
   toolCalls?: ToolCallRecorder;
+  signal?: AbortSignal;
 };
 
 export type ToolSpec<Input = unknown, Output = unknown> = {
@@ -86,6 +88,7 @@ export class ToolRegistry {
   }
 
   async execute<Input, Output>(name: string, input: Input, ctx: ToolContext): Promise<Output> {
+    throwIfAborted(ctx.signal);
     const spec = this.specs.get(name) as ToolSpec<Input, Output> | undefined;
     if (!spec) throw new Error(`unknown tool: ${name}`);
     const risk = typeof spec.risk === "function" ? await spec.risk(input, ctx) : spec.risk;
@@ -105,7 +108,9 @@ export class ToolRegistry {
     await ctx.events.emit({ type: "tool.started", run_id: ctx.runId, tool_call_id: toolCallId, tool_name: spec.name, timestamp: startedAt });
     try {
       await enforceApproval(ctx.permissions, { run_id: ctx.runId, action: `tool:${spec.name}`, risk: approvalRisks(risk) }, ctx.approvals);
+      throwIfAborted(ctx.signal);
       const output = await spec.handler(input, ctx);
+      throwIfAborted(ctx.signal);
       const summary = spec.summarizeOutput?.(output) ?? `${spec.name} completed`;
       const completedAt = runtimeTimestamp();
       await ctx.toolCalls?.record({ ...started, status: "completed", summary, completed_at: completedAt });
@@ -129,6 +134,7 @@ export function createToolContext(options: {
   approvals?: ApprovalRecorder;
   toolCalls?: ToolCallRecorder;
   recordToolCalls?: boolean;
+  signal?: AbortSignal;
 }): ToolContext {
   const permissions = options.permissions ?? approvalPolicyForMode("generate");
   return {
@@ -137,7 +143,8 @@ export function createToolContext(options: {
     events: options.events ?? noopEvents,
     permissions,
     approvals: options.approvals,
-    toolCalls: options.recordToolCalls === false ? undefined : options.toolCalls ?? new ToolCallRecorder(options.outputRoot)
+    toolCalls: options.recordToolCalls === false ? undefined : options.toolCalls ?? new ToolCallRecorder(options.outputRoot),
+    signal: options.signal
   };
 }
 
@@ -231,7 +238,7 @@ export function createCoreToolRegistry(): ToolRegistry {
     inputSchema: { type: "object", required: ["queries"], properties: { queries: { type: "array" }, allowNetwork: { type: "boolean" }, limit: { type: "number" } } },
     summarizeInput: (input) => `queries=${(input.queries ?? (input.query ? [input.query] : [])).length}; allow_network=${Boolean(input.allowNetwork)}; limit=${input.limit ?? "default"}`,
     summarizeOutput: (output) => `candidates=${output.candidates.length}; warnings=${output.warnings.length}`,
-    handler: (input) => searchLiteratureAsync(input)
+    handler: (input, ctx) => searchLiteratureAsync({ ...input, signal: ctx.signal })
   });
 
   registry.register<PdfAcquireToolInput, PdfManifestRecord[]>({
@@ -245,7 +252,7 @@ export function createCoreToolRegistry(): ToolRegistry {
     inputSchema: { type: "object", required: ["candidates", "outputRoot"], properties: { candidates: { type: "array" }, outputRoot: { type: "string" }, allowNetwork: { type: "boolean" }, downloadPdfs: { type: "boolean" } } },
     summarizeInput: (input) => `candidates=${input.candidates.length}; download_pdfs=${Boolean(input.downloadPdfs)}; allow_network=${Boolean(input.allowNetwork)}`,
     summarizeOutput: (output) => `pdf_records=${output.length}; downloaded=${output.filter((record) => record.status === "downloaded").length}`,
-    handler: (input) => acquirePdfs(input.candidates, input)
+    handler: (input, ctx) => acquirePdfs(input.candidates, { ...input, signal: ctx.signal })
   });
 
   registry.register<{ root: string; manifest: PdfManifestRecord[] }, PdfChunkIndexEntry[]>({
@@ -255,7 +262,7 @@ export function createCoreToolRegistry(): ToolRegistry {
     inputSchema: { type: "object", required: ["root", "manifest"], properties: { root: { type: "string" }, manifest: { type: "array" } } },
     summarizeInput: (input) => `manifest_records=${input.manifest.length}`,
     summarizeOutput: (output) => `chunks=${output.length}`,
-    handler: (input) => buildPdfChunkIndex(input.root, input.manifest)
+    handler: (input, ctx) => buildPdfChunkIndex(input.root, input.manifest, { signal: ctx.signal })
   });
 
   registry.register<{ chunks: PdfChunkIndexEntry[] }, ClaimEvidenceRow[]>({

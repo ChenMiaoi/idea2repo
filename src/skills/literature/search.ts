@@ -6,11 +6,13 @@ import { searchOpenAlex } from "./adapters/openalex.js";
 import { searchSemanticScholar } from "./adapters/semantic-scholar.js";
 import { dedupeCandidates } from "./dedupe.js";
 import { rankCandidates } from "./rank.js";
+import { throwIfAborted } from "../../runtime/abort.js";
 import type { LiteratureAdapterOptions, LiteratureAdapterResult, LiteratureSearchOptions, LiteratureSearchResult, LiteratureSource, PaperCandidate } from "./types.js";
 
 export const defaultLiteratureSources: LiteratureSource[] = ["openalex", "crossref", "arxiv", "dblp", "semantic-scholar", "acl-anthology"];
 
 export async function searchLiteratureDeterministic(options: LiteratureSearchOptions): Promise<LiteratureSearchResult> {
+  throwIfAborted(options.signal);
   const queries = normalizeQueries(options);
   const limit = options.limit ?? 20;
   if (!options.allowNetwork) {
@@ -25,13 +27,13 @@ export async function searchLiteratureDeterministic(options: LiteratureSearchOpt
   const perSourceLimit = Math.max(1, Math.ceil(limit / Math.max(1, Math.min(queries.length * sources.length, limit))));
   const results: LiteratureAdapterResult[] = [];
   let executedQueries = queries;
-  await runQueries(queries, sources, perSourceLimit, fetchImpl, results);
+  await runQueries(queries, sources, perSourceLimit, fetchImpl, results, options.signal);
   const gate = Math.min(8, limit);
   let candidates = rankCandidates(dedupeCandidates(results.flatMap((result) => result.candidates)), options.idea ?? queries.join(" ")).slice(0, limit);
   if (candidates.length < gate) {
     const expandedQueries = expandedRecallQueries(queries);
     executedQueries = [...queries, ...expandedQueries];
-    await runQueries(expandedQueries, sources, perSourceLimit, fetchImpl, results);
+    await runQueries(expandedQueries, sources, perSourceLimit, fetchImpl, results, options.signal);
     candidates = rankCandidates(dedupeCandidates(results.flatMap((result) => result.candidates)), options.idea ?? queries.join(" ")).slice(0, limit);
   }
   const warnings = results.flatMap((result) => result.warnings);
@@ -71,10 +73,16 @@ async function runAdapter(source: LiteratureSource, options: LiteratureAdapterOp
   return searchAclAnthology(options);
 }
 
-async function runQueries(queries: string[], sources: LiteratureSource[], perSourceLimit: number, fetchImpl: typeof fetch, results: LiteratureAdapterResult[]): Promise<void> {
+async function runQueries(queries: string[], sources: LiteratureSource[], perSourceLimit: number, fetchImpl: typeof fetch, results: LiteratureAdapterResult[], signal?: AbortSignal): Promise<void> {
   for (const query of queries) {
-    const adapterOptions: LiteratureAdapterOptions = { query, limit: perSourceLimit, fetchImpl };
-    for (const source of sources) results.push(await runAdapter(source, adapterOptions));
+    throwIfAborted(signal);
+    const adapterOptions: LiteratureAdapterOptions = { query, limit: perSourceLimit, fetchImpl, signal };
+    for (const source of sources) {
+      throwIfAborted(signal);
+      const result = await runAdapter(source, adapterOptions);
+      throwIfAborted(signal);
+      results.push(result);
+    }
   }
 }
 

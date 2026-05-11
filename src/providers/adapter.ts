@@ -11,6 +11,7 @@ export type StructuredRequest<T> = {
   reasoningEffort?: string;
   events?: EventSink;
   progress?: (message: string) => void;
+  signal?: AbortSignal;
 };
 
 export interface ProviderAdapter {

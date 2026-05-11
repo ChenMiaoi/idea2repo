@@ -143,6 +143,128 @@ test("CodexOAuthClient runs split staged agent prompts", async () => {
   }
 });
 
+test("CodexOAuthClient rethrows cancellation during JSON body reads", async () => {
+  const home = await mkdtemp(join(tmpdir(), "idea2repo-oauth-cancel-"));
+  const previous = process.env.IDEA2REPO_HOME;
+  process.env.IDEA2REPO_HOME = home;
+  const controller = new AbortController();
+  try {
+    const storage = new AuthStorage();
+    await storage.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.now() + 3_600_000,
+      accountId: "account-id"
+    });
+    const response = new Response(JSON.stringify({ project_name: "cancelled-project" }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+    const readText = response.text.bind(response);
+    Object.defineProperty(response, "text", {
+      value: async () => {
+        const text = await readText();
+        controller.abort("oauth body cancelled");
+        return text;
+      }
+    });
+    const client = new CodexOAuthClient({
+      storage,
+      signal: controller.signal,
+      fetchImpl: async (_url, init) => {
+        assert.equal(init?.signal, controller.signal);
+        return response;
+      },
+      maxRetries: 0
+    });
+    await assert.rejects(client.suggestProjectName("cancel during body"), /oauth body cancelled/);
+  } finally {
+    if (previous == null) delete process.env.IDEA2REPO_HOME;
+    else process.env.IDEA2REPO_HOME = previous;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("CodexOAuthClient rethrows cancellation during usage JSON reads", async () => {
+  const home = await mkdtemp(join(tmpdir(), "idea2repo-usage-cancel-"));
+  const previous = process.env.IDEA2REPO_HOME;
+  process.env.IDEA2REPO_HOME = home;
+  const controller = new AbortController();
+  try {
+    const storage = new AuthStorage();
+    await storage.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.now() + 3_600_000,
+      accountId: "account-id"
+    });
+    const response = new Response(JSON.stringify({ data: { rate_limits: { primary: { usedPercent: 1 } } } }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+    const readJson = response.json.bind(response);
+    Object.defineProperty(response, "json", {
+      value: async () => {
+        const json = await readJson();
+        controller.abort("usage body cancelled");
+        return json;
+      }
+    });
+    const client = new CodexOAuthClient({
+      storage,
+      signal: controller.signal,
+      fetchImpl: async (_url, init) => {
+        assert.equal(init?.signal, controller.signal);
+        return response;
+      },
+      maxRetries: 0
+    });
+    await assert.rejects(client.getUsage(), /usage body cancelled/);
+  } finally {
+    if (previous == null) delete process.env.IDEA2REPO_HOME;
+    else process.env.IDEA2REPO_HOME = previous;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("CodexOAuthClient rethrows cancellation while waiting for the auth lock", async () => {
+  const home = await mkdtemp(join(tmpdir(), "idea2repo-lock-cancel-"));
+  const previous = process.env.IDEA2REPO_HOME;
+  process.env.IDEA2REPO_HOME = home;
+  const controller = new AbortController();
+  try {
+    const storage = new AuthStorage();
+    await storage.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.now() + 3_600_000,
+      accountId: "account-id"
+    });
+    await storage.withLock(async () => {
+      const client = new CodexOAuthClient({
+        storage,
+        signal: controller.signal,
+        fetchImpl: async () => new Response(JSON.stringify({ project_name: "should-not-run" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }),
+        maxRetries: 0
+      });
+      const pending = assert.rejects(client.suggestProjectName("cancel during lock"), /auth lock cancelled/);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      controller.abort("auth lock cancelled");
+      await pending;
+    });
+  } finally {
+    if (previous == null) delete process.env.IDEA2REPO_HOME;
+    else process.env.IDEA2REPO_HOME = previous;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("Codex usage parser accepts primary and secondary rate-limit windows", () => {
   const parsed = parseUsageSnapshot(
     {

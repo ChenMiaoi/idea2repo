@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { PaperCandidate } from "../literature/types.js";
+import { signalWithTimeout, throwIfAborted } from "../../runtime/abort.js";
 import { parsePdfBuffer } from "./parse.js";
 import { assertPdf } from "./validate.js";
 import { licenseHint, sha256, titleMatchScore, type PdfManifestRecord } from "./provenance.js";
@@ -11,9 +12,11 @@ export type PdfAcquireOptions = {
   downloadPdfs?: boolean;
   fetchImpl?: typeof fetch;
   now?: () => string;
+  signal?: AbortSignal;
 };
 
 export async function acquirePdf(candidate: PaperCandidate, options: PdfAcquireOptions): Promise<PdfManifestRecord> {
+  throwIfAborted(options.signal);
   const paperId = safePaperId(candidate.candidate_id || candidate.title);
   const sourceUrl = candidate.pdf_urls[0];
   if (!sourceUrl) {
@@ -31,17 +34,24 @@ export async function acquirePdf(candidate: PaperCandidate, options: PdfAcquireO
   }
   try {
     const fetchImpl = options.fetchImpl ?? fetch;
-    const response = await fetchImpl(sourceUrl, { headers: { accept: "application/pdf" }, signal: AbortSignal.timeout(30_000) });
-    if (!response.ok) throw new Error(`${response.status} ${await response.text().catch(() => response.statusText)}`);
+    const response = await fetchImpl(sourceUrl, { headers: { accept: "application/pdf" }, signal: signalWithTimeout(options.signal, 30_000) });
+    throwIfAborted(options.signal);
+    if (!response.ok) {
+      const text = await response.text().catch(() => response.statusText);
+      throwIfAborted(options.signal);
+      throw new Error(`${response.status} ${text}`);
+    }
     const buffer = Buffer.from(await response.arrayBuffer());
+    throwIfAborted(options.signal);
     assertPdf(buffer);
-    const parsed = await parsePdfBuffer(buffer, sourceUrl);
+    const parsed = await parsePdfBuffer(buffer, sourceUrl, { signal: options.signal });
     const extractedText = parsed.pages.map((page) => page.text).join("\n");
     const matchScore = titleMatchScore(candidate.title, extractedText);
     if (matchScore < 0.2) throw new Error(`PDF title match too low: ${matchScore}`);
     const relativePath = join("docs", "reference", "pdfs", `${paperId}.pdf`);
     const pdfPath = join(options.outputRoot, relativePath);
     await mkdir(dirname(pdfPath), { recursive: true });
+    throwIfAborted(options.signal);
     await writeFile(pdfPath, buffer);
     return {
       paper_id: paperId,
@@ -55,6 +65,7 @@ export async function acquirePdf(candidate: PaperCandidate, options: PdfAcquireO
       status: "downloaded"
     };
   } catch (error) {
+    throwIfAborted(options.signal);
     return {
       paper_id: paperId,
       source_url: sourceUrl,
@@ -67,7 +78,10 @@ export async function acquirePdf(candidate: PaperCandidate, options: PdfAcquireO
 
 export async function acquirePdfs(candidates: PaperCandidate[], options: PdfAcquireOptions): Promise<PdfManifestRecord[]> {
   const records: PdfManifestRecord[] = [];
-  for (const candidate of candidates) records.push(await acquirePdf(candidate, options));
+  for (const candidate of candidates) {
+    throwIfAborted(options.signal);
+    records.push(await acquirePdf(candidate, options));
+  }
   return records;
 }
 

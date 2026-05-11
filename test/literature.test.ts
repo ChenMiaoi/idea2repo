@@ -82,6 +82,59 @@ test("literature search records offline manual tasks when network is disabled", 
   assert.match(result.warnings[0] ?? "", /Network disabled/);
 });
 
+test("literature search propagates cancellation from adapter fetches", async () => {
+  const controller = new AbortController();
+  let sawSignal = false;
+  await assert.rejects(
+    searchLiteratureAsync({
+      queries: ["agent benchmark"],
+      allowNetwork: true,
+      limit: 5,
+      sources: ["openalex"],
+      signal: controller.signal,
+      fetchImpl: async (_input, init) => {
+        sawSignal = init?.signal instanceof AbortSignal;
+        controller.abort("literature cancelled");
+        throw new Error("fetch failed after cancellation");
+      }
+    }),
+    /literature cancelled/
+  );
+  assert.equal(sawSignal, true);
+});
+
+test("literature search rejects if cancellation happens during successful body reads", async () => {
+  const controller = new AbortController();
+  await assert.rejects(
+    searchLiteratureAsync({
+      queries: ["agent benchmark"],
+      allowNetwork: true,
+      limit: 5,
+      sources: ["openalex"],
+      signal: controller.signal,
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => {
+          controller.abort("literature body cancelled");
+          return {
+            results: [{
+              id: "https://openalex.org/W1",
+              title: "Agent Benchmark",
+              publication_year: 2026,
+              authorships: [],
+              primary_location: { landing_page_url: "https://example.org/paper", pdf_url: "https://example.org/paper.pdf" },
+              cited_by_count: 5
+            }]
+          };
+        },
+        text: async () => ""
+      }) as unknown as Response
+    }),
+    /literature body cancelled/
+  );
+});
+
 test("legacy searchLiterature returns deterministic staged search tasks", () => {
   const [records, tasks] = searchLiterature("agent benchmark", { allowNetwork: true });
   assert.deepEqual(records, []);

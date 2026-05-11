@@ -1,5 +1,6 @@
 import { diagnoseIdea } from "../scoring.js";
 import { OFFLINE_PROVIDER_ID, apiShapeForProvider } from "../providers.js";
+import { throwIfAborted } from "../runtime/abort.js";
 import type { ResearchAnalysis } from "../types.js";
 import type { ProviderAdapter, StructuredRequest } from "./adapter.js";
 
@@ -21,12 +22,15 @@ export class OfflineAdapter implements ProviderAdapter {
   }
 
   async structured<T>(request: StructuredRequest<T>): Promise<T> {
+    throwIfAborted(request.signal);
     const context = request.context as { idea?: string; requestedDomains?: string[]; timelineWeeks?: number; resources?: string[]; stack?: "python" | "ts" };
     if (request.schemaName !== "ResearchAnalysis" || !context.idea) {
       throw new Error(`offline adapter cannot satisfy structured schema: ${request.schemaName}`);
     }
     request.progress?.("Analysis: offline deterministic fallback");
-    return request.validate(offlineResearchAnalysis(context.idea, context)) as T;
+    const result = request.validate(offlineResearchAnalysis(context.idea, context)) as T;
+    throwIfAborted(request.signal);
+    return result;
   }
 }
 

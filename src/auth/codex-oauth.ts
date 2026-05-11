@@ -29,6 +29,7 @@ import {
 } from "../agents/schemas.js";
 import { filterUnsupportedModels } from "../models.js";
 import { configureProxyFromEnv, proxySummary } from "../proxy.js";
+import { signalWithTimeout, sleepWithSignal, throwIfAborted } from "../runtime/abort.js";
 
 export const OPENAI_CODEX_PROVIDER_ID = "openai-codex";
 export const OPENAI_CODEX_API_SHAPE = "openai-codex-responses";
@@ -145,16 +146,19 @@ export class AuthStorage {
     else await rm(this.path, { force: true });
   }
 
-  async withLock<T>(fn: () => Promise<T>): Promise<T> {
+  async withLock<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     const lockPath = `${this.path}.lock`;
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     const start = Date.now();
     while (existsSync(lockPath)) {
+      throwIfAborted(signal);
       if (Date.now() - start > 30_000) throw new Error("timed out waiting for auth storage lock");
-      await sleep(50);
+      await sleepWithSignal(50, signal);
     }
+    throwIfAborted(signal);
     await writeFile(lockPath, String(process.pid), "utf8");
     try {
+      throwIfAborted(signal);
       return await fn();
     } finally {
       await rm(lockPath, { force: true });
@@ -246,12 +250,12 @@ export async function loginOpenAICodex(callbacks: OAuthLoginCallbacks): Promise<
   }
 }
 
-export async function refreshOpenAICodexToken(refreshToken: string): Promise<OAuthCredentials> {
+export async function refreshOpenAICodexToken(refreshToken: string, signal?: AbortSignal): Promise<OAuthCredentials> {
   const token = await postToken({
     grant_type: "refresh_token",
     refresh_token: refreshToken,
     client_id: OAUTH_CLIENT_ID
-  });
+  }, signal);
   return { type: "oauth", ...token, accountId: extractAccountId(token.access) };
 }
 
@@ -266,6 +270,7 @@ export class CodexOAuthClient {
       sessionId?: string;
       fetchImpl?: typeof fetch;
       maxRetries?: number;
+      signal?: AbortSignal;
     } = {}
   ) {}
 
@@ -285,6 +290,7 @@ export class CodexOAuthClient {
   }
 
   async getUsage(): Promise<CodexUsageSnapshot> {
+    throwIfAborted(this.options.signal);
     const fetchImpl = this.options.fetchImpl ?? fetch;
     if (!this.options.fetchImpl) configureProxyFromEnv();
     const credentials = await this.requireCredentials();
@@ -294,13 +300,17 @@ export class CodexOAuthClient {
     let lastError = "";
     let best: CodexUsageSnapshot | null = null;
     for (const endpoint of candidates) {
-      const response = await fetchImpl(endpoint, { method: "GET", headers });
+      throwIfAborted(this.options.signal);
+      const response = await fetchWithSignal(fetchImpl, endpoint, { method: "GET", headers, signal: this.options.signal }, this.options.signal);
       if (!response.ok) {
-        lastError = `${response.status} ${await response.text().catch(() => response.statusText)}`;
+        const text = await response.text().catch(() => response.statusText);
+        throwIfAborted(this.options.signal);
+        lastError = `${response.status} ${text}`;
         if (response.status === 401 || response.status === 403 || response.status === 404) continue;
         continue;
       }
-      const json = (await response.json()) as unknown;
+      const json = (await responseJsonWithSignal(response, this.options.signal)) as unknown;
+      throwIfAborted(this.options.signal);
       const parsed = parseUsageSnapshot(json, endpoint);
       if (parsed.available && (parsed.primary || parsed.secondary)) return parsed;
       if (parsed.available && !best) best = parsed;
@@ -316,11 +326,11 @@ export class CodexOAuthClient {
       let credentials = await storage.get();
       if (!credentials) throw new Error("Idea2Repo OAuth is not logged in. Run `idea2repo auth login` before generating.");
       if (Date.now() >= credentials.expires - 60_000) {
-        credentials = await refreshOpenAICodexToken(credentials.refresh);
+        credentials = await refreshOpenAICodexToken(credentials.refresh, this.options.signal);
         await storage.set(OPENAI_CODEX_PROVIDER_ID, credentials);
       }
       return credentials;
-    });
+    }, this.options.signal);
   }
 
   async analyzeIdea(
@@ -450,6 +460,7 @@ export class CodexOAuthClient {
   }
 
   private async requestStructured<T>(payload: object, parser: (value: unknown) => T, progress?: (message: string) => void): Promise<{ parsed: T; events: unknown[] }> {
+    throwIfAborted(this.options.signal);
     const fetchImpl = this.options.fetchImpl ?? fetch;
     if (!this.options.fetchImpl) {
       const proxy = configureProxyFromEnv();
@@ -459,28 +470,30 @@ export class CodexOAuthClient {
     const headers = codexHeaders(credentials.access, credentials.accountId, this.options.originator ?? "idea2repo", this.options.sessionId);
     const maxRetries = this.options.maxRetries ?? 3;
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-      const response = await fetchImpl(this.endpoint(), { method: "POST", headers, body: JSON.stringify(payload) });
+      throwIfAborted(this.options.signal);
+      const response = await fetchWithSignal(fetchImpl, this.endpoint(), { method: "POST", headers, body: JSON.stringify(payload), signal: this.options.signal }, this.options.signal);
       if (response.status === 401 || response.status === 403) {
         progress?.("Codex OAuth: refreshing expired credentials");
-        const refreshed = await refreshOpenAICodexToken(credentials.refresh);
+        const refreshed = await refreshOpenAICodexToken(credentials.refresh, this.options.signal);
         await (this.options.storage ?? new AuthStorage()).set(OPENAI_CODEX_PROVIDER_ID, refreshed);
         return new CodexOAuthClient({ ...this.options, maxRetries: 0 }).requestStructured(payload, parser, progress);
       }
       if (!response.ok) {
         const text = await response.text().catch(() => "");
+        throwIfAborted(this.options.signal);
         const message = friendlyCodexError(response.status, text) || text || response.statusText;
         if (attempt < maxRetries && isRetryableError(response.status, message)) {
-          await sleep(1000 * 2 ** attempt);
+          await sleepWithSignal(1000 * 2 ** attempt, this.options.signal);
           continue;
         }
         throw new Error(`Codex OAuth request failed with HTTP ${response.status}: ${message}`);
       }
       const contentType = response.headers.get("content-type") ?? "";
       if (contentType.includes("application/json")) {
-        const raw = await response.text();
-        return parseJsonResponse(raw, parser);
+        const raw = await responseTextWithSignal(response, this.options.signal);
+        return parseJsonResponse(raw, parser, this.options.signal);
       }
-      return parseSseResponse(response, parser, progress);
+      return parseSseResponse(response, parser, progress, this.options.signal);
     }
     throw new Error("Codex OAuth request failed before receiving a response");
   }
@@ -539,16 +552,21 @@ async function exchangeAuthorizationCode(code: string, verifier: string): Promis
   });
 }
 
-async function postToken(data: Record<string, string>): Promise<Omit<OAuthCredentials, "type" | "accountId">> {
+async function postToken(data: Record<string, string>, signal?: AbortSignal): Promise<Omit<OAuthCredentials, "type" | "accountId">> {
   configureProxyFromEnv();
-  const response = await fetch(OAUTH_TOKEN_URL, {
+  throwIfAborted(signal);
+  const response = await fetchWithSignal(fetch, OAUTH_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(data),
-    signal: AbortSignal.timeout(30_000)
-  });
-  if (!response.ok) throw new Error(`OAuth request failed: ${response.status} ${await response.text().catch(() => "")}`);
-  const json = (await response.json()) as { access_token?: string; refresh_token?: string; expires_in?: number };
+    signal: signalWithTimeout(signal, 30_000)
+  }, signal);
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throwIfAborted(signal);
+    throw new Error(`OAuth request failed: ${response.status} ${text}`);
+  }
+  const json = (await responseJsonWithSignal(response, signal)) as { access_token?: string; refresh_token?: string; expires_in?: number };
   if (!json.access_token || !json.refresh_token || typeof json.expires_in !== "number") throw new Error("OAuth token response missing fields");
   return { access: json.access_token, refresh: json.refresh_token, expires: Date.now() + json.expires_in * 1000 };
 }
@@ -835,13 +853,50 @@ function codexHeaders(token: string, accountId: string, originator: string, sess
   return headers;
 }
 
-async function parseJsonResponse<T>(raw: string, parser: (value: unknown) => T): Promise<{ parsed: T; events: unknown[] }> {
+async function parseJsonResponse<T>(raw: string, parser: (value: unknown) => T, signal?: AbortSignal): Promise<{ parsed: T; events: unknown[] }> {
+  throwIfAborted(signal);
   const payload = JSON.parse(raw) as Record<string, unknown>;
   const text = typeof payload.output_text === "string" ? payload.output_text : raw;
-  return { parsed: parser(JSON.parse(text)), events: [payload] };
+  throwIfAborted(signal);
+  const parsed = parser(JSON.parse(text));
+  throwIfAborted(signal);
+  return { parsed, events: [payload] };
 }
 
-async function parseSseResponse<T>(response: Response, parser: (value: unknown) => T, progress?: (message: string) => void): Promise<{ parsed: T; events: unknown[] }> {
+async function fetchWithSignal(fetchImpl: typeof fetch, input: string | URL, init: RequestInit, signal?: AbortSignal): Promise<Response> {
+  try {
+    const response = await fetchImpl(input, init);
+    throwIfAborted(signal);
+    return response;
+  } catch (error) {
+    throwIfAborted(signal);
+    throw error;
+  }
+}
+
+async function responseTextWithSignal(response: Response, signal?: AbortSignal): Promise<string> {
+  try {
+    const text = await response.text();
+    throwIfAborted(signal);
+    return text;
+  } catch (error) {
+    throwIfAborted(signal);
+    throw error;
+  }
+}
+
+async function responseJsonWithSignal(response: Response, signal?: AbortSignal): Promise<unknown> {
+  try {
+    const json = await response.json();
+    throwIfAborted(signal);
+    return json;
+  } catch (error) {
+    throwIfAborted(signal);
+    throw error;
+  }
+}
+
+async function parseSseResponse<T>(response: Response, parser: (value: unknown) => T, progress?: (message: string) => void, signal?: AbortSignal): Promise<{ parsed: T; events: unknown[] }> {
   if (!response.body) throw new Error("No response body");
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -849,7 +904,9 @@ async function parseSseResponse<T>(response: Response, parser: (value: unknown) 
   let text = "";
   const events: unknown[] = [];
   while (true) {
-    const { done, value } = await reader.read();
+    throwIfAborted(signal);
+    const { done, value } = await readerReadWithSignal(reader, signal);
+    throwIfAborted(signal);
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     let index = buffer.indexOf("\n\n");
@@ -877,7 +934,21 @@ async function parseSseResponse<T>(response: Response, parser: (value: unknown) 
       index = buffer.indexOf("\n\n");
     }
   }
-  return { parsed: parser(JSON.parse(text)), events };
+  throwIfAborted(signal);
+  const parsed = parser(JSON.parse(text));
+  throwIfAborted(signal);
+  return { parsed, events };
+}
+
+async function readerReadWithSignal(reader: ReadableStreamDefaultReader<Uint8Array>, signal?: AbortSignal): Promise<ReadableStreamReadResult<Uint8Array>> {
+  try {
+    const result = await reader.read();
+    throwIfAborted(signal);
+    return result;
+  } catch (error) {
+    throwIfAborted(signal);
+    throw error;
+  }
 }
 
 function eventTextDelta(event: Record<string, unknown>, eventType: string): string {

@@ -146,7 +146,8 @@ export async function generateResearchRepo(idea: string, output: string, options
     outputRoot: root,
     events: runtimeEvents,
     permissions: approvalPolicy,
-    approvals: new ApprovalRecorder(root, approvalPolicy, runtimeEvents)
+    approvals: new ApprovalRecorder(root, approvalPolicy, runtimeEvents),
+    signal: options.signal
   });
   try {
   const pipeline = options.runResearchPipeline
@@ -273,7 +274,7 @@ export async function generateResearchRepo(idea: string, output: string, options
     await writeGeneratedArtifact(toolRegistry, toolContext, "docs/submission/anonymity_check.md", anonymityMarkdown(compliance));
     written.push(anonymityPath);
     if (options.compilePaper) {
-      const compile = await compileRenderedPaper(root, templateArtifacts.profile);
+      const compile = await compileRenderedPaper(root, templateArtifacts.profile, { signal: options.signal });
       const compilePath = ensureChild(root, "docs/submission/compile_result.json");
       await adoptGeneratedArtifact(toolRegistry, toolContext, compile.log_path);
       if (await exists(ensureChild(root, compile.pdf_path))) await adoptGeneratedArtifact(toolRegistry, toolContext, compile.pdf_path);
@@ -534,7 +535,8 @@ async function analyzeWithProvider(
       validate: validateResearchAnalysis,
       model: options.model ?? undefined,
       reasoningEffort: options.reasoningEffort ?? undefined,
-      progress: options.progressCallback
+      progress: options.progressCallback,
+      signal: options.signal
     });
     return {
       analysis: selectedProvider === OFFLINE_PROVIDER_ID ? null : analysis,
@@ -543,6 +545,7 @@ async function analyzeWithProvider(
       fallbackReason: selectedProvider === OFFLINE_PROVIDER_ID ? "offline mode requested" : ""
     };
   } catch (error) {
+    throwIfAborted(options.signal);
     options.progressCallback?.("Analysis: provider fallback selected");
     return {
       analysis: null,

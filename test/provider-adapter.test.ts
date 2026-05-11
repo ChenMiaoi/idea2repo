@@ -69,11 +69,14 @@ test("Codex OAuth adapter delegates structured ResearchAnalysis requests to the 
 
 test("research pipeline uses provider adapter for Codex CLI staged agents", async () => {
   const calls: string[] = [];
+  const controller = new AbortController();
+  const signals: boolean[] = [];
   const adapter: ProviderAdapter = {
     id: CODEX_CLI_PROVIDER_ID,
     available: async () => true,
     status: async () => ({ id: CODEX_CLI_PROVIDER_ID, available: true }),
     structured: async <T>(request: StructuredRequest<T>) => {
+      signals.push(request.signal === controller.signal);
       calls.push(`${request.schemaName}:${request.promptFile ?? ""}`);
       if (request.schemaName === "IdeaBrief") {
         return request.validate({
@@ -126,13 +129,74 @@ test("research pipeline uses provider adapter for Codex CLI staged agents", asyn
       provider: CODEX_CLI_PROVIDER_ID,
       allowNetwork: false,
       timelineWeeks: 12,
-      resources: ["single researcher"]
+      resources: ["single researcher"],
+      signal: controller.signal
     });
     assert.deepEqual(calls.slice(0, 2), ["IdeaBrief:00_intake_router.md", "SearchPlan:01_search_planner.md"]);
+    assert.equal(signals.every(Boolean), true);
     assert.ok(calls.includes("FeasibilityReview:07_feasibility_reviewer.md"));
     assert.equal(result.ideaBrief.idea_summary, "Adapter-driven pipeline idea.");
   } finally {
     setProviderAdapterFactoryForTests(null);
+  }
+});
+
+test("research pipeline rethrows aborted provider requests instead of falling back", async () => {
+  const controller = new AbortController();
+  const adapter: ProviderAdapter = {
+    id: CODEX_CLI_PROVIDER_ID,
+    available: async () => true,
+    status: async () => ({ id: CODEX_CLI_PROVIDER_ID, available: true }),
+    structured: async () => {
+      controller.abort("pipeline provider cancelled");
+      throw new Error("provider stopped after abort");
+    }
+  };
+  setProviderAdapterFactoryForTests((id) => {
+    assert.equal(id, CODEX_CLI_PROVIDER_ID);
+    return adapter;
+  });
+  try {
+    await assert.rejects(
+      runResearchPipeline("Adapter abort test", {
+        provider: CODEX_CLI_PROVIDER_ID,
+        allowNetwork: false,
+        signal: controller.signal
+      }),
+      /pipeline provider cancelled/
+    );
+  } finally {
+    setProviderAdapterFactoryForTests(null);
+  }
+});
+
+test("generation rethrows aborted provider analysis instead of using fallback metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-provider-abort-"));
+  const controller = new AbortController();
+  const adapter: ProviderAdapter = {
+    id: CODEX_CLI_PROVIDER_ID,
+    available: async () => true,
+    status: async () => ({ id: CODEX_CLI_PROVIDER_ID, available: true }),
+    structured: async () => {
+      controller.abort("generation provider cancelled");
+      throw new Error("provider stopped after abort");
+    }
+  };
+  setProviderAdapterFactoryForTests((id) => {
+    assert.equal(id, CODEX_CLI_PROVIDER_ID);
+    return adapter;
+  });
+  try {
+    await assert.rejects(
+      generateResearchRepo("Provider abort test", join(root, "project"), {
+        provider: CODEX_CLI_PROVIDER_ID,
+        signal: controller.signal
+      }),
+      /generation provider cancelled/
+    );
+  } finally {
+    setProviderAdapterFactoryForTests(null);
+    await rm(root, { recursive: true, force: true });
   }
 });
 

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { CODEX_CLI_PROVIDER_ID, apiShapeForProvider } from "../providers.js";
 import { proxyEnvForChild } from "../proxy.js";
+import { abortError, throwIfAborted } from "../runtime/abort.js";
 import type { ProviderAdapter, StructuredRequest } from "./adapter.js";
 
 export type CodexCliRunResult = {
@@ -9,7 +10,7 @@ export type CodexCliRunResult = {
   code: number;
 };
 
-export type CodexCliRunner = (command: string, args: string[], options: { cwd: string; input?: string; env?: NodeJS.ProcessEnv }) => Promise<CodexCliRunResult>;
+export type CodexCliRunner = (command: string, args: string[], options: { cwd: string; input?: string; env?: NodeJS.ProcessEnv; signal?: AbortSignal }) => Promise<CodexCliRunResult>;
 
 export class CodexCliAdapter implements ProviderAdapter {
   readonly id = CODEX_CLI_PROVIDER_ID;
@@ -46,6 +47,7 @@ export class CodexCliAdapter implements ProviderAdapter {
   }
 
   async structured<T>(request: StructuredRequest<T>): Promise<T> {
+    throwIfAborted(request.signal);
     if (!request.outputSchema) throw new Error(`Codex CLI structured request requires outputSchema for ${request.schemaName}`);
     const outputSchema = JSON.stringify(request.outputSchema);
     const prompt = codexExecPrompt(request);
@@ -60,7 +62,8 @@ export class CodexCliAdapter implements ProviderAdapter {
       this.options.sandbox ?? "read-only",
       "-"
     ];
-    const result = await this.run(args, { cwd: this.cwd(), input: prompt });
+    const result = await this.run(args, { cwd: this.cwd(), input: prompt, signal: request.signal });
+    throwIfAborted(request.signal);
     if (result.code !== 0) {
       throw new Error(`codex exec failed with code ${result.code}: ${trim(result.stderr || result.stdout)}`);
     }
@@ -72,24 +75,26 @@ export class CodexCliAdapter implements ProviderAdapter {
     return this.options.cwd ?? process.cwd();
   }
 
-  private async run(args: string[], options: { cwd: string; input?: string }): Promise<CodexCliRunResult> {
-    if (this.options.runner) return this.options.runner(this.options.command ?? "codex", args, { cwd: options.cwd, input: options.input, env: proxyEnvForChild() });
-    return spawnCodex(this.options.command ?? "codex", args, { cwd: options.cwd, input: options.input, env: proxyEnvForChild() });
+  private async run(args: string[], options: { cwd: string; input?: string; signal?: AbortSignal }): Promise<CodexCliRunResult> {
+    if (this.options.runner) return this.options.runner(this.options.command ?? "codex", args, { cwd: options.cwd, input: options.input, env: proxyEnvForChild(), signal: options.signal });
+    return spawnCodex(this.options.command ?? "codex", args, { cwd: options.cwd, input: options.input, env: proxyEnvForChild(), signal: options.signal });
   }
 }
 
-async function spawnCodex(command: string, args: string[], options: { cwd: string; input?: string; env?: NodeJS.ProcessEnv }): Promise<CodexCliRunResult> {
+async function spawnCodex(command: string, args: string[], options: { cwd: string; input?: string; env?: NodeJS.ProcessEnv; signal?: AbortSignal }): Promise<CodexCliRunResult> {
   return await new Promise((resolve, reject) => {
+    throwIfAborted(options.signal);
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
+      signal: options.signal,
       stdio: ["pipe", "pipe", "pipe"]
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.on("error", reject);
+    child.on("error", (error) => options.signal?.aborted ? reject(abortError(options.signal)) : reject(error));
     child.on("close", (code) => {
       resolve({
         stdout: Buffer.concat(stdout).toString("utf8"),

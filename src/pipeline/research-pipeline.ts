@@ -128,7 +128,8 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     events: options.events,
     permissions: approvalPolicy,
     approvals: options.outputRoot ? new ApprovalRecorder(outputRoot, approvalPolicy, options.events) : undefined,
-    recordToolCalls: Boolean(options.outputRoot)
+    recordToolCalls: Boolean(options.outputRoot),
+    signal: options.signal
   });
   const restoredState = options.outputRoot ? await readResearchPipelineState(outputRoot) : null;
   if (restoredState && restoredState.idea !== idea) throw new Error(`research pipeline state belongs to a different idea: ${restoredState.idea}`);
@@ -242,7 +243,8 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
       () => agent?.intakeIdea(idea, { requestedDomains: options.requestedDomains, targetVenues: venues, timelineWeeks: options.timelineWeeks, resources: options.resources }, options.progress).then((result) => result.idea_brief),
       () => deterministicIdeaBrief,
       warnings,
-      "idea intake"
+      "idea intake",
+      options.signal
     );
     await recordDecision({
       stage_id: "idea_intake",
@@ -266,7 +268,8 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
       () => agent?.planLiteratureSearch(idea, { requestedDomains: options.requestedDomains, targetVenues: venues, timelineWeeks: options.timelineWeeks, resources: options.resources }, options.progress).then((result) => result.search_plan),
       () => offlineSearchPlan(ideaBrief, options.maxPapers ?? 20),
       warnings,
-      "search planning"
+      "search planning",
+      options.signal
     );
     searchPlan = enforceSearchPlanGate(searchPlan, offlineSearchPlan(ideaBrief, options.maxPapers ?? 20), warnings);
     await recordDecision({
@@ -316,7 +319,8 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
           () => agent?.triagePaperCandidates(idea, candidates, options.progress).then((result) => result.triage),
           () => null,
           warnings,
-          "candidate triage"
+          "candidate triage",
+          options.signal
         )
       : null;
     await recordDecision({
@@ -371,7 +375,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     if (resumedChunks?.length) warnings.push("PDF reading resume ignored because chunks are not fully backed by validated PDF provenance and declared artifacts.");
     await setStage("pdf_reading", "running");
     chunks = parsedManifestChunks;
-    agentPaperNotes = verifiedPaperNotesAgainstChunks(await readPaperNotesWithAgent(agent, idea, chunks, warnings, options.progress), chunks);
+    agentPaperNotes = verifiedPaperNotesAgainstChunks(await readPaperNotesWithAgent(agent, idea, chunks, warnings, options.progress, options.signal), chunks);
     await setStage("pdf_reading", chunks.length ? "completed" : "skipped", chunks.length ? undefined : "No downloaded PDFs were available for reading.");
   }
 
@@ -407,7 +411,8 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
             () => agent?.analyzeRelatedWork(idea, agentPaperNotes, options.progress).then((result) => result.related_work),
             () => null,
             warnings,
-            "related work analysis"
+            "related work analysis",
+            options.signal
           )
         : null;
     await setStage("related_work_analysis", agentRelatedWork ? "completed" : "skipped", agentRelatedWork ? undefined : "No verified paper notes are available for related-work agent analysis.");
@@ -440,7 +445,8 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
             () => agent?.analyzeNovelty(idea, agentRelatedWork, options.progress).then((result) => result.novelty),
             () => null,
             warnings,
-            "novelty analysis"
+            "novelty analysis",
+            options.signal
           )
         : null;
     await setStage("novelty_analysis", agentNovelty ? "completed" : "skipped", agentNovelty ? undefined : "Verified related-work analysis is required before novelty agent analysis.");
@@ -487,7 +493,8 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
           () => agent?.scoreCcfA(idea, { evidence_rows: evidenceRows, strict_score: score, novelty }, options.progress).then((result) => result.scorecard),
           () => null,
           warnings,
-          "strict CCF-A scoring"
+          "strict CCF-A scoring",
+          options.signal
         )
       : null;
     await recordDecision({
@@ -511,7 +518,8 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
       () => agent?.reviewFeasibility(idea, { timelineWeeks: options.timelineWeeks ?? 12, resources: options.resources ?? [] }, options.progress).then((result) => result.feasibility),
       () => null,
       warnings,
-      "feasibility review"
+      "feasibility review",
+      options.signal
     );
     await recordDecision({
       stage_id: "feasibility_review",
@@ -551,7 +559,8 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
           () => agent?.refineIdea(idea, { novelty: agentNovelty ?? novelty, score, feasibility: agentFeasibility, related_work: agentRelatedWork }, options.progress).then((result) => result.strategy),
           () => null,
           warnings,
-          "research strategy"
+          "research strategy",
+          options.signal
         )
       : null;
     await setStage("better_idea_synthesis", agentStrategy ? "completed" : "skipped", agentStrategy ? undefined : "Research strategy is blocked until verified related work and novelty analysis exist.");
@@ -1089,7 +1098,8 @@ class AdapterStagedResearchAgent implements StagedResearchAgent {
       model: this.options.model ?? undefined,
       reasoningEffort: this.options.reasoningEffort ?? undefined,
       events: this.options.events,
-      progress
+      progress,
+      signal: this.options.signal
     });
   }
 
@@ -1104,12 +1114,13 @@ class AdapterStagedResearchAgent implements StagedResearchAgent {
   }
 }
 
-async function stagedOrFallback<T>(run: () => Promise<T> | undefined, fallback: () => T | Promise<T>, warnings: string[], label: string): Promise<T> {
+async function stagedOrFallback<T>(run: () => Promise<T> | undefined, fallback: () => T | Promise<T>, warnings: string[], label: string, signal?: AbortSignal): Promise<T> {
   const request = run();
   if (!request) return await fallback();
   try {
     return await request;
   } catch (error) {
+    throwIfAborted(signal);
     warnings.push(`Staged agent ${label} fell back to deterministic implementation: ${error instanceof Error ? error.message : String(error)}`);
     return await fallback();
   }
@@ -1120,7 +1131,8 @@ async function readPaperNotesWithAgent(
   idea: string,
   chunks: PdfChunkIndexEntry[],
   warnings: string[],
-  progress?: (message: string) => void
+  progress?: (message: string) => void,
+  signal?: AbortSignal
 ): Promise<PdfPaperNote[]> {
   if (!agent || !chunks.length) return [];
   const byPaper = new Map<string, PdfChunkIndexEntry[]>();
@@ -1131,7 +1143,8 @@ async function readPaperNotesWithAgent(
       () => agent.readPaperPdf(idea, { paper_id: paperId }, paperChunks, progress).then((result) => result.paper_note),
       () => null,
       warnings,
-      `PDF reader ${paperId}`
+      `PDF reader ${paperId}`,
+      signal
     );
     if (note) notes.push(note);
   }

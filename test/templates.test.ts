@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { mkdtemp } from "node:fs/promises";
 import { test } from "node:test";
 import { main } from "../src/cli.js";
-import { loadTemplateProfiles, resolveTemplateProfile, validateTemplateProfiles } from "../src/index.js";
+import { compilePaper, loadTemplateProfiles, resolveTemplateProfile, validateTemplateProfiles } from "../src/index.js";
 
 test("template profiles validate required ACM and IEEE metadata", () => {
   const profiles = loadTemplateProfiles();
@@ -50,6 +50,18 @@ test("templates CLI lists validates and writes submission decision artifacts", a
     const profile = JSON.parse(await readFile(profilePath, "utf8")) as { profile_id?: string };
     assert.equal(profile.profile_id, "acm-sigconf");
     assert.match(await readFile(decisionPath, "utf8"), /Template Decision/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("template compilation rejects pre-aborted cancellation before spawning compilers", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-compile-cancel-"));
+  const controller = new AbortController();
+  try {
+    const { profile } = await resolveTemplateProfile({ venue: "ACM CCS" });
+    controller.abort("compile cancelled");
+    await assert.rejects(compilePaper(root, profile, { signal: controller.signal }), /compile cancelled/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -24,6 +24,7 @@ export type LiteratureAdapterOptions = {
   query: string;
   limit: number;
   fetchImpl: typeof fetch;
+  signal?: AbortSignal;
 };
 
 export type LiteratureAdapterResult = {
@@ -40,6 +41,7 @@ export type LiteratureSearchOptions = {
   limit?: number;
   idea?: string;
   fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
 };
 
 export type LiteratureSearchResult = {
