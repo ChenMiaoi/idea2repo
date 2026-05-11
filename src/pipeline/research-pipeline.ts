@@ -875,7 +875,7 @@ function pipelineArtifacts(input: {
     "docs/relative_work/related_work_matrix.csv": relatedWorkMatrixCsv(input.candidates, input.manifest, input.evidenceRows),
     "docs/reference/claim_evidence_matrix.csv": evidenceRowsCsv(input.evidenceRows),
     "docs/relative_work/topic_clusters.md": input.agentRelatedWork ? agentRelatedWorkMarkdown(input.agentRelatedWork) : topicClustersMarkdown(input.candidates),
-    "docs/relative_work/novelty_gap_matrix.md": input.agentNovelty ? agentNoveltyMarkdown(input.agentNovelty) : noveltyMatrixMarkdown(input.novelty),
+    "docs/relative_work/novelty_gap_matrix.md": input.agentNovelty ? `${noveltyMatrixMarkdown(input.novelty)}\n## Agent Novelty Review\n\n${agentNoveltyMarkdown(input.agentNovelty)}` : noveltyMatrixMarkdown(input.novelty),
     "docs/relative_work/collision_risk.md": `# Collision Risk\n\n${input.novelty.collision_risk}\n\n${input.novelty.reasons.map((reason) => `- ${reason}`).join("\n")}\n`,
     "docs/relative_work/baseline_recommendations.md": `# Baseline Recommendations\n\n${input.baselineRecommendations.length ? input.baselineRecommendations.map((item) => `- ${item}`).join("\n") : "- Blocked until verified PDF evidence identifies reviewer-expected baselines."}\n`,
     "docs/reference/pdf_chunks.json": JSON.stringify(input.chunks, null, 2) + "\n",

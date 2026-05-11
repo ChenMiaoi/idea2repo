@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { main } from "../src/cli.js";
 import { evidenceRowsMarkdown, extractEvidenceRows } from "../src/skills/analysis/evidence-extract.js";
 import { relatedWorkMatrixCsv } from "../src/skills/analysis/related-work-matrix.js";
-import { assessNovelty } from "../src/skills/analysis/novelty-matrix.js";
+import { assessNovelty, noveltyMatrixMarkdown } from "../src/skills/analysis/novelty-matrix.js";
 import { strictCcfAScore } from "../src/skills/analysis/ccf-a-score.js";
 import { sha256 } from "../src/skills/pdf/provenance.js";
 
@@ -31,12 +31,50 @@ test("novelty assessment marks repeated overlap as high collision", () => {
   assert.equal(novelty.collision_risk, "high");
   assert.equal(novelty.novelty_cap, 6);
   assert.equal(novelty.total_cap, 55);
+  assert.deepEqual(novelty.dimension_deltas.map((delta) => delta.dimension), ["problem", "method", "data", "metric", "evaluation", "contribution"]);
+  assert.ok(novelty.dimension_deltas.some((delta) => delta.dimension === "data" && delta.risk === "high"));
 });
 
 test("novelty assessment is blocked without verified evidence refs", () => {
   const novelty = assessNovelty("agent benchmark evaluation metric dataset", [candidate("Agent benchmark evaluation metric dataset")]);
   assert.equal(novelty.collision_risk, "low");
   assert.match(novelty.reasons[0] ?? "", /blocked/);
+  assert.equal(novelty.dimension_deltas.every((delta) => delta.status === "blocked"), true);
+});
+
+test("novelty matrix reports dimension-level idea-vs-prior-work deltas", () => {
+  const novelty = assessNovelty("causal intervention method for agent evaluation with a new benchmark metric", [
+    candidate("Agent evaluation benchmark metric framework")
+  ], [
+    evidence("agent-evaluation-benchmark-metric-framework", "This benchmark framework reports evaluation metrics and baseline comparisons for agent methods.")
+  ]);
+  const data = novelty.dimension_deltas.find((delta) => delta.dimension === "data");
+  const evaluation = novelty.dimension_deltas.find((delta) => delta.dimension === "evaluation");
+  const contribution = novelty.dimension_deltas.find((delta) => delta.dimension === "contribution");
+  assert.equal(data?.status, "weak");
+  assert.equal(evaluation?.risk, "high");
+  assert.equal(contribution?.status, "missing");
+  const markdown = noveltyMatrixMarkdown(novelty);
+  assert.match(markdown, /Dimension Delta Matrix/);
+  assert.match(markdown, /\| Data \| weak \| high \| benchmark \|/);
+  assert.match(markdown, /Side-by-side contrast/);
+});
+
+test("novelty matrix ignores unverified rows and keeps missing dimensions out of collision risk", () => {
+  const rows = [
+    evidence("paper-a", "verified method evidence"),
+    {
+      ...evidence("paper-a", "agent benchmark evaluation metric dataset collision"),
+      status: "planned" as const,
+      page: undefined,
+      quote: undefined,
+      chunk_id: undefined
+    }
+  ];
+  const novelty = assessNovelty("agent benchmark evaluation metric dataset", [candidate("Paper A")], rows);
+  assert.equal(novelty.collision_risk, "low");
+  assert.equal(novelty.dimension_deltas.find((delta) => delta.dimension === "problem")?.status, "missing");
+  assert.equal(novelty.dimension_deltas.find((delta) => delta.dimension === "problem")?.risk, "unknown");
 });
 
 test("paper notes and related-work signals are derived from evidence text", () => {
