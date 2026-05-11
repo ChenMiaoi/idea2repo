@@ -228,7 +228,8 @@ export async function generateResearchRepo(idea: string, output: string, options
     analysis,
     providerReport,
     providerId: providerAnalysis.selectedProvider,
-    apiShape: providerAnalysis.selectedApiShape
+    apiShape: providerAnalysis.selectedApiShape,
+    runtimeDecisionSummaries: pipeline?.decisionSummaries ?? []
   });
   if (pipeline) Object.assign(fileMap, pipeline.artifacts);
   const templateArtifacts = await buildGeneratedTemplateArtifacts({
@@ -710,6 +711,7 @@ function buildFiles(options: {
   providerReport: string;
   providerId: string;
   apiShape: string;
+  runtimeDecisionSummaries?: string[];
 }): Record<string, string> {
   const route = options.diagnosis.routes[0]!;
   const claimRows = claimEvidenceRows(options.claimEvidenceRows);
@@ -722,8 +724,8 @@ function buildFiles(options: {
     "requirements.txt": requirementsTxt(),
     "pyproject.toml": generatedPyproject(options.projectName),
     "docs/diagnosis/ccf_a_readiness_report.md": options.analysis
-      ? analysisReadinessReport(options.analysis, options.diagnosis, options.timelineWeeks, options.providerId, options.apiShape)
-      : readinessReport(options.projectName, options.idea, options.diagnosis, options.timelineWeeks),
+      ? analysisReadinessReport(options.analysis, options.diagnosis, options.timelineWeeks, options.providerId, options.apiShape, options.runtimeDecisionSummaries)
+      : readinessReport(options.projectName, options.idea, options.diagnosis, options.timelineWeeks, options.runtimeDecisionSummaries),
     "docs/diagnosis/raw_idea_score.md": scoreReport("Raw Idea Score", options.diagnosis.raw_score),
     "docs/diagnosis/revised_plan_score.md": scoreReport("Revised Plan Score", options.diagnosis.revised_score),
     "docs/diagnosis/evidence_gate.md": evidenceGateMarkdown(options.evidenceGate),
@@ -1035,7 +1037,7 @@ testpaths = ["tests"]
 `;
 }
 
-function readinessReport(projectName: string, idea: string, diagnosis: Diagnosis, timelineWeeks: number): string {
+function readinessReport(projectName: string, idea: string, diagnosis: Diagnosis, timelineWeeks: number, runtimeDecisionSummaries: string[] = []): string {
   const route = diagnosis.routes[0]!;
   return `# CCF-A Readiness Report
 
@@ -1064,13 +1066,15 @@ ${markdownList(diagnosis.required_evidence)}
 
 ${markdownList(diagnosis.risks)}
 
+${runtimeDecisionTrace(runtimeDecisionSummaries)}
+
 ## Execution Plan
 
 See \`docs/execution_plan/${timelineWeeks}_week_plan.md\`.
 `;
 }
 
-function analysisReadinessReport(analysis: ResearchAnalysis, diagnosis: Diagnosis, timelineWeeks: number, providerId: string, apiShape: string): string {
+function analysisReadinessReport(analysis: ResearchAnalysis, diagnosis: Diagnosis, timelineWeeks: number, providerId: string, apiShape: string, runtimeDecisionSummaries: string[] = []): string {
   return `# CCF-A Readiness Report
 
 Analysis source: Codex (${providerId}, ${apiShape})
@@ -1114,10 +1118,17 @@ ${markdownList(analysis.novelty_gaps ?? ["Verify novelty against recent related 
 
 ${markdownList(analysis.risks ?? diagnosis.risks)}
 
+${runtimeDecisionTrace(runtimeDecisionSummaries)}
+
 ## Execution Plan
 
 See \`docs/execution_plan/${timelineWeeks}_week_plan.md\`.
 `;
+}
+
+function runtimeDecisionTrace(summaries: string[]): string {
+  if (!summaries.length) return "## Runtime Decision Trace\n\nNo runtime decisions were recorded for this report.\n";
+  return `## Runtime Decision Trace\n\n${summaries.slice(0, 10).map((summary) => `- ${summary}`).join("\n")}\n`;
 }
 
 function scoreReport(title: string, score: Diagnosis["raw_score"]): string {

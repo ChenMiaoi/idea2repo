@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -42,12 +42,28 @@ test("research pipeline records visible decisions and trace --decisions prints t
   try {
     assert.equal(await main(["research", "Build an LLM agent benchmark.", "--offline", "--provider", "offline", "--output", output, "--jsonl-events"]), 0);
     const records = await readDecisionRecords(output);
-    assert.ok(records.some((record) => record.stage_id === "idea_intake"));
-    assert.ok(records.some((record) => record.stage_id === "ccf_a_strict_scoring"));
+    const stages = new Set(records.map((record) => record.stage_id));
+    for (const stage of [
+      "idea_intake",
+      "search_planning",
+      "candidate_triage",
+      "pdf_reading",
+      "related_work_analysis",
+      "novelty_analysis",
+      "ccf_a_strict_scoring",
+      "feasibility_review",
+      "better_idea_synthesis",
+      "venue_template_packaging"
+    ]) {
+      assert.equal(stages.has(stage), true, `missing decision for ${stage}`);
+    }
     assert.equal(records.some((record) => /chain-of-thought/i.test(record.rationale_summary)), false);
+    const report = await readFile(join(output, "docs", "diagnosis", "ccf_a_readiness_report.md"), "utf8");
+    assert.match(report, /## Runtime Decision Trace/);
+    assert.match(report, /Idea routed for research pipeline/);
+    assert.match(report, /Novelty collision risk assessed/);
     assert.equal(await main(["trace", "--decisions", "--output", output]), 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
-

@@ -69,6 +69,7 @@ export type ResearchPipelineResult = {
   claimEvidenceRows: Record<string, string>[];
   artifacts: Record<string, string>;
   warnings: string[];
+  decisionSummaries: string[];
 };
 
 export async function runResearchPipeline(idea: string, options: ResearchPipelineOptions = {}): Promise<ResearchPipelineResult> {
@@ -86,6 +87,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
   if (restoredState && restoredState.idea !== idea) throw new Error(`research pipeline state belongs to a different idea: ${restoredState.idea}`);
   let state = restoredState ?? createResearchPipelineState(idea, options.outputRoot);
   const warnings: string[] = [];
+  const decisionSummaries: string[] = [];
   const resumedArtifacts: Record<string, string> = {};
   const readArtifact = async (relativePath: string): Promise<string | null> => {
     if (!options.outputRoot) return null;
@@ -119,6 +121,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
   let activeStage: { id: Parameters<typeof markStage>[1]; label: string } | null = null;
   const decisions = options.outputRoot ? new DecisionRecorder(outputRoot, runId, options.events) : null;
   const recordDecision = async (input: Parameters<DecisionRecorder["record"]>[0]): Promise<void> => {
+    decisionSummaries.push(`${input.title}: ${input.rationale_summary}`);
     await decisions?.record(input);
   };
   const setStage = async (id: Parameters<typeof markStage>[1], status: Parameters<typeof markStage>[2], error?: string): Promise<void> => {
@@ -245,6 +248,17 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
           "candidate triage"
         )
       : null;
+    await recordDecision({
+      stage_id: "candidate_triage",
+      title: "Candidate triage scope selected",
+      rationale_summary: agentTriage
+        ? `Marked ${agentTriage.must_read_core_papers.length} must-read papers, ${agentTriage.weakly_related.length} weakly-related papers, and ${agentTriage.duplicates.length} duplicates.`
+        : `Candidate triage was skipped because ${candidates.length ? "fewer than 8 core candidates were available" : "no literature candidates were collected"}.`,
+      inputs_considered: [`candidate_count=${candidates.length}`, `triage_gate=${candidateTriageGatePassed ? "passed" : "blocked"}`],
+      evidence_refs: [{ artifact: "docs/relative_work/candidates.json" }, { artifact: "docs/relative_work/triage_report.md" }],
+      alternatives: [{ option: "Treat all candidates as equally important", why_not: "Reviewer-facing related work needs explicit must-read, weakly-related, duplicate, and missing-area distinctions." }],
+      confidence: candidateTriageGatePassed && agentTriage ? "medium" : "high"
+    });
     await setStage("candidate_triage", candidateTriageGatePassed ? "completed" : "skipped", candidateTriageGatePassed ? undefined : candidates.length ? "At least 8 core papers are required before triage." : "No literature candidates were collected.");
   }
 
@@ -293,6 +307,19 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
   const verifiedEvidenceRows = evidenceRows.filter((row) => row.status === "verified" && row.page && row.quote && row.chunk_id);
   const hasVerifiedPdfEvidence = verifiedEvidenceRows.length > 0;
   const noteArtifacts = { ...evidenceRowsMarkdown(evidenceRows), ...paperNoteArtifacts(agentPaperNotes, chunks) };
+  if (!canResumePdfReading) {
+    await recordDecision({
+      stage_id: "pdf_reading",
+      title: "PDF evidence availability summarized",
+      rationale_summary: chunks.length
+        ? `Read ${chunks.length} PDF chunks and found ${verifiedEvidenceRows.length} verified evidence rows with page, quote, and chunk id.`
+        : "PDF reading was skipped because no downloaded PDFs were available; downstream evidence remains planned rather than verified.",
+      inputs_considered: [`pdf_chunks=${chunks.length}`, `verified_evidence_rows=${verifiedEvidenceRows.length}`, `paper_notes=${agentPaperNotes.length}`],
+      evidence_refs: [{ artifact: "docs/reference/pdf_chunks.json" }, { artifact: "docs/reference/claim_evidence_matrix.csv" }],
+      alternatives: [{ option: "Infer evidence from metadata only", why_not: "The evidence gate requires page, quote, and chunk ids before claims can be treated as verified." }],
+      confidence: hasVerifiedPdfEvidence ? "medium" : "high"
+    });
+  }
   let agentRelatedWork: RelatedWorkAnalysis | null = null;
   const canResumeAgentAnalyses = hasVerifiedPdfEvidence && agentPaperNotes.length > 0;
   const relatedWorkResumed = (await canResumeStage("related_work_analysis")) && canResumeAgentAnalyses;
@@ -312,6 +339,17 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
           )
         : null;
     await setStage("related_work_analysis", agentRelatedWork ? "completed" : "skipped", agentRelatedWork ? undefined : "No verified paper notes are available for related-work agent analysis.");
+    await recordDecision({
+      stage_id: "related_work_analysis",
+      title: "Related work synthesis scope selected",
+      rationale_summary: agentRelatedWork
+        ? `Synthesized ${agentRelatedWork.topic_clusters.length} topic clusters and ${agentRelatedWork.reviewer_expected_baselines.length} reviewer-expected baselines from verified paper notes.`
+        : "Related-work agent analysis was skipped because verified paper notes were unavailable.",
+      inputs_considered: [`verified_pdf_evidence=${hasVerifiedPdfEvidence}`, `paper_notes=${agentPaperNotes.length}`],
+      evidence_refs: [{ artifact: "docs/relative_work/related_work_matrix.csv" }, { artifact: "docs/relative_work/topic_clusters.md" }],
+      alternatives: [{ option: "Write a narrative survey without verified notes", why_not: "The runtime contract requires evidence-gated related-work synthesis." }],
+      confidence: agentRelatedWork ? "medium" : "high"
+    });
     relatedWorkAvailable = Boolean(agentRelatedWork);
   }
 
@@ -334,6 +372,17 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
           )
         : null;
     await setStage("novelty_analysis", agentNovelty ? "completed" : "skipped", agentNovelty ? undefined : "Verified related-work analysis is required before novelty agent analysis.");
+    await recordDecision({
+      stage_id: "novelty_analysis",
+      title: "Novelty collision risk assessed",
+      rationale_summary: agentNovelty
+        ? `Agent novelty review assessed collision risk as ${agentNovelty.collision_risk} with ${agentNovelty.novelty_gaps.length} defensible gaps.`
+        : `Deterministic novelty assessment marked collision risk as ${novelty.collision_risk}: ${novelty.reasons.join("; ") || "no detailed collision reasons"}.`,
+      inputs_considered: [`collision_risk=${agentNovelty?.collision_risk ?? novelty.collision_risk}`, `related_work_available=${relatedWorkAvailable}`],
+      evidence_refs: [{ artifact: "docs/relative_work/novelty_gap_matrix.md" }, { artifact: "docs/relative_work/collision_risk.md" }],
+      alternatives: [{ option: "Assume novelty from the initial idea", why_not: "Novelty must be checked against related work and evidence rows before paper claims are upgraded." }],
+      confidence: agentNovelty ? "medium" : "high"
+    });
     noveltyAvailable = Boolean(agentNovelty);
   }
 
@@ -434,6 +483,17 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
         )
       : null;
     await setStage("better_idea_synthesis", agentStrategy ? "completed" : "skipped", agentStrategy ? undefined : "Research strategy is blocked until verified related work and novelty analysis exist.");
+    await recordDecision({
+      stage_id: "better_idea_synthesis",
+      title: "Research strategy revision selected",
+      rationale_summary: agentStrategy
+        ? `Revised the idea around hypothesis "${agentStrategy.central_hypothesis}" with ${agentStrategy.baselines.length} baselines, ${agentStrategy.datasets.length} datasets, and ${agentStrategy.metrics.length} metrics.`
+        : "Better-idea synthesis was blocked until verified related work, novelty analysis, and PDF-backed evidence are available.",
+      inputs_considered: [`verified_pdf_evidence=${hasVerifiedPdfEvidence}`, `related_work_available=${relatedWorkAvailable}`, `novelty_available=${noveltyAvailable}`],
+      evidence_refs: [{ artifact: "docs/proposal/revised_idea.md" }, { artifact: "docs/proposal/experiment_plan.md" }],
+      alternatives: [{ option: "Keep the initial idea unchanged", why_not: "The runtime plan requires evidence-driven idea revision when enough related-work and novelty context exists." }],
+      confidence: agentStrategy ? "medium" : "high"
+    });
   }
 
   let templatePackage: PipelineTemplatePackage;
@@ -505,7 +565,8 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     metricRecommendations,
     claimEvidenceRows,
     artifacts,
-    warnings: [...warnings, ...(options.allowNetwork ? [] : ["Network disabled; literature candidates require a later search stage."])]
+    warnings: [...warnings, ...(options.allowNetwork ? [] : ["Network disabled; literature candidates require a later search stage."])],
+    decisionSummaries
   };
   await emitRuntimeEvent({ type: "run.completed", run_id: runId, timestamp: runtimeTimestamp() });
   return result;
