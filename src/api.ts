@@ -3,7 +3,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { buildGithubExportPlan } from "./github-export.js";
 import { generateResearchRepo, resumeResearchRepo } from "./generator.js";
-import { searchLiterature } from "./literature.js";
+import { paperCandidateToRecord, searchLiteratureAsync } from "./literature.js";
 import { safeProviderReport, providerSchema } from "./providers.js";
 import { diagnoseIdea } from "./scoring.js";
 import { status as projectStatus, validate as validateProject } from "./state.js";
@@ -141,11 +141,18 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     return;
   }
   if (path === "/literature/search") {
-    const [records, tasks] = searchLiterature(requiredString(body.query, "query"), {
+    const result = await searchLiteratureAsync({
+      query: requiredString(body.query, "query"),
       allowNetwork: Boolean(body.allow_network),
       limit: numberValue(body.limit, 10)
     });
-    sendJson(response, 200, { records, tasks });
+    sendJson(response, 200, {
+      candidates: result.candidates,
+      warnings: result.warnings,
+      search_report: result.search_report,
+      records: result.candidates.map((candidate, index) => paperCandidateToRecord(candidate, index)),
+      tasks: result.warnings
+    });
     return;
   }
   if (path === "/score") {

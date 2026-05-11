@@ -3,6 +3,7 @@ export * from "./api-contract.js";
 export * from "./generator.js";
 export * from "./state.js";
 export * from "./scoring.js";
+export * from "./literature.js";
 export * from "./venues.js";
 export * from "./models.js";
 export * from "./providers.js";
@@ -12,6 +13,9 @@ export * from "./agents/schemas.js";
 export * from "./pipeline/research-pipeline.js";
 export * from "./pipeline/stage-state.js";
 export * from "./pipeline/stages.js";
+export * from "./skills/literature/search.js";
+export * from "./skills/literature/dedupe.js";
+export * from "./skills/literature/rank.js";
 export {
   AuthStorage,
   CodexOAuthClient,

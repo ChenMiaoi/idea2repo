@@ -1,3 +1,7 @@
+import type { PaperCandidate } from "./skills/literature/types.js";
+import type { LiteratureSearchOptions, LiteratureSearchResult } from "./skills/literature/types.js";
+import { searchLiteratureDeterministic } from "./skills/literature/search.js";
+
 export type PaperRecord = {
   paper_id: string;
   title: string;
@@ -27,6 +31,12 @@ export type PaperRecord = {
   useful_for?: string;
 };
 
+export type { PaperCandidate as LiteraturePaperCandidate, LiteratureSearchOptions, LiteratureSearchResult };
+
+export async function searchLiteratureAsync(options: LiteratureSearchOptions): Promise<LiteratureSearchResult> {
+  return searchLiteratureDeterministic(options);
+}
+
 export function validatePaper(record: PaperRecord): string[] {
   const errors: string[] = [];
   if (!record.paper_id) errors.push("paper_id is required");
@@ -44,7 +54,25 @@ export function verifiedRecords(records: PaperRecord[] = []): PaperRecord[] {
 
 export function searchLiterature(query: string, options: { allowNetwork?: boolean; limit?: number } = {}): [PaperRecord[], string[]] {
   if (!options.allowNetwork) return [[], [`Network disabled. Search manually: ${query}`]];
-  return [[], [`Network search is not enabled in the TypeScript port yet. Search manually: ${query}`]];
+  return [[], [`Use searchLiteratureAsync() for network search. Search manually if running in a synchronous context: ${query}`]];
+}
+
+export function paperCandidateToRecord(candidate: PaperCandidate, index = 0): PaperRecord {
+  const year = candidate.year ?? new Date().getUTCFullYear();
+  return {
+    paper_id: slugPart(candidate.candidate_id || candidate.title),
+    title: candidate.title,
+    venue: candidate.venue ?? "unknown",
+    year,
+    authors: candidate.authors.length ? candidate.authors : ["Unknown"],
+    source_url: candidate.source_urls[0] ?? "https://example.invalid/unverified-paper",
+    bibtex_key: bibtexKey(candidate, index),
+    abstract: candidate.abstract,
+    doi: candidate.doi,
+    openalex_id: candidate.openalex_id,
+    dblp_key: candidate.dblp_key,
+    arxiv_id: candidate.arxiv_id
+  };
 }
 
 export function relatedWorkCsv(records: PaperRecord[] = []): string {
@@ -146,4 +174,15 @@ export function csv(rows: string[][]): string {
 
 function escapeCsv(value: string): string {
   return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+function bibtexKey(candidate: PaperCandidate, index: number): string {
+  const author = slugPart(candidate.authors[0] ?? "paper");
+  const year = candidate.year ?? "nd";
+  const title = slugPart(candidate.title).split("-").slice(0, 3).join("");
+  return `${author}${year}${title || index + 1}`.replace(/[^a-zA-Z0-9:_-]/g, "");
+}
+
+function slugPart(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "paper";
 }

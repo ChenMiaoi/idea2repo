@@ -4,9 +4,10 @@ import { stdin as input, stdout as output } from "node:process";
 import { pathToFileURL } from "node:url";
 import { buildGithubExportPlan, publishWithGh } from "./github-export.js";
 import { generateResearchRepo, resumeResearchRepo, type GenerateOptions } from "./generator.js";
+import { searchLiteratureAsync } from "./literature.js";
 import { PermissionDeniedError, type PermissionPolicy } from "./permissions.js";
 import { canonicalProvider, providerSchema, safeProviderReport } from "./providers.js";
-import { status as projectStatus, validate as validateProject } from "./state.js";
+import { ensureChild, exists, readManifest, status as projectStatus, validate as validateProject, writeText } from "./state.js";
 import { loadVenueDatabase, validateVenueDatabase } from "./venues.js";
 import { inspectWorkspace } from "./workspace.js";
 import { startApiServer } from "./api.js";
@@ -14,8 +15,11 @@ import { AuthStorage, openaiCodexOAuthProvider } from "./auth/codex-oauth.js";
 import { runTui } from "./tui/App.js";
 import { loadCodexModelCatalog } from "./models.js";
 import { proxyEnvForChild } from "./proxy.js";
+import { runResearchPipeline } from "./pipeline/research-pipeline.js";
+import { normalizeSources } from "./skills/literature/search.js";
+import type { LiteratureSource } from "./skills/literature/types.js";
 
-const commandNames = new Set(["research", "generate", "status", "resume", "validate", "doctor", "auth", "login", "logout", "provider", "venues", "github", "api", "web"]);
+const commandNames = new Set(["research", "generate", "literature", "status", "resume", "validate", "doctor", "auth", "login", "logout", "provider", "venues", "github", "api", "web"]);
 
 type ParsedArgs = {
   _: string[];
@@ -42,6 +46,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       case "generate":
       case "research":
         return await commandGenerate(rest);
+      case "literature":
+        return await commandLiterature(rest);
       case "status":
         return await commandStatus(rest);
       case "resume":
@@ -110,6 +116,45 @@ async function commandGenerate(argv: string[]): Promise<number> {
   console.log("Main report: docs/diagnosis/ccf_a_readiness_report.md");
   console.log(`Execution plan: docs/execution_plan/${weeks}_week_plan.md`);
   return 0;
+}
+
+async function commandLiterature(argv: string[]): Promise<number> {
+  const action = argv[0] ?? "search";
+  const parsed = parseArgs(argv.slice(1));
+  const root = stringFlag(parsed, "output") ?? "generated_repos/idea2repo-project";
+  if (action === "plan") {
+    const idea = await ideaFromArgsOrManifest(parsed, root);
+    const pipeline = await runResearchPipeline(idea, {
+      requestedDomains: valuesFlag(parsed, "domain"),
+      timelineWeeks: numberFlag(parsed, "weeks", 12),
+      resources: valuesFlag(parsed, "resource"),
+      maxPapers: numberFlag(parsed, "max-papers", 20),
+      provider: "offline",
+      strictCcfA: hasFlag(parsed, "strict-ccf-a")
+    });
+    await writeText(ensureChild(root, "docs/relative_work/search_plan.json"), JSON.stringify(pipeline.searchPlan, null, 2) + "\n");
+    await writeText(ensureChild(root, "docs/idea/idea_brief.md"), pipeline.artifacts["docs/idea/idea_brief.md"] ?? `# Idea Brief\n\n${idea}\n`);
+    console.log(`Literature search plan written: ${ensureChild(root, "docs/relative_work/search_plan.json")}`);
+    console.log(`Precision queries: ${pipeline.searchPlan.precision_queries.length}`);
+    console.log(`Recall queries: ${pipeline.searchPlan.recall_queries.length}`);
+    return 0;
+  }
+  if (action === "search") {
+    const queries = await queriesFromArgsOrPlan(parsed, root);
+    const result = await searchLiteratureAsync({
+      queries,
+      allowNetwork: hasFlag(parsed, "allow-network"),
+      limit: numberFlag(parsed, "max-papers", numberFlag(parsed, "limit", 20)),
+      sources: normalizeSources(valuesFlag(parsed, "source") as LiteratureSource[])
+    });
+    await writeText(ensureChild(root, "docs/relative_work/candidates.json"), JSON.stringify(result.candidates, null, 2) + "\n");
+    await writeText(ensureChild(root, "docs/relative_work/search_report.md"), result.search_report);
+    console.log(`Literature candidates written: ${ensureChild(root, "docs/relative_work/candidates.json")}`);
+    console.log(`Candidates: ${result.candidates.length}`);
+    if (result.warnings.length) console.log(`Warnings: ${result.warnings.length}`);
+    return 0;
+  }
+  throw new Error(`unknown literature action: ${action}`);
 }
 
 async function commandStatus(argv: string[]): Promise<number> {
@@ -334,6 +379,31 @@ function numberFlag(parsed: ParsedArgs, name: string, fallback: number): number 
   return Number.isFinite(value) ? value : fallback;
 }
 
+async function ideaFromArgsOrManifest(parsed: ParsedArgs, root: string): Promise<string> {
+  const idea = parsed._.join(" ").trim() || stringFlag(parsed, "idea");
+  if (idea) return idea;
+  try {
+    return (await readManifest(root)).request.idea;
+  } catch {
+    return "local research idea";
+  }
+}
+
+async function queriesFromArgsOrPlan(parsed: ParsedArgs, root: string): Promise<string[]> {
+  const direct = [...valuesFlag(parsed, "query"), parsed._.join(" ").trim()].filter(Boolean);
+  if (direct.length) return direct;
+  const planPath = ensureChild(root, "docs/relative_work/search_plan.json");
+  if (await exists(planPath)) {
+    const plan = JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(planPath, "utf8"))) as {
+      precision_queries?: Array<{ query?: string }>;
+      recall_queries?: Array<{ query?: string }>;
+    };
+    const queries = [...(plan.precision_queries ?? []), ...(plan.recall_queries ?? [])].map((entry) => entry.query?.trim() ?? "").filter(Boolean);
+    if (queries.length) return queries;
+  }
+  return ["research agent benchmark baseline dataset metric"];
+}
+
 function policyFromFlags(parsed: ParsedArgs): PermissionPolicy {
   return {
     allowWrite: true,
@@ -352,6 +422,7 @@ Usage:
   idea2repo "research idea" [--output dir] [--offline] [--stack python|ts]
   idea2repo research "research idea" [options]
   idea2repo generate "research idea" [options]  # legacy alias
+  idea2repo literature plan|search [--output dir] [--allow-network]
   idea2repo status|resume|validate [--output dir]
   idea2repo auth status|login|logout
   idea2repo provider list|show|validate
@@ -369,6 +440,9 @@ Options:
   --provider id        openai-codex, openai-codex-oauth, openai-codex-cli, offline
   --model id           Codex model id
   --reasoning effort   Codex reasoning effort
+  --max-papers n       Literature search result cap
+  --query value        Literature query; repeatable
+  --source value       Literature source; repeatable
 `);
 }
 
