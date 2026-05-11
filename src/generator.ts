@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { readdir } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { evidenceGateMarkdown, evaluateEvidenceGate, type EvidenceGate } from "./evidence.js";
 import { type PaperRecord, literatureTasksMd, referencesBib, relatedWorkCsv, csv } from "./literature.js";
@@ -17,7 +17,7 @@ import {
 } from "./providers.js";
 import { diagnoseIdea, type Diagnosis } from "./scoring.js";
 import { safeSecurityReframe, securityGuardrailMarkdown } from "./security.js";
-import { appendRunLog, ensureChild, exists, readManifest, RUN_LOG_PATH, writeBinary, writeManifest, writeText } from "./state.js";
+import { appendRunLog, ensureChild, exists, readManifest, RUN_LOG_PATH, writeManifest, writeText } from "./state.js";
 import type { ProjectManifest, ResearchAnalysis } from "./types.js";
 import { inspectWorkspace } from "./workspace.js";
 import { runWorkflow, workflowSummary } from "./workflow.js";
@@ -25,6 +25,8 @@ import { CodexOAuthClient } from "./auth/codex-oauth.js";
 import { runResearchPipeline, type ResearchPipelineResult } from "./pipeline/research-pipeline.js";
 import { JsonlEventSink } from "./runtime/events.js";
 import { PlanEventSink } from "./runtime/plan.js";
+import { approvalPolicyFromPermissions } from "./runtime/approvals.js";
+import { createCoreToolRegistry, createToolContext, type ToolContext, type ToolRegistry } from "./runtime/tools.js";
 import { writeResearchPipelineState } from "./pipeline/stage-state.js";
 import { resolveTemplateProfile, templateDecisionMarkdown } from "./skills/templates/resolve.js";
 import { renderPaper } from "./skills/templates/render.js";
@@ -118,6 +120,22 @@ export async function generateResearchRepo(idea: string, output: string, options
   const runId = options.runId ?? randomUUID();
   const traceEvents = options.jsonlEvents ? new JsonlEventSink(join(root, ".idea2repo", "trace.jsonl")) : undefined;
   const runtimeEvents = options.runResearchPipeline ? new PlanEventSink(root, runId, traceEvents) : traceEvents;
+  const toolRegistry = createCoreToolRegistry();
+  const toolContext = createToolContext({
+    runId,
+    outputRoot: root,
+    events: runtimeEvents,
+    permissions: approvalPolicyFromPermissions(
+      {
+        allowWrite: policy.allowWrite,
+        allowOverwrite: policy.allowOverwrite,
+        allowNetwork: policy.allowNetwork,
+        allowPublish: policy.allowPublish,
+        allowShell: false
+      },
+      "generate"
+    )
+  });
   const pipeline = options.runResearchPipeline
     ? await runResearchPipeline(idea, {
         allowNetwork: Boolean(options.allowNetwork && policy.allowNetwork),
@@ -207,13 +225,16 @@ export async function generateResearchRepo(idea: string, output: string, options
     verifiedPapers,
     options
   });
-  if (templateArtifacts) Object.assign(fileMap, templateArtifacts.files);
+  if (templateArtifacts) {
+    Object.assign(fileMap, templateArtifacts.files);
+    delete fileMap["docs/submission/template_compliance_report.md"];
+    delete fileMap["docs/submission/anonymity_check.md"];
+  }
 
   const written: string[] = [];
   options.progressCallback?.("Artifacts: writing repository scaffold");
   for (const [relativePath, content] of Object.entries(fileMap)) {
-    const path = ensureChild(root, relativePath);
-    await writeGeneratedArtifact(path, relativePath, content);
+    const path = await writeGeneratedArtifact(toolRegistry, toolContext, relativePath, content);
     written.push(path);
   }
   if (pipeline) {
@@ -227,27 +248,30 @@ export async function generateResearchRepo(idea: string, output: string, options
       strict: options.strictCcfA
     });
     const compliancePath = ensureChild(root, "docs/submission/template_compliance_report.md");
-    await writeText(compliancePath, complianceMarkdown(compliance));
+    await writeGeneratedArtifact(toolRegistry, toolContext, "docs/submission/template_compliance_report.md", complianceMarkdown(compliance));
     written.push(compliancePath);
     const anonymityPath = ensureChild(root, "docs/submission/anonymity_check.md");
-    await writeText(anonymityPath, anonymityMarkdown(compliance));
+    await writeGeneratedArtifact(toolRegistry, toolContext, "docs/submission/anonymity_check.md", anonymityMarkdown(compliance));
     written.push(anonymityPath);
     if (options.compilePaper) {
       const compile = await compileRenderedPaper(root, templateArtifacts.profile);
       const compilePath = ensureChild(root, "docs/submission/compile_result.json");
-      await writeText(compilePath, JSON.stringify(compile, null, 2) + "\n");
-      written.push(compilePath, ensureChild(root, compile.log_path));
+      await adoptGeneratedArtifact(toolRegistry, toolContext, compile.log_path);
+      if (await exists(ensureChild(root, compile.pdf_path))) await adoptGeneratedArtifact(toolRegistry, toolContext, compile.pdf_path);
+      await writeGeneratedArtifact(toolRegistry, toolContext, "docs/submission/compile_result.json", JSON.stringify(compile, null, 2) + "\n");
+      written.push(compilePath, ensureChild(root, compile.log_path), ensureChild(root, compile.pdf_path));
     }
     if (options.runResearchPipeline || options.packageOverleaf) {
       const packaged = await packagePaper(root, { forOverleaf: true });
       const packagePath = ensureChild(root, "docs/submission/submission_package.json");
-      await writeText(packagePath, JSON.stringify(packaged, null, 2) + "\n");
+      for (const file of packaged.files) await adoptGeneratedArtifact(toolRegistry, toolContext, file.path);
+      await writeGeneratedArtifact(toolRegistry, toolContext, "docs/submission/submission_package.json", JSON.stringify(packaged, null, 2) + "\n");
       written.push(packagePath, ...packaged.files.map((file) => ensureChild(root, file.path)));
     }
   }
   for (const directory of emptyDirectories()) {
     const keepFile = ensureChild(root, join(directory, ".gitkeep"));
-    await writeText(keepFile, "");
+    await toolRegistry.execute("artifact.write", { path: join(directory, ".gitkeep"), content: "" }, toolContext);
     written.push(keepFile);
   }
 
@@ -298,12 +322,28 @@ export async function generateResearchRepo(idea: string, output: string, options
   };
 }
 
-async function writeGeneratedArtifact(path: string, relativePath: string, content: string): Promise<void> {
-  if (relativePath.endsWith(".zip")) {
-    await writeBinary(path, Buffer.from(content, "latin1"));
-    return;
-  }
-  await writeText(path, ensureTrailingNewline(content));
+async function writeGeneratedArtifact(registry: ToolRegistry, ctx: ToolContext, relativePath: string, content: string): Promise<string> {
+  await registry.execute("artifact.write", {
+    path: relativePath,
+    content: relativePath.endsWith(".zip") ? content : ensureTrailingNewline(content),
+    encoding: relativePath.endsWith(".zip") ? "latin1" : "utf8"
+  }, ctx);
+  return ensureChild(ctx.outputRoot, relativePath);
+}
+
+async function adoptGeneratedArtifact(registry: ToolRegistry, ctx: ToolContext, relativePath: string): Promise<string> {
+  const path = ensureChild(ctx.outputRoot, relativePath);
+  const raw = await readFile(path);
+  await registry.execute("artifact.adopt", {
+    path: relativePath,
+    bytes: raw.byteLength,
+    sha256: createArtifactSha256(raw)
+  }, ctx);
+  return path;
+}
+
+function createArtifactSha256(content: Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
 }
 
 export async function resumeResearchRepo(output: string, options: { force?: boolean; permissionPolicy?: PermissionPolicy } = {}): Promise<GeneratedProject> {
