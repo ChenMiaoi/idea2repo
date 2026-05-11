@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildPdfChunkIndex, type PdfChunkIndexEntry } from "./chunk.js";
-import { sha256, type PdfManifestRecord } from "./provenance.js";
+import { licenseHint, sha256, type PdfManifestRecord } from "./provenance.js";
+import { assertPdf } from "./validate.js";
 
 export type TrustedPdfChunkResult = {
   chunks: PdfChunkIndexEntry[];
@@ -44,7 +45,10 @@ export async function validateDownloadedPdfManifest(root: string, manifest: PdfM
       !record.downloaded_at ||
       !record.license_hint ||
       typeof record.bytes !== "number" ||
-      typeof record.title_match_score !== "number"
+      typeof record.title_match_score !== "number" ||
+      record.title_match_score < 0.2 ||
+      record.license_hint === "unknown" ||
+      licenseHint(record.source_url) !== record.license_hint
     ) {
       return false;
     }
@@ -56,6 +60,11 @@ export async function validateDownloadedPdfManifest(root: string, manifest: PdfM
     }
     if (buffer.byteLength !== record.bytes) return false;
     if (sha256(buffer) !== record.pdf_sha256) return false;
+    try {
+      assertPdf(buffer);
+    } catch {
+      return false;
+    }
   }
   return true;
 }

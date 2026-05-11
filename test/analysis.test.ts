@@ -8,6 +8,7 @@ import { evidenceRowsMarkdown, extractEvidenceRows } from "../src/skills/analysi
 import { relatedWorkMatrixCsv } from "../src/skills/analysis/related-work-matrix.js";
 import { assessNovelty } from "../src/skills/analysis/novelty-matrix.js";
 import { strictCcfAScore } from "../src/skills/analysis/ccf-a-score.js";
+import { sha256 } from "../src/skills/pdf/provenance.js";
 
 test("evidence extraction requires page quote and chunk id", () => {
   const rows = extractEvidenceRows([{ paper_id: "paper1", page: 2, chunk_id: "p2-c1", text: "This paper reports a useful benchmark result with limitations." }]);
@@ -190,10 +191,56 @@ test("papers analyze rejects downloaded manifest records missing pdf path", asyn
   }
 });
 
+test("papers analyze rejects low-title-match downloaded manifest records", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-analysis-low-title-match-"));
+  const output = join(root, "project");
+  try {
+    const pdf = Buffer.from("%PDF-1.4\n/Type /Page\nstream\nfabricated baseline dataset metric evidence\nendstream\n%%EOF\n", "latin1");
+    await writeBinaryArtifact(output, "docs/reference/pdfs/paper-1.pdf", pdf);
+    await writeArtifact(output, "docs/relative_work/candidates.json", JSON.stringify([
+      {
+        candidate_id: "paper-1",
+        title: "Agent Benchmark Evaluation",
+        authors: ["Ada Lovelace"],
+        year: 2026,
+        source_urls: ["https://example.org/paper"],
+        pdf_urls: [],
+        retrieval_sources: ["test"],
+        retrieval_queries: ["agent benchmark"],
+        confidence: "high"
+      }
+    ], null, 2) + "\n");
+    await writeArtifact(output, "docs/reference/pdf_manifest.json", JSON.stringify([
+      {
+        paper_id: "paper-1",
+        pdf_path: "docs/reference/pdfs/paper-1.pdf",
+        pdf_sha256: sha256(pdf),
+        source_url: "https://arxiv.org/pdf/1234.56789",
+        downloaded_at: "2026-05-11T00:00:00Z",
+        bytes: pdf.byteLength,
+        license_hint: "arXiv",
+        title_match_score: 0,
+        status: "downloaded"
+      }
+    ], null, 2) + "\n");
+    assert.equal(await main(["papers", "analyze", "--output", output]), 0);
+    assert.deepEqual(JSON.parse(await readFile(join(output, "docs/reference/pdf_chunks.json"), "utf8")), []);
+    assert.doesNotMatch(await readFile(join(output, "docs/relative_work/related_work_matrix.csv"), "utf8"), /downloaded/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function writeArtifact(root: string, relativePath: string, content: string): Promise<void> {
   const path = join(root, relativePath);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, content, "utf8");
+}
+
+async function writeBinaryArtifact(root: string, relativePath: string, content: Buffer): Promise<void> {
+  const path = join(root, relativePath);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, content);
 }
 
 function candidate(title: string) {

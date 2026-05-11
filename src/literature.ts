@@ -68,8 +68,19 @@ export function verifiedRecords(records: PaperRecord[] = []): PaperRecord[] {
 }
 
 export function searchLiterature(query: string, options: { allowNetwork?: boolean; limit?: number } = {}): [PaperRecord[], string[]] {
-  if (!options.allowNetwork) return [[], [`Network disabled. Search manually: ${query}`]];
-  return [[], [`Use searchLiteratureAsync() for network search. Search manually if running in a synchronous context: ${query}`]];
+  const queries = [...new Set([
+    query,
+    `${query} survey`,
+    `${query} baseline dataset metric`,
+    `${query} related work benchmark`
+  ].map((item) => item.trim()).filter(Boolean))];
+  const limit = options.limit ?? 20;
+  const tasks = queries.slice(0, Math.max(1, Math.min(limit, queries.length))).map((item) =>
+    options.allowNetwork
+      ? `Run adapter-backed literature search for: ${item}`
+      : `Network disabled. Search manually: ${item}`
+  );
+  return [[], tasks];
 }
 
 export function paperCandidateToRecord(candidate: PaperCandidate, index = 0): PaperRecord {

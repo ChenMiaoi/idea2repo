@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { dedupeCandidates } from "../src/skills/literature/dedupe.js";
 import { rankCandidates } from "../src/skills/literature/rank.js";
-import { searchLiteratureAsync, paperCandidateToRecord } from "../src/literature.js";
+import { searchLiterature, searchLiteratureAsync, paperCandidateToRecord } from "../src/literature.js";
 import { normalizeSources } from "../src/skills/literature/search.js";
 import type { LiteraturePaperCandidate } from "../src/literature.js";
 
@@ -80,6 +80,14 @@ test("literature search records offline manual tasks when network is disabled", 
   const result = await searchLiteratureAsync({ query: "agent benchmark", allowNetwork: false });
   assert.equal(result.candidates.length, 0);
   assert.match(result.warnings[0] ?? "", /Network disabled/);
+});
+
+test("legacy searchLiterature returns deterministic staged search tasks", () => {
+  const [records, tasks] = searchLiterature("agent benchmark", { allowNetwork: true });
+  assert.deepEqual(records, []);
+  assert.match(tasks.join("\n"), /adapter-backed literature search/);
+  assert.match(tasks.join("\n"), /baseline dataset metric/);
+  assert.doesNotMatch(tasks.join("\n"), /Use searchLiteratureAsync/);
 });
 
 test("literature source validation rejects unknown adapters", () => {
