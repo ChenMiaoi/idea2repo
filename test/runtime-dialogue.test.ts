@@ -44,6 +44,7 @@ test("clarification generation limits active questions and preserves scoring con
 test("clarification answers update idea profile and append refreshed score snapshots", async () => {
   const root = await mkdtemp(join(tmpdir(), "idea2repo-dialogue-"));
   try {
+    const emitted: Array<{ type: string; confidence?: number }> = [];
     await writeRunState(root, createRunState({
       runId: "run-1",
       idea: "Build an agent benchmark with a missing evaluation dataset.",
@@ -86,12 +87,15 @@ test("clarification answers update idea profile and append refreshed score snaps
       runId: "run-1",
       questionId: datasetQuestion.id,
       answer: "Use AgentBench plus a curated failure-case split as the primary benchmark.",
-      timestamp: "2026-05-11T00:01:00Z"
+      timestamp: "2026-05-11T00:01:00Z",
+      events: { emit: (event) => { emitted.push(event); } }
     });
 
     assert.equal(result.question.status, "answered");
     assert.equal(result.score_input.hasDatasetOrBenchmark, true);
     assert.equal(result.score.caps.some((cap) => cap.reason === "No dataset/benchmark"), false);
+    assert.equal(result.score_snapshot.confidence, result.score.confidence);
+    assert.equal(emitted.find((event) => event.type === "score.updated")?.confidence, result.score.confidence);
     assert.ok(result.question.answer_effect?.resolved_blockers.includes("No dataset/benchmark"));
     assert.match(result.question.answer_effect?.profile_patch.updated_idea ?? "", /Clarification \(dataset or benchmark\)/);
     assert.match(result.profile.updated_idea, /AgentBench/);

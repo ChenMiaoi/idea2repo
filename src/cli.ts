@@ -246,6 +246,7 @@ async function commandScore(argv: string[]): Promise<number> {
     verifiedRelatedWorkCount: verifiedPaperCount,
     pdfReadCount: new Set(chunks.map((chunk) => chunk.paper_id)).size,
     corePaperCount: verifiedPaperCount,
+    evidenceRefs: evidenceItems.map((item) => item.id),
     hasStrongBaseline: text.includes("baseline"),
     hasDatasetOrBenchmark: text.includes("dataset") || text.includes("benchmark"),
     hasMetric: text.includes("metric") || text.includes("accuracy") || text.includes("latency"),

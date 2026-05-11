@@ -592,6 +592,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     verifiedRelatedWorkCount: verifiedPaperCount,
     pdfReadCount: new Set(chunks.map((chunk) => chunk.paper_id)).size,
     corePaperCount: verifiedPaperCount,
+    evidenceRefs: evidenceItems.map((item) => item.id),
     hasStrongBaseline: evidence.includes("baseline"),
     hasDatasetOrBenchmark: evidence.includes("dataset") || evidence.includes("benchmark"),
     hasMetric: evidence.includes("metric") || evidence.includes("accuracy") || evidence.includes("latency"),
@@ -607,13 +608,11 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     hasStrongMlBaselines: evidence.includes("baseline")
   };
   const score = await toolRegistry.execute<StrictScoreInput, StrictScoreResult>("ccf_a.score", scoreInput, toolContext);
-  const scoreConfidence = hasVerifiedPdfEvidence ? 0.65 : 0.4;
   if (options.outputRoot) {
     await appendScoreSnapshot(outputRoot, scoreSnapshotFromStrictScore({
       runId,
       stageId: "ccf_a_strict_scoring",
       score,
-      confidence: scoreConfidence,
       evidenceRefs: evidenceItems.map((item) => item.id)
     }));
   }
@@ -623,7 +622,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     stage_id: "ccf_a_strict_scoring",
     score: score.total,
     max_score: 100,
-    confidence: scoreConfidence,
+    confidence: score.confidence,
     hard_blockers: score.caps.map((cap) => cap.reason),
     timestamp: runtimeTimestamp()
   });

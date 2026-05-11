@@ -67,10 +67,13 @@ export type ScoreSnapshot = {
   confidence: number;
   dimensions: ScoreDimensionSnapshot[];
   hard_blockers: string[];
+  soft_weaknesses: string[];
   caps: StrictScoreResult["caps"];
   evidence_refs: string[];
   missing_evidence: string[];
   recommended_actions: string[];
+  path_to_70: string[];
+  path_to_80: string[];
   timestamp: string;
 };
 
@@ -215,8 +218,9 @@ export function scoreSnapshotFromStrictScore(input: {
   timestamp?: string;
 }): ScoreSnapshot {
   const timestamp = input.timestamp ?? runtimeTimestamp();
-  const hardBlockers = input.score.caps.map((cap) => cap.reason);
+  const hardBlockers = input.score.hard_blockers ?? input.score.caps.map((cap) => cap.reason);
   const recommendedActions = hardBlockers.map(actionForMissingEvidence);
+  const confidence = input.confidence ?? input.score.confidence ?? (input.evidenceRefs?.length ? 0.65 : 0.4);
   return {
     id: `${input.runId}:${input.stageId ?? "ccf_a_strict_scoring"}:${stableHash(`${timestamp}:${input.score.total}:${hardBlockers.join("|")}`)}`,
     run_id: input.runId,
@@ -224,23 +228,38 @@ export function scoreSnapshotFromStrictScore(input: {
     source: "strict_ccf_a",
     score: input.score.total,
     max_score: 100,
-    confidence: input.confidence ?? (input.evidenceRefs?.length ? 0.65 : 0.4),
-    dimensions: Object.entries(input.score.dimensions).map(([name, value]) => ({
-      name,
-      score: value,
-      max_score: strictDimensionMax(name, value),
-      confidence: input.confidence ?? (input.evidenceRefs?.length ? 0.65 : 0.4),
-      rationale: `Strict rubric assigned ${value} points for ${name}.`,
-      positive_evidence: input.evidenceRefs ?? [],
-      negative_evidence: [],
-      missing_evidence: hardBlockers,
-      recommended_actions: recommendedActions
-    })),
+    confidence,
+    dimensions: input.score.score_dimensions?.length
+      ? input.score.score_dimensions.map((dimension) => ({
+          name: dimension.name,
+          score: dimension.score,
+          max_score: dimension.maxScore,
+          confidence: dimension.confidence,
+          rationale: dimension.rationale,
+          positive_evidence: dimension.positiveEvidence,
+          negative_evidence: dimension.negativeEvidence,
+          missing_evidence: dimension.missingEvidence,
+          recommended_actions: dimension.recommendedActions
+        }))
+      : Object.entries(input.score.dimensions).map(([name, value]) => ({
+          name,
+          score: value,
+          max_score: strictDimensionMax(name, value),
+          confidence,
+          rationale: `Strict rubric assigned ${value} points for ${name}.`,
+          positive_evidence: input.evidenceRefs ?? [],
+          negative_evidence: [],
+          missing_evidence: hardBlockers,
+          recommended_actions: recommendedActions
+        })),
     hard_blockers: hardBlockers,
+    soft_weaknesses: input.score.soft_weaknesses ?? [],
     caps: input.score.caps,
     evidence_refs: input.evidenceRefs ?? [],
-    missing_evidence: hardBlockers,
-    recommended_actions: recommendedActions,
+    missing_evidence: [...new Set([...(input.score.score_dimensions ?? []).flatMap((dimension) => dimension.missingEvidence), ...hardBlockers])],
+    recommended_actions: [...new Set([...(input.score.path_to_70 ?? []), ...recommendedActions])],
+    path_to_70: input.score.path_to_70 ?? recommendedActions,
+    path_to_80: input.score.path_to_80 ?? recommendedActions,
     timestamp
   };
 }

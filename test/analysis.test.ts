@@ -7,7 +7,7 @@ import { main } from "../src/cli.js";
 import { evidenceRowsMarkdown, extractEvidenceRows } from "../src/skills/analysis/evidence-extract.js";
 import { relatedWorkMatrixCsv } from "../src/skills/analysis/related-work-matrix.js";
 import { assessNovelty, noveltyMatrixMarkdown } from "../src/skills/analysis/novelty-matrix.js";
-import { strictCcfAScore } from "../src/skills/analysis/ccf-a-score.js";
+import { strictCcfAScore, strictScoreMarkdown } from "../src/skills/analysis/ccf-a-score.js";
 import { sha256 } from "../src/skills/pdf/provenance.js";
 
 test("evidence extraction requires page quote and chunk id", () => {
@@ -136,7 +136,47 @@ test("strict CCF-A score applies all evidence cap rules", () => {
     const score = strictCcfAScore(input);
     assert.ok(score.total <= cap, `${reason} should cap total at ${cap}`);
     assert.ok(score.caps.some((item) => item.reason === reason));
+    assert.ok(score.hard_blockers.includes(reason));
   }
+});
+
+test("strict CCF-A score reports evidence-backed dimensions and target paths", () => {
+  const score = strictCcfAScore({
+    verifiedRelatedWorkCount: 2,
+    pdfReadCount: 1,
+    corePaperCount: 2,
+    evidenceRefs: ["e1", "e2"],
+    hasStrongBaseline: true,
+    hasDatasetOrBenchmark: false,
+    hasMetric: true,
+    hasExecutableExperimentPlan: false,
+    highPriorWorkCollision: false,
+    hasScientificHypothesis: true,
+    venueRequiresThreatModel: true,
+    hasThreatModel: false
+  });
+
+  assert.equal(score.score_dimensions.length, 8);
+  assert.equal(score.score_dimensions.reduce((sum, dimension) => sum + dimension.maxScore, 0), 100);
+  assert.ok(Object.hasOwn(score.dimensions, "novelty_after_related_work"));
+  assert.ok(Object.hasOwn(score.dimensions, "baseline_dataset_metric"));
+  assert.ok(Object.hasOwn(score.dimensions, "paper_story"));
+  assert.ok(score.confidence > 0 && score.confidence <= 0.9);
+  assert.ok(score.hard_blockers.includes("No dataset/benchmark"));
+  assert.ok(score.soft_weaknesses.length > 0);
+  assert.ok(score.path_to_70.some((action) => /dataset|benchmark|experiment|related/i.test(action)));
+  assert.ok(score.path_to_80.some((action) => /ablations|provenance|related|dataset|experiment/i.test(action)));
+  const evaluation = score.score_dimensions.find((dimension) => dimension.name === "Evaluation Feasibility");
+  assert.ok(evaluation);
+  assert.deepEqual(evaluation.positiveEvidence, ["e1", "e2"]);
+  assert.ok(evaluation.missingEvidence.includes("Concrete dataset or benchmark"));
+  assert.ok(evaluation.recommendedActions.length > 0);
+  assert.equal(score.score_dimensions.flatMap((dimension) => dimension.positiveEvidence).every((ref) => /^e\d+$/.test(ref)), true);
+  assert.equal(score.score_dimensions.flatMap((dimension) => dimension.negativeEvidence).length, 0);
+  const markdown = strictScoreMarkdown(score);
+  assert.match(markdown, /Evidence-Backed Dimensions/);
+  assert.match(markdown, /Possible Path To 70\+/);
+  assert.match(markdown, /Possible Path To 80\+/);
 });
 
 test("papers analyze score and refine CLI write analysis artifacts", async () => {
@@ -152,6 +192,8 @@ test("papers analyze score and refine CLI write analysis artifacts", async () =>
     assert.equal(await main(["refine", "--output", output, "--resource", "single researcher"]), 0);
     const scorecard = await readFile(join(output, "docs/diagnosis/ccf_a_strict_scorecard.md"), "utf8");
     assert.match(scorecard, /CCF-A Strict Scorecard/);
+    assert.match(scorecard, /Evidence-Backed Dimensions/);
+    assert.match(scorecard, /Possible Path To 70\+/);
     assert.match(scorecard, /No verified related work/);
     assert.match(await readFile(join(output, "docs/proposal/revised_idea.md"), "utf8"), /Revised Idea/);
     assert.match(await readFile(join(output, "docs/relative_work/novelty_gap_matrix.md"), "utf8"), /Novelty Gap Matrix/);

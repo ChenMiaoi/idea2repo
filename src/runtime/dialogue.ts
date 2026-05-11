@@ -206,7 +206,6 @@ export async function answerClarificationQuestion(
       runId: input.runId,
       stageId: CLARIFICATION_STAGE_ID,
       score: refreshed,
-      confidence: question.evidenceRefs.length ? 0.7 : 0.5,
       evidenceRefs: input.evidenceRefs ?? question.evidenceRefs,
       timestamp
     });
@@ -247,7 +246,7 @@ export async function answerClarificationQuestion(
     stage_id: CLARIFICATION_STAGE_ID,
     score: finalResult.score.total,
     max_score: 100,
-    confidence: finalResult.score_snapshot.confidence,
+    confidence: finalResult.score.confidence,
     hard_blockers: finalResult.score.caps.map((cap) => cap.reason),
     timestamp
   });

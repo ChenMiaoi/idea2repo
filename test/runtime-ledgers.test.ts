@@ -171,7 +171,11 @@ test("score snapshot ledger appends strict CCF-A score snapshots", async () => {
     assert.equal(snapshots[0]?.score, 45);
     assert.equal(snapshots[0]?.max_score, 100);
     assert.ok(snapshots[0]?.hard_blockers.includes("No PDF read"));
-    assert.ok((snapshots[0]?.dimensions.length ?? 0) > 0);
+    assert.equal(snapshots[0]?.dimensions.length, 8);
+    assert.ok(snapshots[0]?.soft_weaknesses.length);
+    assert.ok(snapshots[0]?.path_to_70.some((action) => /PDF|related|dataset|metric|experiment/i.test(action)));
+    assert.ok(snapshots[0]?.path_to_80.some((action) => /PDF|provenance|ablations|related/i.test(action)));
+    assert.ok(snapshots[0]?.dimensions.some((dimension) => dimension.name === "Evaluation Feasibility" && dimension.missing_evidence.includes("Strong baseline")));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
