@@ -55,7 +55,8 @@ export function evidenceRowsMarkdown(rows: ClaimEvidenceRow[], chunks?: PdfChunk
   const files: Record<string, string> = {};
   for (const [paperId, paperRows] of grouped) {
     const text = evidenceText(paperRows);
-    files[`docs/reference/paper_notes/${paperId}.md`] = `# ${paperId}\n\n## Problem\n\n${inferSection(text, "problem")}\n\n## Method\n\n${inferSection(text, "method")}\n\n## Claims And Evidence\n\n${paperRows.map((row) => `- Claim: ${row.claim}\n  - Type: ${row.claim_type}\n  - Confidence: ${row.confidence}\n  - Page: ${row.page ?? "missing"}\n  - Section: ${row.section ?? "missing"}\n  - Quote: ${row.quote ?? "missing"}\n  - Chunk: ${row.chunk_id ?? "missing"}`).join("\n")}\n\n## Limitations\n\n${inferSection(text, "limitation")}\n\n## Analysis Confidence\n\n${paperRows.some((row) => row.page && row.quote && row.chunk_id) ? "medium" : "low"}\n`;
+    const hasVerifiedEvidence = paperRows.some((row) => row.status === "verified" && row.page && row.quote && row.chunk_id);
+    files[`docs/reference/paper_notes/${paperId}.md`] = `# ${paperId}\n\nEvidence Status: ${hasVerifiedEvidence ? "verified" : "unverified"}\n\nevidence_status = ${hasVerifiedEvidence ? "verified" : "unverified"}\n\n## Problem\n\n${inferSection(text, "problem")}\n\n## Method\n\n${inferSection(text, "method")}\n\n## Claims And Evidence\n\n${paperRows.map((row) => `- Claim: ${row.claim}\n  - Type: ${row.claim_type}\n  - Confidence: ${row.confidence}\n  - Page: ${row.page ?? "missing"}\n  - Section: ${row.section ?? "missing"}\n  - Quote: ${row.quote ?? "missing"}\n  - Chunk: ${row.chunk_id ?? "missing"}\n  - chunk_id: ${row.chunk_id ?? "missing"}`).join("\n")}\n\n## Limitations\n\n${inferSection(text, "limitation")}\n\n## Analysis Confidence\n\n${hasVerifiedEvidence ? "medium" : "low"}\n`;
   }
   return files;
 }

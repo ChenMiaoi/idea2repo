@@ -212,13 +212,15 @@ async function commandPapers(argv: string[]): Promise<number> {
   if (action !== "analyze") throw new Error(`unknown papers action: ${action}`);
   const candidates = await readJsonFile<PaperCandidate[]>(root, "docs/relative_work/candidates.json", []);
   const { manifest, chunks, warnings } = await trustedPdfChunksFromProject(root);
-  const evidenceRows = extractEvidenceRows(chunks);
+  const extractedEvidenceRows = extractEvidenceRows(chunks);
+  const noteArtifacts = mandatoryCliPaperNoteArtifacts(candidates, manifest, extractedEvidenceRows, chunks);
+  const evidenceRows = paperNoteBackedEvidenceRows(extractedEvidenceRows, chunks, noteArtifacts);
   const runId = "cli-analysis";
   await ensureRuntimeLedgers(root);
   await replaceEvidenceItems(root, { runId, stageId: "pdf_reading" }, evidenceItemsFromRows({ runId, stageId: "pdf_reading", rows: evidenceRows, candidates, manifest, chunks }));
   await writeText(ensureChild(root, "docs/reference/pdf_chunks.json"), JSON.stringify(chunks, null, 2) + "\n");
   await writeText(ensureChild(root, "docs/reference/claim_evidence_matrix.csv"), evidenceRowsCsv(evidenceRows, chunks));
-  for (const [relativePath, content] of Object.entries(evidenceRowsMarkdown(evidenceRows, chunks))) await writeText(ensureChild(root, relativePath), content);
+  for (const [relativePath, content] of Object.entries(noteArtifacts)) await writeText(ensureChild(root, relativePath), content);
   await writeText(ensureChild(root, "docs/relative_work/related_work_matrix.csv"), relatedWorkMatrixCsv(candidates, manifest, evidenceRows, chunks, { verifiedOnly: true }));
   const backedCandidates = evidenceBackedCandidates(candidates, evidenceRows, chunks);
   await writeText(ensureChild(root, "docs/relative_work/topic_clusters.md"), topicClustersMarkdown(backedCandidates));
@@ -237,11 +239,13 @@ async function commandScore(argv: string[]): Promise<number> {
   const idea = await ideaFromArgsOrManifest(parsed, root);
   const candidates = await readJsonFile<PaperCandidate[]>(root, "docs/relative_work/candidates.json", []);
   const { manifest, chunks, warnings } = await trustedPdfChunksFromProject(root);
-  const evidenceRows = extractEvidenceRows(chunks);
+  const extractedEvidenceRows = extractEvidenceRows(chunks);
+  const noteArtifacts = mandatoryCliPaperNoteArtifacts(candidates, manifest, extractedEvidenceRows, chunks);
+  const evidenceRows = paperNoteBackedEvidenceRows(extractedEvidenceRows, chunks, noteArtifacts);
   const runId = "cli-analysis";
   const evidenceItems = evidenceItemsFromRows({ runId, stageId: "pdf_reading", rows: evidenceRows, candidates, manifest, chunks });
   const text = evidenceText(evidenceRows);
-  const novelty = assessNovelty(idea, candidates, evidenceRows);
+  const novelty = assessNovelty(idea, candidates, evidenceRows, chunks);
   const verifiedPaperCount = verifiedEvidencePaperCount(evidenceRows);
   const score = strictCcfAScore({
     verifiedRelatedWorkCount: verifiedPaperCount,
@@ -264,6 +268,7 @@ async function commandScore(argv: string[]): Promise<number> {
     hasStrongMlBaselines: text.includes("baseline")
   });
   await ensureRuntimeLedgers(root);
+  for (const [relativePath, content] of Object.entries(noteArtifacts)) await writeText(ensureChild(root, relativePath), content);
   await replaceEvidenceItems(root, { runId, stageId: "pdf_reading" }, evidenceItems);
   await appendScoreSnapshot(root, scoreSnapshotFromStrictScore({
     runId,
@@ -284,8 +289,10 @@ async function commandRefine(argv: string[]): Promise<number> {
   const idea = await ideaFromArgsOrManifest(parsed, root);
   const candidates = await readJsonFile<PaperCandidate[]>(root, "docs/relative_work/candidates.json", []);
   const { chunks, warnings } = await trustedPdfChunksFromProject(root);
-  const evidenceRows = extractEvidenceRows(chunks);
-  const novelty = assessNovelty(idea, candidates, evidenceRows);
+  const extractedEvidenceRows = extractEvidenceRows(chunks);
+  const noteArtifacts = mandatoryCliPaperNoteArtifacts(candidates, [], extractedEvidenceRows, chunks);
+  const evidenceRows = paperNoteBackedEvidenceRows(extractedEvidenceRows, chunks, noteArtifacts);
+  const novelty = assessNovelty(idea, candidates, evidenceRows, chunks);
   const verifiedPaperCount = verifiedEvidencePaperCount(evidenceRows);
   const text = evidenceText(evidenceRows);
   const score = strictCcfAScore({
@@ -299,6 +306,7 @@ async function commandRefine(argv: string[]): Promise<number> {
     hasExecutableExperimentPlan: false
   });
   if (warnings.length) console.log(`Warnings: ${warnings.length}`);
+  for (const [relativePath, content] of Object.entries(noteArtifacts)) await writeText(ensureChild(root, relativePath), content);
   await writeText(ensureChild(root, "docs/proposal/revised_idea.md"), revisedIdeaMarkdown(idea, novelty, score));
   await writeText(ensureChild(root, "docs/proposal/experiment_plan.md"), experimentPlanMarkdown());
   await writeText(ensureChild(root, "docs/diagnosis/feasibility_report.md"), feasibilityMarkdown(valuesFlag(parsed, "resource"), numberFlag(parsed, "weeks", 12)));
@@ -902,6 +910,72 @@ function normalizeReviewMode(mode: string | null | undefined, fallback: ReviewMo
 
 function verifiedEvidencePaperCount(rows: ReturnType<typeof extractEvidenceRows>): number {
   return new Set(rows.filter((row) => row.status === "verified" && row.page && row.quote && row.chunk_id).map((row) => row.paper_id)).size;
+}
+
+function mandatoryCliPaperNoteArtifacts(
+  candidates: PaperCandidate[],
+  manifest: PdfManifestRecord[],
+  rows: ReturnType<typeof extractEvidenceRows>,
+  chunks: PdfChunkIndexEntry[]
+): Record<string, string> {
+  const files = { ...evidenceRowsMarkdown(rows, chunks) };
+  const manifestByPaper = new Map(manifest.map((record) => [record.paper_id, record]));
+  for (const candidate of candidates) {
+    const paperId = safePaperId(candidate.candidate_id);
+    const path = `docs/reference/paper_notes/${paperId}.md`;
+    if (files[path]) continue;
+    files[path] = metadataOnlyPaperNote(candidate, manifestByPaper.get(paperId));
+  }
+  return files;
+}
+
+function metadataOnlyPaperNote(candidate: PaperCandidate, manifest: PdfManifestRecord | undefined): string {
+  return `# ${safePaperId(candidate.candidate_id)}
+
+Evidence Status: unverified
+
+evidence_status = unverified
+
+## Metadata
+
+- Title: ${candidate.title}
+- Authors: ${candidate.authors.join("; ") || "unknown"}
+- Venue: ${candidate.venue ?? "unknown"}
+- Year: ${candidate.year ?? "unknown"}
+- CCF rank: ${candidate.ccf_rank ?? "unknown"}
+- Track status: ${candidate.track_status ?? "unknown"}
+- Source URL: ${candidate.source_urls[0] ?? "missing"}
+- PDF status: ${manifest?.status ?? candidate.pdf_status ?? "not_available"}
+
+## Claims And Evidence
+
+- Metadata-only note. This paper has no verified page, quote, and chunk_id evidence in the current CLI analysis.
+  - Page: missing
+  - Quote: missing
+  - chunk_id: missing
+
+## Evidence Policy
+
+Do not count this metadata-only note as verified evidence for related work, novelty, or scoring.
+`;
+}
+
+function paperNoteBackedEvidenceRows(
+  rows: ReturnType<typeof extractEvidenceRows>,
+  chunks: PdfChunkIndexEntry[],
+  noteArtifacts: Record<string, string>
+): ReturnType<typeof extractEvidenceRows> {
+  const notePaperIds = new Set(
+    Object.keys(noteArtifacts).flatMap((path) => {
+      const match = /^docs\/reference\/paper_notes\/(.+)\.md$/.exec(path);
+      return match ? [match[1]!] : [];
+    })
+  );
+  return trustedEvidenceRows(rows, chunks).filter((row) =>
+    row.status === "verified" &&
+    Boolean(row.page && row.quote && row.chunk_id) &&
+    notePaperIds.has(row.paper_id)
+  );
 }
 
 function evidenceBackedCandidates(candidates: PaperCandidate[], rows: ReturnType<typeof extractEvidenceRows>, chunks: PdfChunkIndexEntry[]): PaperCandidate[] {

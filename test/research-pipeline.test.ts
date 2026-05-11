@@ -501,6 +501,39 @@ test("research pipeline keeps verified evidence runs preliminary when CCF-A gate
   }
 });
 
+test("research pipeline creates metadata-only notes for core papers without PDFs", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-pipeline-metadata-notes-"));
+  const idea = "Build an LLM agent benchmark.";
+  try {
+    const candidates = [
+      pipelineCandidate("core-no-pdf-1", "Core Agent Benchmark Without PDF 1", "NeurIPS"),
+      pipelineCandidate("core-no-pdf-2", "Core Agent Benchmark Without PDF 2", "NeurIPS")
+    ];
+    await writeArtifact(root, "docs/relative_work/candidates.json", JSON.stringify(candidates, null, 2) + "\n");
+    await writeArtifact(root, "docs/relative_work/search_report.md", "# Search Report\n\nCore papers have no public PDFs yet.\n");
+    let state = createResearchPipelineState(idea, root);
+    state = markStage(state, "literature_search", "completed");
+    await writeResearchPipelineState(root, state);
+
+    const result = await runResearchPipeline(idea, {
+      outputRoot: root,
+      provider: "offline",
+      strictCcfA: true
+    });
+    const firstNote = result.artifacts["docs/reference/paper_notes/core-no-pdf-1.md"] ?? "";
+    const secondNote = result.artifacts["docs/reference/paper_notes/core-no-pdf-2.md"] ?? "";
+    assert.match(firstNote, /evidence_status = unverified/);
+    assert.match(firstNote, /Metadata-only note/);
+    assert.match(firstNote, /chunk_id: missing/);
+    assert.match(secondNote, /evidence_status = unverified/);
+    assert.match(result.artifacts["docs/reference/paper_notes/README.md"] ?? "", /Metadata-only unverified notes: 2/);
+    assert.equal(result.verifiedPapers.length, 0);
+    assert.doesNotMatch(result.artifacts["docs/relative_work/related_work_matrix.csv"] ?? "", /Core Agent Benchmark Without PDF/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("research pipeline does not resume missing PDF files from manifest", async () => {
   const root = await mkdtemp(join(tmpdir(), "idea2repo-pipeline-missing-pdf-"));
   const idea = "Build an LLM agent benchmark.";
@@ -738,6 +771,39 @@ test("research pipeline preserves resumed paper note artifacts", async () => {
       strictCcfA: true
     });
     assert.match(result.artifacts["docs/reference/paper_notes/paper-1.md"] ?? "", /UNIQUE RESUMED NOTE/);
+    assert.match(result.artifacts["docs/reference/paper_notes/paper-1.md"] ?? "", /evidence_status = verified/);
+    assert.match(result.artifacts["docs/reference/paper_notes/paper-1.md"] ?? "", /chunk_id: p1-c1/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("research pipeline only uses evidence rows cited by verified paper notes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-pipeline-note-row-gate-"));
+  const idea = "Build an LLM agent benchmark.";
+  try {
+    const firstChunkText = `ignored chunk evidence mentions a baseline dataset metric. ${"filler ".repeat(360)}`;
+    await writeValidPdfProvenance(root, "paper-1", `${firstChunkText} cited chunk evidence mentions a limitation only.`);
+    const note = "# paper-1\n\n## Problem\n\nLegacy note.\n\n## Claims And Evidence\n\n- Claim: cited\n  - Page: 1\n  - Quote: cited chunk evidence\n  - Chunk: p1-c2\n";
+    const chunks = await buildPdfChunkIndex(root, JSON.parse(await readFile(join(root, "docs/reference/pdf_manifest.json"), "utf8")) as PdfManifestRecord[]);
+    assert.ok(chunks.some((chunk) => chunk.chunk_id === "p1-c2"), "test fixture should create a second chunk");
+    await writeArtifact(root, "docs/reference/pdf_chunks.json", JSON.stringify(chunks, null, 2) + "\n");
+    await writeArtifact(root, "docs/reference/paper_notes/README.md", "# Paper Notes\n\nResumed.\n");
+    await writeArtifact(root, "docs/reference/paper_notes/paper-1.md", note);
+    let state = createResearchPipelineState(idea, root);
+    state = markStage(state, "pdf_acquisition", "completed");
+    state = markStage(state, "pdf_reading", "completed");
+    await writeResearchPipelineState(root, state);
+
+    const result = await runResearchPipeline(idea, {
+      outputRoot: root,
+      provider: "offline",
+      strictCcfA: true
+    });
+    assert.equal(result.claimEvidenceRows.some((row) => row.status === "verified" && row.chunk_id === "p1-c1"), false);
+    assert.equal(result.claimEvidenceRows.some((row) => row.status === "verified"), false);
+    assert.doesNotMatch(result.artifacts["docs/reference/claim_evidence_matrix.csv"] ?? "", /p1-c1/);
+    assert.match(result.artifacts["docs/reference/paper_notes/paper-1.md"] ?? "", /chunk_id: p1-c2/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1002,7 +1068,9 @@ test("research pipeline persists new staged PDF reader notes", async () => {
       strictCcfA: true
     });
     assert.match(result.artifacts["docs/reference/paper_notes/paper-1.md"] ?? "", /UNIQUE_AGENT_NOTE/);
+    assert.match(result.artifacts["docs/reference/paper_notes/paper-1.md"] ?? "", /evidence_status = verified/);
     assert.match(result.artifacts["docs/reference/paper_notes/paper-1.md"] ?? "", /Chunk: p1-c2/);
+    assert.match(result.artifacts["docs/reference/paper_notes/paper-1.md"] ?? "", /chunk_id: p1-c2/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

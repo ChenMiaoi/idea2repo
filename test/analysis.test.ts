@@ -80,8 +80,10 @@ test("novelty matrix ignores unverified rows and keeps missing dimensions out of
 test("paper notes and related-work signals are derived from evidence text", () => {
   const rows = [evidence("paper1", "This benchmark problem evaluates a method baseline on a dataset with metric evidence and a limitation.")];
   const notes = evidenceRowsMarkdown(rows);
+  assert.match(notes["docs/reference/paper_notes/paper1.md"] ?? "", /evidence_status = verified/);
   assert.match(notes["docs/reference/paper_notes/paper1.md"] ?? "", /Problem evidence/);
   assert.match(notes["docs/reference/paper_notes/paper1.md"] ?? "", /Method evidence/);
+  assert.match(notes["docs/reference/paper_notes/paper1.md"] ?? "", /chunk_id: p1-c1/);
   assert.doesNotMatch(notes["docs/reference/paper_notes/paper1.md"] ?? "", /TODO/);
   const matrix = relatedWorkMatrixCsv(
     [
@@ -218,6 +220,40 @@ test("papers analyze ignores fabricated chunks without PDF provenance", async ()
     assert.equal(await main(["papers", "analyze", "--output", output]), 0);
     assert.deepEqual(JSON.parse(await readFile(join(output, "docs/reference/pdf_chunks.json"), "utf8")), []);
     assert.doesNotMatch(await readFile(join(output, "docs/reference/claim_evidence_matrix.csv"), "utf8"), /fabricated/);
+    assert.equal(await main(["score", "--output", output, "--strict-ccf-a"]), 0);
+    assert.match(await readFile(join(output, "docs/diagnosis/ccf_a_strict_scorecard.md"), "utf8"), /No verified related work/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("papers analyze creates metadata-only notes for candidates without PDFs", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-analysis-metadata-notes-"));
+  const output = join(root, "project");
+  try {
+    await writeArtifact(output, "docs/relative_work/candidates.json", JSON.stringify([
+      {
+        candidate_id: "metadata-only-paper",
+        title: "Metadata Only Agent Benchmark",
+        authors: ["Ada Lovelace"],
+        year: 2026,
+        venue: "NeurIPS",
+        source_urls: ["https://example.org/metadata-only-paper"],
+        pdf_urls: [],
+        retrieval_sources: ["test"],
+        retrieval_queries: ["agent benchmark"],
+        confidence: "high",
+        ccf_rank: "A",
+        track_status: "main_conference"
+      }
+    ], null, 2) + "\n");
+    assert.equal(await main(["papers", "analyze", "--output", output]), 0);
+    const note = await readFile(join(output, "docs/reference/paper_notes/metadata-only-paper.md"), "utf8");
+    assert.match(note, /evidence_status = unverified/);
+    assert.match(note, /Metadata-only note/);
+    assert.match(note, /chunk_id: missing/);
+    assert.doesNotMatch(await readFile(join(output, "docs/reference/claim_evidence_matrix.csv"), "utf8"), /Metadata Only Agent Benchmark/);
+    assert.doesNotMatch(await readFile(join(output, "docs/relative_work/related_work_matrix.csv"), "utf8"), /Metadata Only Agent Benchmark/);
     assert.equal(await main(["score", "--output", output, "--strict-ccf-a"]), 0);
     assert.match(await readFile(join(output, "docs/diagnosis/ccf_a_strict_scorecard.md"), "utf8"), /No verified related work/);
   } finally {

@@ -34,7 +34,7 @@ import { CodexOAuthClient } from "../auth/codex-oauth.js";
 import { paperCandidateToRecord, referencesBib, type LiteratureSearchOptions, type LiteratureSearchResult, type PaperRecord } from "../literature.js";
 import { diagnoseIdea } from "../scoring.js";
 import { exists } from "../state.js";
-import { evidenceRowsCsv, evidenceRowsMarkdown, evidenceText, extractEvidenceRows, type ClaimEvidenceRow } from "../skills/analysis/evidence-extract.js";
+import { evidenceRowsCsv, evidenceRowsMarkdown, evidenceText, extractEvidenceRows, trustedEvidenceRows, type ClaimEvidenceRow } from "../skills/analysis/evidence-extract.js";
 import { strictScoreMarkdown, type StrictScoreInput, type StrictScoreResult } from "../skills/analysis/ccf-a-score.js";
 import { experimentPlanMarkdown, feasibilityMarkdown, revisedIdeaMarkdown } from "../skills/analysis/idea-refine.js";
 import { assessNovelty, noveltyMatrixMarkdown } from "../skills/analysis/novelty-matrix.js";
@@ -470,7 +470,15 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     await setStage("pdf_reading", chunks.length ? "completed" : "skipped", chunks.length ? undefined : "No downloaded PDFs were available for reading.");
   }
 
-  const evidenceRows = await toolRegistry.execute<{ chunks: PdfChunkIndexEntry[] }, ReturnType<typeof extractEvidenceRows>>("evidence.extract", { chunks }, toolContext);
+  const extractedEvidenceRows = await toolRegistry.execute<{ chunks: PdfChunkIndexEntry[] }, ReturnType<typeof extractEvidenceRows>>("evidence.extract", { chunks }, toolContext);
+  const noteArtifacts = mandatoryPaperNoteArtifacts({
+    coreCandidates: coreSetCandidates(candidates, agentTriage),
+    manifest,
+    evidenceRows: extractedEvidenceRows,
+    chunks,
+    existingNoteArtifacts: { ...evidenceRowsMarkdown(extractedEvidenceRows, chunks), ...paperNoteArtifacts(agentPaperNotes, chunks) }
+  });
+  const evidenceRows = evidenceRowsBackedByPaperNotes(extractedEvidenceRows, chunks, noteArtifacts);
   const verifiedEvidenceRows = evidenceRows.filter((row) => row.status === "verified" && row.page && row.quote && row.chunk_id);
   const evidenceItems = evidenceItemsFromRows({
     runId,
@@ -505,7 +513,6 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     });
   }
   const hasVerifiedPdfEvidence = evidenceItems.length > 0;
-  const noteArtifacts = { ...evidenceRowsMarkdown(evidenceRows, chunks), ...paperNoteArtifacts(agentPaperNotes, chunks) };
   if (!canResumePdfReading) {
     await recordDecision({
       stage_id: "pdf_reading",
@@ -830,8 +837,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     templatePackage,
     decisionSummaries
     }),
-    ...preservableOutputArtifacts(preservedOutputArtifacts),
-    ...preservedPaperNoteArtifacts(resumedArtifacts, trustedPaperNotePaths)
+    ...preservedNonPaperNoteArtifacts(preservedOutputArtifacts)
   };
   if (!(await canResumeStage("artifact_writing"))) {
     await setStage("artifact_writing", "running");
@@ -966,7 +972,7 @@ function pipelineArtifacts(input: {
     "docs/relative_work/candidates.json": JSON.stringify(input.candidates, null, 2) + "\n",
     "docs/relative_work/triage_report.md": triageReport(evidenceBackedCandidates),
     "docs/reference/pdf_manifest.json": JSON.stringify(input.manifest, null, 2) + "\n",
-    "docs/reference/paper_notes/README.md": "# Paper Notes\n\nNo PDFs have been read yet. Every future note must cite page, quote, and chunk id.\n",
+    "docs/reference/paper_notes/README.md": paperNotesReadme(input.noteArtifacts),
     ...input.noteArtifacts,
     "docs/relative_work/related_work_matrix.csv": relatedWorkMatrixCsv(input.candidates, input.manifest, input.evidenceRows, input.chunks, { verifiedOnly: true }),
     "docs/reference/claim_evidence_matrix.csv": evidenceRowsCsv(input.evidenceRows, input.chunks),
@@ -1099,6 +1105,22 @@ ${rows.length ? rows.map((row) => `- ${row.paper_id} p.${row.page} [${row.claim_
 `;
 }
 
+function paperNotesReadme(noteArtifacts: Record<string, string>): string {
+  const notePaths = Object.keys(noteArtifacts).filter((path) => /^docs\/reference\/paper_notes\/.+\.md$/.test(path)).sort();
+  const verified = notePaths.filter((path) => /evidence_status\s*=\s*verified/i.test(noteArtifacts[path] ?? ""));
+  const unverified = notePaths.filter((path) => /evidence_status\s*=\s*unverified/i.test(noteArtifacts[path] ?? ""));
+  return `# Paper Notes
+
+Every core-set paper must have a note in this directory.
+
+- Total notes: ${notePaths.length}
+- Verified notes: ${verified.length}
+- Metadata-only unverified notes: ${unverified.length}
+
+Verified notes must cite page, quote, and chunk_id. Metadata-only notes are retained for provenance but must not count as verified evidence for related work, novelty, or scoring.
+`;
+}
+
 function canonicalExecutionPlanMarkdown(input: PipelineArtifactInput): string {
   const strategySteps = input.agentStrategy?.first_4_week_plan ?? [
     "Complete CCF-A venue-aware related-work verification.",
@@ -1228,16 +1250,171 @@ async function readArtifacts(readArtifact: (relativePath: string) => Promise<str
   return files;
 }
 
-function preservedPaperNoteArtifacts(artifacts: Record<string, string>, trustedPaths: Set<string>): Record<string, string> {
+function preservedNonPaperNoteArtifacts(artifacts: Record<string, string>): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(artifacts).filter(([path]) => trustedPaths.has(path))
+    Object.entries(artifacts).filter(([path]) => path !== "docs/relative_work/triage_report.md" && !/^docs\/reference\/paper_notes\/.+\.md$/.test(path))
   );
 }
 
-function preservableOutputArtifacts(artifacts: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(artifacts).filter(([path]) => path !== "docs/relative_work/triage_report.md")
+function coreSetCandidates(candidates: PaperCandidate[], triage: CandidateTriage | null): PaperCandidate[] {
+  const selected = new Map<string, PaperCandidate>();
+  const add = (candidate: PaperCandidate): void => {
+    selected.set(safePaperId(candidate.candidate_id), candidate);
+  };
+  for (const item of triage?.must_read_core_papers ?? []) {
+    const match = candidates.find((candidate) => candidateMatchesTriageItem(candidate, item));
+    if (match) add(match);
+  }
+  for (const candidate of candidates.filter(isCcfACoreCandidate)) add(candidate);
+  if (selected.size) return [...selected.values()];
+  return candidates.slice(0, Math.min(8, candidates.length));
+}
+
+function mandatoryPaperNoteArtifacts(input: {
+  coreCandidates: PaperCandidate[];
+  manifest: PdfManifestRecord[];
+  evidenceRows: ReturnType<typeof extractEvidenceRows>;
+  chunks: PdfChunkIndexEntry[];
+  existingNoteArtifacts: Record<string, string>;
+}): Record<string, string> {
+  const files = { ...input.existingNoteArtifacts };
+  const manifestByPaper = new Map(input.manifest.map((record) => [record.paper_id, record]));
+  const trustedRowsByPaper = new Map<string, ReturnType<typeof extractEvidenceRows>>();
+  for (const row of trustedEvidenceRows(input.evidenceRows, input.chunks).filter((item) => item.status === "verified" && item.page && item.quote && item.chunk_id)) {
+    trustedRowsByPaper.set(row.paper_id, [...(trustedRowsByPaper.get(row.paper_id) ?? []), row]);
+  }
+  for (const candidate of input.coreCandidates) {
+    const paperId = safePaperId(candidate.candidate_id);
+    const path = `docs/reference/paper_notes/${paperId}.md`;
+    const existing = files[path];
+    if (existing && paperNoteHasVerifiedEvidence(existing, paperId, input.chunks)) continue;
+    const rows = trustedRowsByPaper.get(paperId) ?? [];
+    files[path] = rows.length
+      ? verifiedMetadataPaperNote(candidate, rows)
+      : metadataOnlyPaperNote(candidate, manifestByPaper.get(paperId));
+  }
+  return files;
+}
+
+function evidenceRowsBackedByPaperNotes(
+  rows: ReturnType<typeof extractEvidenceRows>,
+  chunks: PdfChunkIndexEntry[],
+  noteArtifacts: Record<string, string>
+): ReturnType<typeof extractEvidenceRows> {
+  const verifiedRefs = Object.entries(noteArtifacts).flatMap(([path, markdown]) => {
+    const match = /^docs\/reference\/paper_notes\/(.+)\.md$/.exec(path);
+    if (!match) return [];
+    const paperId = match[1]!;
+    if (/evidence_status\s*=\s*unverified/i.test(markdown)) return [];
+    return paperNoteEvidenceRefs(markdown, chunks.filter((chunk) => chunk.paper_id === paperId)).map((ref) => ({ paperId, ...ref }));
+  });
+  return trustedEvidenceRows(rows, chunks).filter((row) =>
+    row.status === "verified" &&
+    Boolean(row.page && row.quote && row.chunk_id) &&
+    verifiedRefs.some((ref) => paperNoteRefBacksRow(ref, row))
   );
+}
+
+function paperNoteHasVerifiedEvidence(markdown: string, paperId: string, chunks: PdfChunkIndexEntry[]): boolean {
+  if (/evidence_status\s*=\s*unverified/i.test(markdown)) return false;
+  return paperNoteEvidenceRefs(markdown, chunks.filter((chunk) => chunk.paper_id === paperId)).length > 0;
+}
+
+function paperNoteRefBacksRow(ref: { paperId: string; page: number; quote: string; chunk_id: string }, row: ClaimEvidenceRow): boolean {
+  if (ref.paperId !== row.paper_id || ref.page !== Number(row.page) || ref.chunk_id !== row.chunk_id) return false;
+  const noteQuote = normalizeEvidenceText(ref.quote);
+  const rowQuote = normalizeEvidenceText(row.quote ?? "");
+  return Boolean(noteQuote && rowQuote && (rowQuote.includes(noteQuote) || noteQuote.includes(rowQuote)));
+}
+
+function candidateMatchesTriageItem(candidate: PaperCandidate, item: string): boolean {
+  const normalized = normalizeEvidenceText(item);
+  const id = normalizeEvidenceText(candidate.candidate_id);
+  const title = normalizeEvidenceText(candidate.title);
+  return Boolean(normalized && (normalized.includes(id) || normalized.includes(title) || id.includes(normalized) || title.includes(normalized)));
+}
+
+function verifiedMetadataPaperNote(candidate: PaperCandidate, rows: ReturnType<typeof extractEvidenceRows>): string {
+  const paperId = safePaperId(candidate.candidate_id);
+  const text = evidenceText(rows);
+  return `# ${paperId}
+
+Evidence Status: verified
+
+evidence_status = verified
+
+## Metadata
+
+- Title: ${candidate.title}
+- Venue: ${candidate.venue ?? "unknown"}
+- Year: ${candidate.year ?? "unknown"}
+- CCF rank: ${candidate.ccf_rank ?? "unknown"}
+- Track status: ${candidate.track_status ?? "unknown"}
+- Source provenance: ${(candidate.source_provenance ?? candidate.retrieval_sources).join("; ") || "unknown"}
+
+## Problem
+
+${extractEvidenceSection(text, "problem")}
+
+## Method
+
+${extractEvidenceSection(text, "method")}
+
+## Claims And Evidence
+
+${rows.map((row) => `- Claim: ${row.claim}
+  - Type: ${row.claim_type}
+  - Confidence: ${row.confidence}
+  - Page: ${row.page ?? "missing"}
+  - Quote: ${row.quote ?? "missing"}
+  - Chunk: ${row.chunk_id ?? "missing"}
+  - chunk_id: ${row.chunk_id ?? "missing"}`).join("\n")}
+
+## Limitations
+
+${extractEvidenceSection(text, "limitation")}
+`;
+}
+
+function metadataOnlyPaperNote(candidate: PaperCandidate, manifest: PdfManifestRecord | undefined): string {
+  const paperId = safePaperId(candidate.candidate_id);
+  return `# ${paperId}
+
+Evidence Status: unverified
+
+evidence_status = unverified
+
+## Metadata
+
+- Title: ${candidate.title}
+- Authors: ${candidate.authors.join("; ") || "unknown"}
+- Venue: ${candidate.venue ?? "unknown"}
+- Year: ${candidate.year ?? "unknown"}
+- CCF rank: ${candidate.ccf_rank ?? "unknown"}
+- Main/full/regular eligible: ${candidate.main_track_eligible ? "yes" : "no"}
+- Track status: ${candidate.track_status ?? "unknown"}
+- Source provenance: ${(candidate.source_provenance ?? candidate.retrieval_sources).join("; ") || "unknown"}
+- Source URL: ${candidate.source_urls[0] ?? "missing"}
+- PDF status: ${manifest?.status ?? candidate.pdf_status ?? "not_available"}
+
+## Claims And Evidence
+
+- Metadata-only note. This paper has no verified page, quote, and chunk_id evidence in the current run.
+  - Page: missing
+  - Quote: missing
+  - chunk_id: missing
+
+## Evidence Policy
+
+Do not count this metadata-only note as verified evidence for related work, novelty, or scoring.
+`;
+}
+
+function extractEvidenceSection(text: string, kind: "problem" | "method" | "limitation"): string {
+  if (!text.trim()) return `No verified ${kind} evidence was extracted.`;
+  const sentences = text.split(/[.!?]\s+/).map((part) => part.trim()).filter(Boolean);
+  const match = sentences.find((sentence) => sentence.includes(kind) || (kind === "limitation" && sentence.includes("weakness")));
+  return match ? `${match}.` : `Verified evidence exists, but no distinct ${kind} statement was extracted.`;
 }
 
 async function paperNotesFromArtifacts(readArtifact: (relativePath: string) => Promise<string | null>, chunks: PdfChunkIndexEntry[], trustedPaths: Set<string>): Promise<PdfPaperNote[]> {
@@ -1294,9 +1471,14 @@ function paperNoteMarkdown(note: PdfPaperNote, chunks: PdfChunkIndexEntry[]): st
   - Page: ${claim.page}
   - Quote: ${claim.evidence_quote}
   - Chunk: ${chunk.chunk_id}
+  - chunk_id: ${chunk.chunk_id}
   - Confidence: ${claim.confidence}`;
   });
   return `# ${note.paper_id}
+
+Evidence Status: ${evidence.length ? "verified" : "unverified"}
+
+evidence_status = ${evidence.length ? "verified" : "unverified"}
 
 ## Problem
 
@@ -1343,7 +1525,7 @@ ${note.difference_from_current_idea}
 function paperNoteEvidenceRefs(markdown: string, chunks: PdfChunkIndexEntry[]): Array<{ page: number; quote: string; chunk_id: string }> {
   const chunksById = new Map(chunks.map((chunk) => [chunk.chunk_id, chunk]));
   const refs: Array<{ page: number; quote: string; chunk_id: string }> = [];
-  const pattern = /Page:\s*(\d+)[\s\S]*?Quote:\s*(?!missing\b)([^\n]+)[\s\S]*?Chunk:\s*(?!missing\b)([^\s\n]+)/gi;
+  const pattern = /Page:\s*(\d+)[\s\S]*?Quote:\s*(?!missing\b)([^\n]+)[\s\S]*?(?:Chunk|Chunk ID|chunk_id):\s*(?!missing\b)([^\s\n]+)/gi;
   for (const match of markdown.matchAll(pattern)) {
     const page = Number(match[1]);
     const quote = match[2]?.trim() ?? "";
