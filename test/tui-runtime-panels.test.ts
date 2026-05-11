@@ -38,7 +38,7 @@ test("runtime TUI panels render as React elements", () => {
   assert.equal(React.isValidElement(PlanPanel({ plan })), true);
   assert.equal(React.isValidElement(TracePanel({ events })), true);
   assert.equal(React.isValidElement(ArtifactPanel({ artifacts: [{ path: "docs/idea.md", bytes: 12, text: true }] })), true);
-  assert.equal(React.isValidElement(ApprovalDialog({ action: "publish", risk: "network" })), true);
+  assert.equal(React.isValidElement(ApprovalDialog({ approvalId: "approval-1", action: "publish", risk: "network", selectedDecision: "denied" })), true);
 });
 
 test("TUI runtime snapshot follows live runtime events", () => {

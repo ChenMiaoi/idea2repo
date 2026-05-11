@@ -43,12 +43,16 @@ test("slash command selection resolves partial commands", () => {
   assert.equal(resolveSlashCommandInput("/limit", 0), "/limit");
   assert.equal(resolveSlashCommandInput("/retry", 0), "/retry");
   assert.equal(resolveSlashCommandInput("/mode g", 0), "/mode g");
+  assert.equal(resolveSlashCommandInput("/app", 0), "/approvals");
+  assert.equal(resolveSlashCommandInput("/approv", 1), "/approve ");
+  assert.equal(resolveSlashCommandInput("/deny abc", 0), "/deny abc");
 });
 
 test("slash command hint describes usage and misses", () => {
   assert.match(getSlashHint("/research"), /Press Enter to enter a value/);
   assert.match(getSlashHint("/artifact"), /Args:/);
   assert.match(getSlashHint("/mode"), /Args: plan \| generate \| publish/);
+  assert.match(getSlashHint("/approve"), /Args: <approval_id>/);
   assert.match(getSlashHint("/generate"), /Legacy alias/);
   assert.match(getSlashHint("/model"), /Press Enter to choose/);
   assert.match(getSlashHint("/does-not-exist"), /No matching command/);

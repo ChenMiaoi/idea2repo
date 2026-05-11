@@ -11,7 +11,7 @@ import { OFFLINE_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../providers.js";
 import { ensureChild, readManifest, status as projectStatus, validate as validateProject } from "../state.js";
 import { AuthStorage, CodexOAuthClient, openaiCodexOAuthProvider, type CodexUsageSnapshot, type CreditsSnapshot, type RateLimitWindow } from "../auth/codex-oauth.js";
 import { buildGithubExportPlan } from "../github-export.js";
-import { approvalPolicyForMode, formatApprovals, readApprovalRecords, type RuntimeMode } from "../runtime/approvals.js";
+import { approvalPolicyForMode, formatApprovals, latestApprovalRecords, readApprovalRecords, resolveApprovalRecord, type ApprovalRecord, type RuntimeMode } from "../runtime/approvals.js";
 import { formatDecisions, readDecisionRecords } from "../runtime/decisions.js";
 import { readJsonlEvents, runtimeTimestamp, type EventSink, type Idea2RepoEvent } from "../runtime/events.js";
 import { formatPlan, readPlanState } from "../runtime/plan.js";
@@ -30,6 +30,7 @@ import {
 import { completeSlashInput, getSlashHint, getSlashSuggestions, resolveSlashCommandInput, selectedSlashSuggestion, slashCommands } from "./slash-commands.js";
 import { addHistoryEntry, readTuiInputHistory, writeTuiInputHistory } from "./history.js";
 import { ArtifactPanel, type RuntimeArtifactEntry } from "./ArtifactPanel.js";
+import { ApprovalDialog, type ApprovalDialogDecision } from "./ApprovalDialog.js";
 import { PlanPanel } from "./PlanPanel.js";
 import { TracePanel } from "./TracePanel.js";
 import { applyTuiRuntimeEvent, createTuiRuntimeSnapshot, liveApprovalDetails, liveDecisionDetails, type TuiRuntimeSnapshot } from "./runtime-view.js";
@@ -84,6 +85,12 @@ type ActiveDirectoryPicker = {
   resolve: (value: string) => void;
 };
 
+type ActiveApprovalDialog = {
+  record: ApprovalRecord;
+  outputRoot: string;
+  selectedDecision: ApprovalDialogDecision;
+};
+
 type PinnedLimits = {
   accountId: string;
   fetchedAt: number;
@@ -114,7 +121,7 @@ export type TuiLayout = {
   weekStyle: "full" | "compact" | "bar";
 };
 
-export type TuiPageMode = "normal" | "slash" | "prompt" | "select" | "directory";
+export type TuiPageMode = "normal" | "slash" | "prompt" | "select" | "directory" | "approval";
 
 export type TuiPageBudget = {
   headerRows: number;
@@ -174,6 +181,7 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
   const [activePrompt, setActivePrompt] = useState<ActivePrompt | null>(null);
   const [activeSelect, setActiveSelect] = useState<ActiveSelect | null>(null);
   const [activeDirectoryPicker, setActiveDirectoryPicker] = useState<ActiveDirectoryPicker | null>(null);
+  const [activeApprovalDialog, setActiveApprovalDialog] = useState<ActiveApprovalDialog | null>(null);
   const [runtimeSnapshot, setRuntimeSnapshot] = useState<TuiRuntimeSnapshot | null>(null);
   const activeAbortController = useRef<AbortController | null>(null);
 
@@ -256,22 +264,51 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
     () => nextActionForState({ busy, authStatus, hasIdea: Boolean(lastUserIdea(messages)), activities }),
     [busy, authStatus, messages, activities]
   );
-  const pageMode: TuiPageMode = activeDirectoryPicker ? "directory" : activeSelect ? "select" : activePrompt ? "prompt" : input.startsWith("/") ? "slash" : "normal";
+  const pageMode: TuiPageMode = activeDirectoryPicker ? "directory" : activeApprovalDialog ? "approval" : activeSelect ? "select" : activePrompt ? "prompt" : input.startsWith("/") ? "slash" : "normal";
   const showPinnedLimits = Boolean(pinnedLimits) && !activeDirectoryPicker;
   const pageBudget = useMemo(
     () =>
       pageBudgetForLayout(layout, {
         pinnedLimits: showPinnedLimits,
         mode: pageMode,
-        optionCount: activeDirectoryPicker?.options.length ?? activeSelect?.options.length ?? slashSuggestions.length
+        optionCount: activeDirectoryPicker?.options.length ?? (activeApprovalDialog ? 2 : activeSelect?.options.length ?? slashSuggestions.length)
       }),
-    [activeDirectoryPicker, activeSelect, layout, pageMode, showPinnedLimits, slashSuggestions.length]
+    [activeApprovalDialog, activeDirectoryPicker, activeSelect, layout, pageMode, showPinnedLimits, slashSuggestions.length]
   );
   const activityLineLimit = Math.max(1, Math.min(layout.activityLimit, pageBudget.insightRows - 5));
   const latestNotice = useMemo(() => latestNoticeForMessages(messages), [messages]);
   const visibleActivities = useMemo(() => activities.slice(-activityLineLimit), [activities, activityLineLimit]);
 
   useInput((_input, key) => {
+    if (activeApprovalDialog) {
+      if (key.escape) {
+        setActiveApprovalDialog(null);
+        append({ role: "assistant", title: "Approval left pending", text: activeApprovalDialog.record.action });
+        return;
+      }
+      if (key.leftArrow || key.upArrow) {
+        setActiveApprovalDialog((current) => (current ? { ...current, selectedDecision: "approved" } : current));
+        return;
+      }
+      if (key.rightArrow || key.downArrow || key.tab) {
+        setActiveApprovalDialog((current) => (current ? { ...current, selectedDecision: current.selectedDecision === "approved" ? "denied" : "approved" } : current));
+        return;
+      }
+      const normalized = _input.toLowerCase();
+      if (normalized === "a" || normalized === "y") {
+        void resolveActiveApprovalDialog("approved");
+        return;
+      }
+      if (normalized === "d" || normalized === "n") {
+        void resolveActiveApprovalDialog("denied");
+        return;
+      }
+      if (key.return) {
+        void resolveActiveApprovalDialog(activeApprovalDialog.selectedDecision);
+        return;
+      }
+      return;
+    }
     if (activeDirectoryPicker) {
       if (key.escape) {
         activeDirectoryPicker.resolve("");
@@ -362,6 +399,7 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
   async function submit(value: string): Promise<void> {
     const trimmed = value.trim();
     if (activeDirectoryPicker) return;
+    if (activeApprovalDialog) return;
     if (activeSelect) return;
     if (activePrompt) {
       if (!trimmed) {
@@ -585,9 +623,16 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
       case "/mode":
         chooseRuntimeMode(rest);
         return;
+      case "/approve":
+        await resolveApprovalFromCommand(parts[0], "approved");
+        return;
+      case "/deny":
+        await resolveApprovalFromCommand(parts[0], "denied");
+        return;
       case "/approvals":
         await runBusy(async () => {
           const live = currentRuntimeSnapshot(output);
+          const pending = await pendingApprovalRecords(output);
           if (live) {
             append({
               role: "assistant",
@@ -595,6 +640,7 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
               text: `${live.approvals.length} live approval entr${live.approvals.length === 1 ? "y" : "ies"} recorded.`,
               details: live.approvals.length ? liveApprovalDetails(live) : ["No live approvals recorded yet."]
             });
+            if (pending[0]) openApprovalDialog(pending[0], output);
             return;
           }
           const records = await readApprovalRecords(output);
@@ -604,6 +650,7 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
             text: `${records.length} approval log entr${records.length === 1 ? "y" : "ies"} recorded.`,
             details: formatApprovals(records).split("\n").slice(0, 8)
           });
+          if (pending[0]) openApprovalDialog(pending[0], output);
         });
         return;
       case "/research":
@@ -998,6 +1045,7 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
     }
     setActivePrompt(null);
     setActiveDirectoryPicker(null);
+    setActiveApprovalDialog(null);
     replaceInput("");
     setActiveSelect({ title, options, selectedIndex: 0, onSelect });
   }
@@ -1006,6 +1054,7 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
     const start = homedir();
     setActivePrompt(null);
     setActiveSelect(null);
+    setActiveApprovalDialog(null);
     replaceInput("");
     return new Promise((resolveDirectory) => {
       void loadDirectoryPicker(start, resolveDirectory);
@@ -1115,6 +1164,55 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
     }
   }
 
+  async function resolveApprovalFromCommand(approvalId: string | undefined, decision: ApprovalDialogDecision): Promise<void> {
+    await runBusy(async () => {
+      const selectedId = approvalId?.trim() || (await pendingApprovalRecords(output))[0]?.id;
+      if (!selectedId) {
+        append({ role: "error", title: "Approval id required", text: `Use /${decision === "approved" ? "approve" : "deny"} <approval_id>, or run /approvals to open a pending request.` });
+        return;
+      }
+      await resolveApproval(output, selectedId, decision);
+    });
+  }
+
+  async function resolveActiveApprovalDialog(decision: ApprovalDialogDecision): Promise<void> {
+    const dialog = activeApprovalDialog;
+    if (!dialog) return;
+    setActiveApprovalDialog(null);
+    await runBusy(async () => {
+      await resolveApproval(dialog.outputRoot, dialog.record.id, decision);
+    });
+  }
+
+  async function resolveApproval(root: string, approvalId: string, decision: ApprovalDialogDecision): Promise<void> {
+    const outputRoot = resolve(root);
+    const record = await resolveApprovalRecord(outputRoot, approvalId, decision, {
+      reason: decision === "approved" ? "Approved from TUI." : "Denied from TUI.",
+      events: {
+        emit: (event) => {
+          recordRuntimeEvent(event.run_id, outputRoot, event);
+        }
+      }
+    });
+    append({
+      role: "assistant",
+      title: decision === "approved" ? "Approval granted" : "Approval denied",
+      text: record.action,
+      details: [`Approval: ${record.id}`, `Risk: ${record.risk.join(", ")}`]
+    });
+  }
+
+  async function pendingApprovalRecords(root: string): Promise<ApprovalRecord[]> {
+    return latestApprovalRecords(await readApprovalRecords(root)).filter((record) => record.status === "pending");
+  }
+
+  function openApprovalDialog(record: ApprovalRecord, root: string): void {
+    setActivePrompt(null);
+    setActiveSelect(null);
+    setActiveDirectoryPicker(null);
+    setActiveApprovalDialog({ record, outputRoot: resolve(root), selectedDecision: "approved" });
+  }
+
   function currentRuntimeSnapshot(root: string): TuiRuntimeSnapshot | null {
     if (!runtimeSnapshot) return null;
     return runtimeSnapshot.outputRoot === resolve(root) ? runtimeSnapshot : null;
@@ -1219,6 +1317,7 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
     replaceInput(options.initialValue ?? "");
     setActiveSelect(null);
     setActiveDirectoryPicker(null);
+    setActiveApprovalDialog(null);
     return new Promise((resolve) => {
       setActivePrompt({ message, resolve, ...options });
     });
@@ -1237,6 +1336,15 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
       {showPinnedLimits && pinnedLimits && pageBudget.limitsRows ? <LimitsPanel pinned={pinnedLimits} layout={layout} height={pageBudget.limitsRows} /> : null}
       {activeDirectoryPicker && pageBudget.insightRows ? (
         <DirectoryPickerPanel picker={activeDirectoryPicker} height={pageBudget.insightRows} layout={layout} />
+      ) : activeApprovalDialog && pageBudget.insightRows ? (
+        <ApprovalDialog
+          approvalId={activeApprovalDialog.record.id}
+          action={activeApprovalDialog.record.action}
+          risk={activeApprovalDialog.record.risk.join(", ")}
+          selectedDecision={activeApprovalDialog.selectedDecision}
+          height={pageBudget.insightRows}
+          width={layout.columns}
+        />
       ) : pageBudget.insightRows ? (
         <MainPanels
           height={pageBudget.insightRows}
@@ -1334,7 +1442,7 @@ export function pageBudgetForLayout(
       ? layout.tiny
         ? 3
         : 4
-      : options.mode === "select" || options.mode === "slash"
+      : options.mode === "select" || options.mode === "slash" || options.mode === "approval"
       ? 5 + optionRows
       : options.mode === "prompt"
         ? layout.tiny

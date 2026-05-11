@@ -22,6 +22,7 @@ test("TUI page budget always fits in the terminal page", () => {
     [50, 18, true, "select", 12],
     [60, 12, true, "select", 12],
     [80, 24, false, "directory", 80],
+    [88, 24, false, "approval", 2],
     [96, 24, true, "slash", 8],
     [140, 42, true, "select", 12]
   ];

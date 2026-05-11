@@ -159,6 +159,18 @@ export const slashCommands: SlashCommand[] = [
     description: "Show pending approvals when approval support is available."
   },
   {
+    name: "/approve",
+    usage: "/approve <approval_id>",
+    description: "Approve a pending runtime request.",
+    arguments: ["<approval_id>"]
+  },
+  {
+    name: "/deny",
+    usage: "/deny <approval_id>",
+    description: "Deny a pending runtime request.",
+    arguments: ["<approval_id>"]
+  },
+  {
     name: "/output",
     usage: "/output",
     description: "Prompt for the generated project output directory.",
