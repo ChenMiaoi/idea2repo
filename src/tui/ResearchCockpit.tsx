@@ -292,7 +292,7 @@ function researchThreadEntries(events: Idea2RepoEvent[]): ResearchThreadEntry[] 
         entries.push({ kind: "Evidence", text: `${event.paper_id} p.${event.page}: ${event.claim}`, color: colors.success });
         break;
       case "question.asked":
-        entries.push({ kind: "Question", text: event.question, color: colors.warning });
+        entries.push({ kind: "Question", text: `${event.question} Why: ${event.why_it_matters}`, color: colors.warning });
         break;
       case "score.updated":
         entries.push({ kind: "Score", text: `${event.score}/${event.max_score} confidence ${event.confidence}`, color: colors.accent });

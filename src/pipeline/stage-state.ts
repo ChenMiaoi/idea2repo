@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import type { ClarificationRunProfile } from "../runtime/dialogue.js";
 import { exists } from "../state.js";
 import { researchStages, type ResearchStageId, type ResearchStageStatus } from "./stages.js";
 
@@ -26,6 +27,7 @@ export type ResearchPipelineState = {
   output_root?: string;
   created_at: string;
   updated_at: string;
+  clarification_profile?: ClarificationRunProfile;
   stages: ResearchStageSnapshot[];
 };
 
@@ -36,6 +38,7 @@ export function createResearchPipelineState(idea: string, outputRoot?: string, n
     output_root: outputRoot,
     created_at: now,
     updated_at: now,
+    clarification_profile: undefined,
     stages: researchStages.map((stage) => ({
       id: stage.id,
       status: "pending",
@@ -141,18 +144,26 @@ function timestamp(): string {
 }
 
 function normalizeResearchPipelineState(state: ResearchPipelineState): ResearchPipelineState {
+  const existingById = new Map(state.stages.map((stage) => [stage.id, stage]));
   return {
     ...state,
-    stages: state.stages.map((stage) => ({
-      ...stage,
-      blocker: stage.blocker ?? stage.error,
-      input_refs: stage.input_refs ?? defaultInputRefs(stage.id),
-      output_refs: stage.output_refs ?? stage.artifacts ?? [],
-      artifacts: stage.artifacts ?? stage.output_refs ?? [],
-      evidence_refs: stage.evidence_refs ?? [],
-      decision_ids: stage.decision_ids ?? [],
-      next_actions: stage.next_actions ?? defaultNextActions(stage.id)
-    }))
+    stages: researchStages.map((definition) => {
+      const stage = existingById.get(definition.id);
+      return {
+        id: definition.id,
+        status: stage?.status ?? "pending",
+        started_at: stage?.started_at,
+        completed_at: stage?.completed_at,
+        error: stage?.error,
+        blocker: stage?.blocker ?? stage?.error,
+        input_refs: stage?.input_refs ?? defaultInputRefs(definition.id),
+        output_refs: stage?.output_refs ?? stage?.artifacts ?? [...definition.artifactPaths],
+        artifacts: stage?.artifacts ?? stage?.output_refs ?? [...definition.artifactPaths],
+        evidence_refs: stage?.evidence_refs ?? [],
+        decision_ids: stage?.decision_ids ?? [],
+        next_actions: stage?.next_actions ?? defaultNextActions(definition.id)
+      };
+    })
   };
 }
 

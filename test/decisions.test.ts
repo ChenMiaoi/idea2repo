@@ -51,6 +51,7 @@ test("research pipeline records visible decisions and trace --decisions prints t
       "related_work_analysis",
       "novelty_analysis",
       "ccf_a_strict_scoring",
+      "clarification_dialogue",
       "feasibility_review",
       "better_idea_synthesis",
       "venue_template_packaging"

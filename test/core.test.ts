@@ -85,7 +85,7 @@ test("research generation wires pipeline artifacts and venue-aware paper package
         timelineWeeks: 12
       }
     );
-    assert.equal(result.research_pipeline?.state.stages.length, 13);
+    assert.equal(result.research_pipeline?.state.stages.length, 14);
     assert.equal(result.research_pipeline?.verifiedPapers.length, 0);
     assert.deepEqual(result.research_pipeline?.baselineRecommendations, []);
     assert.deepEqual(result.research_pipeline?.datasetRecommendations, []);

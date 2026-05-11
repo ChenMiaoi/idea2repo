@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import type { ClarificationRunProfile } from "./dialogue.js";
 import { runtimeTimestamp, type EventSink, type Idea2RepoEvent } from "./events.js";
 
 export const RUN_STATE_PATH = join(".idea2repo", "run_state.json");
@@ -17,6 +18,7 @@ export type PersistedRunState = {
   updated_at: string;
   event_count: number;
   last_event_type?: Idea2RepoEvent["type"];
+  clarification_profile?: ClarificationRunProfile;
   result?: unknown;
   error?: string;
 };

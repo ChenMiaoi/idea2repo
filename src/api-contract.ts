@@ -1,4 +1,5 @@
 import type { ApprovalRecord } from "./runtime/approvals.js";
+import type { ClarificationAnswerResult, ClarificationQuestion } from "./runtime/dialogue.js";
 import type { Idea2RepoEvent } from "./runtime/events.js";
 import type { EvidenceItem, ScoreSnapshot } from "./runtime/ledgers.js";
 import type { RuntimeRunSnapshot, RuntimeRunStatus, StageControlResult } from "./runtime/runs.js";
@@ -96,6 +97,7 @@ export type RuntimeRunLinks = {
   artifacts_url: string;
   evidence_url: string;
   score_snapshots_url: string;
+  questions_url: string;
   approvals_url: string;
 };
 
@@ -150,6 +152,20 @@ export type RuntimeScoreSnapshotsResponse = {
   run_id: string;
   score_snapshots: ScoreSnapshot[];
 };
+
+export type RuntimeQuestionsResponse = {
+  run_id: string;
+  questions: ClarificationQuestion[];
+  active: ClarificationQuestion[];
+};
+
+export type ClarificationAnswerRequest = {
+  answer: string;
+  idea?: string;
+  evidence_refs?: string[];
+};
+
+export type ClarificationAnswerResponse = ClarificationAnswerResult;
 
 export type ArtifactProjectionKind = "reports" | "evidence" | "plans" | "paper" | "runtime" | "other";
 

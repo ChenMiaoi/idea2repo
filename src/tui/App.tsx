@@ -2479,7 +2479,7 @@ function runtimeActivityForEvent(event: Idea2RepoEvent): TuiActivity | null {
     case "question.asked":
       return {
         title: "Clarification question",
-        detail: compactText(event.question, 90),
+        detail: compactText(`${event.question} Why: ${event.why_it_matters}`, 90),
         stage: "analysis",
         tone: "warning"
       };

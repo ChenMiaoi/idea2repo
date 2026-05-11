@@ -17,6 +17,7 @@ import { readPlanState } from "./runtime/plan.js";
 import { isFinalStatus, retryRuntimeStage, RunManager, skipRuntimeStage, type RuntimeRunRecord } from "./runtime/runs.js";
 import { CompositeEventSink, JsonlEventSink, readJsonlEvents, type Idea2RepoEvent, type EventSink } from "./runtime/events.js";
 import { restoreArtifactSnapshot } from "./runtime/artifacts.js";
+import { activeClarificationQuestions, answerClarificationQuestion, readClarificationQuestions } from "./runtime/dialogue.js";
 import { readEvidenceLedger, readScoreSnapshots } from "./runtime/ledgers.js";
 import type { ResearchStageId } from "./pipeline/stages.js";
 import type { ArtifactProjection, ArtifactProjectionKind, RuntimeLegacyMode, RuntimeProductMode } from "./api-contract.js";
@@ -129,6 +130,14 @@ async function route(request: IncomingMessage, response: ServerResponse, runMana
       sendJson(response, 200, { run_id: run.id, score_snapshots: (await readScoreSnapshots(run.output_root)).filter((snapshot) => snapshot.run_id === run.id) });
       return;
     }
+    if (suffix === "questions") {
+      sendJson(response, 200, {
+        run_id: run.id,
+        questions: (await readClarificationQuestions(run.output_root)).filter((question) => question.run_id === run.id),
+        active: await activeClarificationQuestions(run.output_root, run.id)
+      });
+      return;
+    }
     if (suffix === "approvals") {
       sendJson(response, 200, { run_id: run.id, approvals: await readApprovalRecords(run.output_root) });
       return;
@@ -205,6 +214,20 @@ async function route(request: IncomingMessage, response: ServerResponse, runMana
         events: runControlEvents(runManager, run)
       });
       sendJson(response, 200, record as unknown as Record<string, unknown>);
+      return;
+    }
+    const questionAction = /^questions\/([^/]+)\/answer$/.exec(suffix);
+    if (questionAction) {
+      const result = await answerClarificationQuestion(run.output_root, {
+        runId: run.id,
+        questionId: decodeURIComponent(questionAction[1]!),
+        answer: requiredString(body.answer, "answer"),
+        idea: stringOrNull(body.idea) ?? undefined,
+        evidenceRefs: stringArray(body.evidence_refs),
+        events: runControlEvents(runManager, run)
+      });
+      runManager.attachClarificationProfile(run.id, result.profile);
+      sendJson(response, 200, result as unknown as Record<string, unknown>);
       return;
     }
     const approvalAction = /^approvals\/([^/]+)$/.exec(suffix);
@@ -461,6 +484,7 @@ function runLinks(runId: string): Record<string, unknown> {
     artifacts_url: `/runs/${encoded}/artifacts`,
     evidence_url: `/runs/${encoded}/evidence`,
     score_snapshots_url: `/runs/${encoded}/scores`,
+    questions_url: `/runs/${encoded}/questions`,
     approvals_url: `/runs/${encoded}/approvals`
   };
 }

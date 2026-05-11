@@ -25,8 +25,12 @@ test("research pipeline emits run and stage events to a sink", async () => {
     assert.equal(events.at(-1)?.type, "run.completed");
     assert.ok(events.some((event) => event.type === "stage.started" && event.stage_id === "idea_intake"));
     assert.ok(events.some((event) => event.type === "stage.completed" && event.stage_id === "ccf_a_strict_scoring"));
+    assert.ok(events.some((event) => event.type === "stage.completed" && event.stage_id === "clarification_dialogue"));
     assert.ok(events.some((event) => event.type === "stage.skipped" && event.stage_id === "pdf_reading"));
     assert.ok(events.some((event) => event.type === "score.updated" && event.score === 45));
+    const question = events.find((event) => event.type === "question.asked") as Extract<(typeof events)[number], { type: "question.asked" }> | undefined;
+    assert.ok(question);
+    assert.match(question.why_it_matters, /cap|score|evidence/i);
     const state = await readResearchPipelineState(root);
     const ideaStage = state?.stages.find((stage) => stage.id === "idea_intake");
     assert.deepEqual(ideaStage?.input_refs, ["idea"]);
@@ -35,6 +39,9 @@ test("research pipeline emits run and stage events to a sink", async () => {
     const pdfStage = state?.stages.find((stage) => stage.id === "pdf_reading");
     assert.equal(pdfStage?.status, "skipped");
     assert.match(pdfStage?.blocker ?? "", /No downloaded PDFs/);
+    const clarificationStage = state?.stages.find((stage) => stage.id === "clarification_dialogue");
+    assert.equal(clarificationStage?.status, "completed");
+    assert.ok(clarificationStage?.decision_ids.length);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

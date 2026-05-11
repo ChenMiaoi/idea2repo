@@ -32,6 +32,7 @@ test("runtime API starts runs and streams shared runtime events over SSE", async
     assert.match(started.event_replay_url, /\/events\/replay$/);
     assert.match(started.evidence_url, /\/evidence$/);
     assert.match(started.score_snapshots_url, /\/scores$/);
+    assert.match(started.questions_url, /\/questions$/);
 
     const eventsResponse = await fetch(`${server.url}/runs/${started.run_id}/events`);
     const eventsText = await eventsResponse.text();
@@ -64,6 +65,7 @@ test("runtime API starts runs and streams shared runtime events over SSE", async
     assert.match(listedRun.artifacts_url, /\/artifacts$/);
     assert.match(listedRun.evidence_url, /\/evidence$/);
     assert.match(listedRun.score_snapshots_url, /\/scores$/);
+    assert.match(listedRun.questions_url, /\/questions$/);
 
     const plan = await getJson(`${server.url}/runs/${started.run_id}/plan`);
     assert.equal(plan.plan.version, 1);
@@ -85,6 +87,25 @@ test("runtime API starts runs and streams shared runtime events over SSE", async
     assert.ok(Array.isArray(evidence.current));
     const scores = await getJson(`${server.url}/runs/${started.run_id}/scores`);
     assert.ok(scores.score_snapshots.some((snapshot: { score: number; hard_blockers: string[] }) => snapshot.score === 45 && snapshot.hard_blockers.includes("No PDF read")));
+    const questions = await getJson(`${server.url}/runs/${started.run_id}/questions`);
+    assert.ok(Array.isArray(questions.questions));
+    assert.ok(Array.isArray(questions.active));
+    assert.ok(questions.active.length > 0);
+    assert.ok(questions.active.length <= 3);
+    assert.equal(typeof questions.active[0].whyItMatters, "string");
+    const relatedWorkQuestion = questions.active.find((question: { topic: string }) => question.topic === "related_work") ?? questions.active[0];
+    const answeredQuestion = await postJson(`${server.url}/runs/${started.run_id}/questions/${relatedWorkQuestion.id}/answer`, {
+      answer: "Use five target-venue papers as the closest related-work anchors.",
+      idea: "A local-first agent runtime with evidence-gated literature review and live plan updates."
+    });
+    assert.equal(answeredQuestion.question.status, "answered");
+    assert.equal(answeredQuestion.score_snapshot.stage_id, "clarification_dialogue");
+    assert.equal(answeredQuestion.question.scoreInput.pdfReadCount, 0);
+    assert.ok(answeredQuestion.question.answer_effect.profile_patch.updated_idea.includes("Clarification"));
+    assert.ok(answeredQuestion.profile.updated_idea.includes("five target-venue papers"));
+    const runAfterAnswer = await getJson(`${server.url}/runs/${started.run_id}`);
+    assert.ok(runAfterAnswer.clarification_profile.updated_idea.includes("five target-venue papers"));
+    assert.ok(String(runAfterAnswer.idea).includes("Clarification"));
     await replaceEvidenceItems(output, { runId: "other-run", stageId: "pdf_reading" }, evidenceItemsFromRows({
       runId: "other-run",
       chunks: [{
@@ -123,7 +144,8 @@ test("runtime API starts runs and streams shared runtime events over SSE", async
     const finalRunCompletedIndex = trace.map((event) => event.type).lastIndexOf("run.completed");
     assert.ok(firstArtifactIndex >= 0);
     assert.ok(finalRunCompletedIndex > firstArtifactIndex);
-    assert.equal(trace.at(-1)?.type, "run.completed");
+    assert.equal(trace[finalRunCompletedIndex]?.type, "run.completed");
+    assert.ok(trace.some((event) => event.type === "score.updated" && event.stage_id === "clarification_dialogue"));
 
     const skipped = await postJson(`${server.url}/runs/${started.run_id}/stages/pdf_reading/skip`, { reason: "Manual API skip for offline recovery test." });
     assert.equal(skipped.action, "skip");

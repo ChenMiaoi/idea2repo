@@ -8,6 +8,7 @@ export const researchStageIds = [
   "related_work_analysis",
   "novelty_analysis",
   "ccf_a_strict_scoring",
+  "clarification_dialogue",
   "feasibility_review",
   "better_idea_synthesis",
   "artifact_writing",
@@ -100,8 +101,15 @@ export const researchStages: ResearchStageDefinition[] = [
     artifactPaths: ["docs/diagnosis/ccf_a_strict_scorecard.md"]
   },
   {
-    id: "feasibility_review",
+    id: "clarification_dialogue",
     index: 9,
+    label: "Clarification dialogue",
+    deterministic: true,
+    artifactPaths: ["docs/diagnosis/clarification_questions.md"]
+  },
+  {
+    id: "feasibility_review",
+    index: 10,
     label: "Feasibility review",
     prompt: "07_feasibility_reviewer.md",
     deterministic: false,
@@ -109,7 +117,7 @@ export const researchStages: ResearchStageDefinition[] = [
   },
   {
     id: "better_idea_synthesis",
-    index: 10,
+    index: 11,
     label: "Better idea synthesis",
     prompt: "08_research_strategist.md",
     deterministic: false,
@@ -122,7 +130,7 @@ export const researchStages: ResearchStageDefinition[] = [
   },
   {
     id: "artifact_writing",
-    index: 11,
+    index: 12,
     label: "Artifact writing",
     prompt: "09_artifact_writer.md",
     deterministic: false,
@@ -130,7 +138,7 @@ export const researchStages: ResearchStageDefinition[] = [
   },
   {
     id: "venue_template_packaging",
-    index: 12,
+    index: 13,
     label: "Venue template packaging",
     prompt: "10_venue_template_selector.md",
     prompts: ["10_venue_template_selector.md", "11_latex_template_packager.md", "12_template_compliance_reviewer.md"],

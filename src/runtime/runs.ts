@@ -11,6 +11,7 @@ import { readPlanState, writePlanState, type PlanState } from "./plan.js";
 import { readRuntimeRunContext } from "./run-context.js";
 import { JsonlEventSink, EventBus, readJsonlEvents, runtimeTimestamp, type EventSink, type EventListener, type Idea2RepoEvent } from "./events.js";
 import { refreshManifestArtifactHashes, snapshotArtifact, type ArtifactSnapshotRecord } from "./artifacts.js";
+import type { ClarificationRunProfile } from "./dialogue.js";
 import { createRunState, writeRunState, type RuntimeRunStatus } from "./run-state.js";
 
 export type { RuntimeRunStatus } from "./run-state.js";
@@ -23,6 +24,7 @@ export type RuntimeRunSnapshot = {
   created_at: string;
   updated_at: string;
   event_count: number;
+  clarification_profile?: ClarificationRunProfile;
   result?: unknown;
   error?: string;
 };
@@ -113,6 +115,16 @@ export class RunManager {
     return run ? { emit: (event) => run.bus.emit(event) } : null;
   }
 
+  attachClarificationProfile(runId: string, profile: ClarificationRunProfile): RuntimeRunSnapshot | null {
+    const run = this.runs.get(runId);
+    if (!run) return null;
+    run.idea = profile.updated_idea;
+    run.clarification_profile = profile;
+    run.updated_at = profile.updated_at;
+    this.persistRunState(run);
+    return this.snapshot(run);
+  }
+
   async cancel(runId: string, reason = "cancel requested"): Promise<RuntimeRunSnapshot | null> {
     const run = this.runs.get(runId);
     if (!run) return null;
@@ -154,6 +166,7 @@ export class RunManager {
       created_at: run.created_at,
       updated_at: run.updated_at,
       event_count: run.event_count,
+      ...(run.clarification_profile ? { clarification_profile: run.clarification_profile } : {}),
       ...(lastEventType ? { last_event_type: lastEventType } : {}),
       ...(run.result ? { result: run.result } : {}),
       ...(run.error ? { error: run.error } : {})
@@ -169,6 +182,7 @@ export class RunManager {
       created_at: run.created_at,
       updated_at: run.updated_at,
       event_count: run.event_count,
+      ...(run.clarification_profile ? { clarification_profile: run.clarification_profile } : {}),
       ...(run.result ? { result: run.result } : {}),
       ...(run.error ? { error: run.error } : {})
     };

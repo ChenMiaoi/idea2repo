@@ -52,6 +52,14 @@ import { ApprovalRecorder, approvalPolicyForMode, type ApprovalPolicy, type Appr
 import { DecisionRecorder } from "../runtime/decisions.js";
 import { runtimeTimestamp, type EventSink, type Idea2RepoEvent } from "../runtime/events.js";
 import { appendScoreSnapshot, ensureRuntimeLedgers, evidenceItemsFromRows, replaceEvidenceItems, scoreSnapshotFromStrictScore } from "../runtime/ledgers.js";
+import {
+  activeClarificationQuestions,
+  clarificationQuestionsMarkdown,
+  ensureClarificationQuestionsLedger,
+  generateClarificationQuestions,
+  recordClarificationQuestions,
+  type ClarificationQuestion
+} from "../runtime/dialogue.js";
 import { createCoreToolRegistry, createToolContext, type ToolContext, type ToolRegistry } from "../runtime/tools.js";
 import { CODEX_CLI_PROVIDER_ID, OFFLINE_PROVIDER_ID, apiShapeForProvider, canonicalProvider } from "../providers.js";
 import { createProviderAdapter } from "../providers/index.js";
@@ -137,7 +145,10 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
   }
   const toolRegistry = createCoreToolRegistry();
   const approvalPolicy = options.approvalPolicy ?? approvalPolicyForMode("generate", { allowNetwork: Boolean(options.allowNetwork), allowOverwrite: true });
-  if (options.outputRoot) await ensureRuntimeLedgers(outputRoot);
+  if (options.outputRoot) {
+    await ensureRuntimeLedgers(outputRoot);
+    await ensureClarificationQuestionsLedger(outputRoot);
+  }
   const restoredState = options.outputRoot ? await readResearchPipelineState(outputRoot) : null;
   if (restoredState && restoredState.idea !== idea) throw new Error(`research pipeline state belongs to a different idea: ${restoredState.idea}`);
   let state = restoredState ?? createResearchPipelineState(idea, options.outputRoot);
@@ -577,7 +588,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
 
   const verifiedPaperCount = verifiedEvidencePaperCount(evidenceRows);
   const evidence = evidenceText(evidenceRows);
-  const score = await toolRegistry.execute<StrictScoreInput, StrictScoreResult>("ccf_a.score", {
+  const scoreInput: StrictScoreInput = {
     verifiedRelatedWorkCount: verifiedPaperCount,
     pdfReadCount: new Set(chunks.map((chunk) => chunk.paper_id)).size,
     corePaperCount: verifiedPaperCount,
@@ -594,7 +605,8 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     hasPrototype: evidence.includes("prototype"),
     venueExpectsStrongMlBaselines: /neurips|icml|iclr|acl/i.test(options.venue ?? ""),
     hasStrongMlBaselines: evidence.includes("baseline")
-  }, toolContext);
+  };
+  const score = await toolRegistry.execute<StrictScoreInput, StrictScoreResult>("ccf_a.score", scoreInput, toolContext);
   const scoreConfidence = hasVerifiedPdfEvidence ? 0.65 : 0.4;
   if (options.outputRoot) {
     await appendScoreSnapshot(outputRoot, scoreSnapshotFromStrictScore({
@@ -640,6 +652,58 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     await setStage("ccf_a_strict_scoring", "completed");
   } else {
     await preserveStageArtifacts("ccf_a_strict_scoring");
+  }
+
+  let clarificationQuestions: ClarificationQuestion[] = [];
+  if (await canResumeStage("clarification_dialogue")) {
+    clarificationQuestions = options.outputRoot ? await activeClarificationQuestions(outputRoot, runId).catch(() => []) : [];
+    await preserveStageArtifacts("clarification_dialogue");
+  } else {
+    await setStage("clarification_dialogue", "running");
+    const existingQuestions = options.outputRoot ? await activeClarificationQuestions(outputRoot, runId).catch(() => []) : [];
+    const generatedQuestions = generateClarificationQuestions({
+      runId,
+      idea,
+      score,
+      scoreInput,
+      novelty,
+      evidenceRefs: evidenceItems.map((item) => item.id),
+      existing: existingQuestions
+    });
+    if (options.outputRoot) await recordClarificationQuestions(outputRoot, generatedQuestions, { runId });
+    clarificationQuestions = options.outputRoot
+      ? await activeClarificationQuestions(outputRoot, runId).catch(() => [...existingQuestions, ...generatedQuestions])
+      : [...existingQuestions, ...generatedQuestions];
+    for (const question of generatedQuestions) {
+      await emitRuntimeEvent({
+        type: "question.asked",
+        run_id: runId,
+        question_id: question.id,
+        question: question.question,
+        why_it_matters: question.whyItMatters,
+        related_score_dimensions: question.relatedScoreDimensions,
+        evidence_refs: question.evidenceRefs,
+        options: question.options,
+        required: question.required,
+        timestamp: question.created_at
+      });
+    }
+    await recordDecision({
+      stage_id: "clarification_dialogue",
+      title: "Clarification questions selected",
+      rationale_summary: generatedQuestions.length
+        ? `Generated ${generatedQuestions.length} uncertainty-driven clarification question(s) from score caps and novelty gaps.`
+        : "No clarification question was generated because the current score and novelty state did not expose a new active uncertainty.",
+      inputs_considered: [
+        `score=${score.total}`,
+        `caps=${score.caps.map((cap) => cap.reason).join("; ") || "none"}`,
+        `novelty_collision=${novelty.collision_risk}`
+      ],
+      evidence_refs: [{ artifact: "docs/diagnosis/clarification_questions.md" }],
+      alternatives: [{ option: "Ask an open-ended follow-up", why_not: "Questions are constrained to score dimensions so answers can deterministically refresh readiness." }],
+      confidence: generatedQuestions.length ? "high" : "medium"
+    });
+    await setStage("clarification_dialogue", generatedQuestions.length ? "completed" : "skipped", generatedQuestions.length ? undefined : "No active clarification question required.");
   }
 
   let agentFeasibility: FeasibilityReview | null = null;
@@ -748,6 +812,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     noteArtifacts,
     novelty,
     score,
+    clarificationQuestions,
     searchReport,
     baselineRecommendations,
     datasetRecommendations,
@@ -848,6 +913,7 @@ function pipelineArtifacts(input: {
   noteArtifacts: Record<string, string>;
   novelty: ReturnType<typeof assessNovelty>;
   score: StrictScoreResult;
+  clarificationQuestions: ClarificationQuestion[];
   searchReport: string;
   baselineRecommendations: string[];
   datasetRecommendations: string[];
@@ -878,6 +944,7 @@ function pipelineArtifacts(input: {
     "docs/relative_work/novelty_gap_matrix.md": input.agentNovelty ? `${noveltyMatrixMarkdown(input.novelty)}\n## Agent Novelty Review\n\n${agentNoveltyMarkdown(input.agentNovelty)}` : noveltyMatrixMarkdown(input.novelty),
     "docs/relative_work/collision_risk.md": `# Collision Risk\n\n${input.novelty.collision_risk}\n\n${input.novelty.reasons.map((reason) => `- ${reason}`).join("\n")}\n`,
     "docs/relative_work/baseline_recommendations.md": `# Baseline Recommendations\n\n${input.baselineRecommendations.length ? input.baselineRecommendations.map((item) => `- ${item}`).join("\n") : "- Blocked until verified PDF evidence identifies reviewer-expected baselines."}\n`,
+    "docs/diagnosis/clarification_questions.md": clarificationQuestionsMarkdown(input.clarificationQuestions),
     "docs/reference/pdf_chunks.json": JSON.stringify(input.chunks, null, 2) + "\n",
     "docs/diagnosis/feasibility_report.md": input.agentFeasibility ? agentFeasibilityMarkdown(input.agentFeasibility) : feasibilityMarkdown(input.ideaBrief.resource_constraints, 12),
     "docs/diagnosis/reviewer_panel.md": agentReviewerPanelMarkdown(input.agentRelatedWork, input.agentNovelty, input.agentScore, input.agentFeasibility),

@@ -18,7 +18,7 @@ test("offline research pipeline returns resumable stage state and core artifacts
     provider: "offline",
     strictCcfA: true
   });
-  assert.equal(result.state.stages.length, 13);
+  assert.equal(result.state.stages.length, 14);
   const statuses = Object.fromEntries(result.state.stages.map((stage) => [stage.id, stage.status]));
   assert.equal(statuses.idea_intake, "completed");
   assert.equal(statuses.search_planning, "completed");
@@ -27,12 +27,14 @@ test("offline research pipeline returns resumable stage state and core artifacts
   assert.equal(statuses.pdf_reading, "skipped");
   assert.equal(statuses.related_work_analysis, "skipped");
   assert.equal(statuses.ccf_a_strict_scoring, "completed");
+  assert.equal(statuses.clarification_dialogue, "completed");
   assert.equal(statuses.venue_template_packaging, "completed");
   assert.equal(result.searchPlan.precision_queries.length >= 5, true);
   assert.equal(result.searchPlan.recall_queries.length >= 5, true);
   assert.equal(validateWithSchema<ResearchPipelineSchemaResult>(ResearchPipelineResultSchema, result, "ResearchPipelineResult"), result);
   assert.ok(result.artifacts["docs/relative_work/search_plan.json"]);
   assert.ok(result.artifacts["docs/diagnosis/ccf_a_strict_scorecard.md"]?.includes("Strict mode: enabled"));
+  assert.ok(result.artifacts["docs/diagnosis/clarification_questions.md"]?.includes("Why it matters"));
   assert.ok(result.artifacts["docs/diagnosis/feasibility_report.md"]);
   assert.ok(result.artifacts["docs/proposal/revised_idea.md"]);
   assert.ok(result.artifacts["docs/submission/template_compliance_report.md"]?.includes("Status: passed"));
