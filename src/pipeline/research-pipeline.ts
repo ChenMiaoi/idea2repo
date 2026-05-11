@@ -1,7 +1,35 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { CandidateTriage, FeasibilityReview, IdeaBrief, NoveltyGapAnalysis, PdfPaperNote, RelatedWorkAnalysis, ResearchStrategy, SearchPlan, StrictCcfAReview } from "../agents/schemas.js";
+import {
+  CandidateTriageSchema,
+  FeasibilityReviewSchema,
+  IdeaBriefSchema,
+  NoveltyGapAnalysisSchema,
+  PdfPaperNoteSchema,
+  RelatedWorkAnalysisSchema,
+  ResearchStrategySchema,
+  SearchPlanSchema,
+  StrictCcfAReviewSchema,
+  validateCandidateTriage,
+  validateFeasibilityReview,
+  validateIdeaBrief,
+  validateNoveltyGapAnalysis,
+  validatePdfPaperNote,
+  validateRelatedWorkAnalysis,
+  validateResearchStrategy,
+  validateSearchPlan,
+  validateStrictCcfAReview,
+  type CandidateTriage,
+  type FeasibilityReview,
+  type IdeaBrief,
+  type NoveltyGapAnalysis,
+  type PdfPaperNote,
+  type RelatedWorkAnalysis,
+  type ResearchStrategy,
+  type SearchPlan,
+  type StrictCcfAReview
+} from "../agents/schemas.js";
 import { CodexOAuthClient } from "../auth/codex-oauth.js";
 import { paperCandidateToRecord, type LiteratureSearchOptions, type LiteratureSearchResult, type PaperRecord } from "../literature.js";
 import { diagnoseIdea } from "../scoring.js";
@@ -24,6 +52,9 @@ import { approvalPolicyForMode } from "../runtime/approvals.js";
 import { DecisionRecorder } from "../runtime/decisions.js";
 import { runtimeTimestamp, type EventSink, type Idea2RepoEvent } from "../runtime/events.js";
 import { createCoreToolRegistry, createToolContext } from "../runtime/tools.js";
+import { CODEX_CLI_PROVIDER_ID, OFFLINE_PROVIDER_ID, apiShapeForProvider, canonicalProvider } from "../providers.js";
+import { createProviderAdapter } from "../providers/index.js";
+import type { ProviderAdapter } from "../providers/adapter.js";
 import { createResearchPipelineState, markStage, readResearchPipelineState, writeResearchPipelineState, type ResearchPipelineState } from "./stage-state.js";
 import { researchStages } from "./stages.js";
 
@@ -914,11 +945,131 @@ function parseIdeaBriefArtifact(markdown: string): IdeaBrief | null {
 
 function createStagedAgent(options: ResearchPipelineOptions): StagedResearchAgent | null {
   if (options.agentClient) return options.agentClient;
-  if (!options.allowNetwork || options.provider === "offline") return null;
-  return new CodexOAuthClient({
-    model: options.model ?? undefined,
-    reasoningEffort: options.reasoningEffort ?? undefined
-  });
+  if (options.provider === OFFLINE_PROVIDER_ID || (!options.allowNetwork && options.provider !== CODEX_CLI_PROVIDER_ID)) return null;
+  const provider = canonicalProvider(options.provider, false);
+  return new AdapterStagedResearchAgent(createProviderAdapter(provider), options);
+}
+
+class AdapterStagedResearchAgent implements StagedResearchAgent {
+  constructor(
+    private readonly adapter: ProviderAdapter,
+    private readonly options: ResearchPipelineOptions
+  ) {}
+
+  async intakeIdea(
+    idea: string,
+    context: { requestedDomains?: string[]; targetVenues?: string[]; timelineWeeks?: number; resources?: string[] } = {},
+    progress?: (message: string) => void
+  ): Promise<{ idea_brief: IdeaBrief; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const ideaBrief = await this.structured("IdeaBrief", IdeaBriefSchema, validateIdeaBrief, "00_intake_router.md", "Convert the idea into a precise search-ready research brief.", { idea, ...context }, progress);
+    return this.result({ idea_brief: ideaBrief });
+  }
+
+  async planLiteratureSearch(
+    idea: string,
+    context: { requestedDomains?: string[]; targetVenues?: string[]; timelineWeeks?: number; resources?: string[] } = {},
+    progress?: (message: string) => void
+  ): Promise<{ search_plan: SearchPlan; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const searchPlan = await this.structured("SearchPlan", SearchPlanSchema, validateSearchPlan, "01_search_planner.md", "Plan literature search queries for the idea.", { idea, ...context }, progress);
+    return this.result({ search_plan: searchPlan });
+  }
+
+  async triagePaperCandidates(
+    idea: string,
+    candidates: unknown[],
+    progress?: (message: string) => void
+  ): Promise<{ triage: CandidateTriage; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const triage = await this.structured("CandidateTriage", CandidateTriageSchema, validateCandidateTriage, "02_candidate_triage.md", "Triage paper candidates before novelty judgment.", { idea, candidates }, progress);
+    return this.result({ triage });
+  }
+
+  async readPaperPdf(
+    idea: string,
+    paper: unknown,
+    chunks: unknown[],
+    progress?: (message: string) => void
+  ): Promise<{ paper_note: PdfPaperNote; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const paperNote = await this.structured("PdfPaperNote", PdfPaperNoteSchema, validatePdfPaperNote, "03_pdf_paper_reader.md", "Read parsed PDF chunks and extract evidence only from the chunks.", { idea, paper, chunks }, progress);
+    return this.result({ paper_note: paperNote });
+  }
+
+  async analyzeRelatedWork(
+    idea: string,
+    paperNotes: unknown[],
+    progress?: (message: string) => void
+  ): Promise<{ related_work: RelatedWorkAnalysis; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const relatedWork = await this.structured("RelatedWorkAnalysis", RelatedWorkAnalysisSchema, validateRelatedWorkAnalysis, "04_related_work_analyst.md", "Synthesize verified paper notes into a related-work map.", { idea, paper_notes: paperNotes }, progress);
+    return this.result({ related_work: relatedWork });
+  }
+
+  async analyzeNovelty(
+    idea: string,
+    relatedWork: unknown,
+    progress?: (message: string) => void
+  ): Promise<{ novelty: NoveltyGapAnalysis; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const novelty = await this.structured("NoveltyGapAnalysis", NoveltyGapAnalysisSchema, validateNoveltyGapAnalysis, "05_novelty_gap_analyst.md", "Compare the idea against verified related work and identify defensible gaps.", { idea, related_work: relatedWork }, progress);
+    return this.result({ novelty });
+  }
+
+  async scoreCcfA(
+    idea: string,
+    evidence: unknown,
+    progress?: (message: string) => void
+  ): Promise<{ scorecard: StrictCcfAReview; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const scorecard = await this.structured("StrictCcfAReview", StrictCcfAReviewSchema, validateStrictCcfAReview, "06_ccf_a_reviewer.md", "Apply the strict CCF-A evidence rubric and cap rules.", { idea, evidence }, progress);
+    return this.result({ scorecard });
+  }
+
+  async reviewFeasibility(
+    idea: string,
+    constraints: unknown,
+    progress?: (message: string) => void
+  ): Promise<{ feasibility: FeasibilityReview; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const feasibility = await this.structured("FeasibilityReview", FeasibilityReviewSchema, validateFeasibilityReview, "07_feasibility_reviewer.md", "Review feasibility under the provided time and resource constraints.", { idea, constraints }, progress);
+    return this.result({ feasibility });
+  }
+
+  async refineIdea(
+    idea: string,
+    reviewContext: unknown,
+    progress?: (message: string) => void
+  ): Promise<{ strategy: ResearchStrategy; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const strategy = await this.structured("ResearchStrategy", ResearchStrategySchema, validateResearchStrategy, "08_research_strategist.md", "Propose a revised defensible research direction after strict review.", { idea, review_context: reviewContext }, progress);
+    return this.result({ strategy });
+  }
+
+  private async structured<T>(
+    schemaName: string,
+    outputSchema: object,
+    validate: (value: unknown) => T,
+    promptFile: Parameters<ProviderAdapter["structured"]>[0]["promptFile"],
+    task: string,
+    context: unknown,
+    progress?: (message: string) => void
+  ): Promise<T> {
+    return await this.adapter.structured({
+      task,
+      promptFile,
+      context,
+      schemaName,
+      outputSchema,
+      validate,
+      model: this.options.model ?? undefined,
+      reasoningEffort: this.options.reasoningEffort ?? undefined,
+      events: this.options.events,
+      progress
+    });
+  }
+
+  private result<T extends Record<string, unknown>>(payload: T): T & { provider_id: string; api_shape: string; codex_model: string; events: unknown[] } {
+    return {
+      ...payload,
+      provider_id: this.adapter.id,
+      api_shape: apiShapeForProvider(this.adapter.id),
+      codex_model: this.options.model ?? "",
+      events: []
+    };
+  }
 }
 
 async function stagedOrFallback<T>(run: () => Promise<T> | undefined, fallback: () => T | Promise<T>, warnings: string[], label: string): Promise<T> {

@@ -4,7 +4,17 @@ import { CodexCliAdapter } from "./codex-cli.js";
 import { OfflineAdapter } from "./offline.js";
 import type { ProviderAdapter } from "./adapter.js";
 
+let providerAdapterFactory: (id: string) => ProviderAdapter = defaultProviderAdapterFactory;
+
 export function createProviderAdapter(id: string): ProviderAdapter {
+  return providerAdapterFactory(id);
+}
+
+export function setProviderAdapterFactoryForTests(factory: ((id: string) => ProviderAdapter) | null): void {
+  providerAdapterFactory = factory ?? defaultProviderAdapterFactory;
+}
+
+function defaultProviderAdapterFactory(id: string): ProviderAdapter {
   if (id === OFFLINE_PROVIDER_ID) return new OfflineAdapter();
   if (id === OPENAI_CODEX_PROVIDER_ID) return new OpenAICodexOAuthAdapter();
   if (id === CODEX_CLI_PROVIDER_ID) return new CodexCliAdapter();

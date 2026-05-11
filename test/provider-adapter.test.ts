@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { generateResearchRepo } from "../src/generator.js";
-import { OFFLINE_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../src/providers.js";
-import { CodexCliAdapter, OpenAICodexOAuthAdapter, OfflineAdapter, createProviderAdapter } from "../src/providers/index.js";
+import { CODEX_CLI_PROVIDER_ID, OFFLINE_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../src/providers.js";
+import { CodexCliAdapter, OpenAICodexOAuthAdapter, OfflineAdapter, createProviderAdapter, setProviderAdapterFactoryForTests } from "../src/providers/index.js";
+import { runResearchPipeline } from "../src/pipeline/research-pipeline.js";
 import { validateResearchAnalysis, type ResearchAnalysis } from "../src/types.js";
+import type { ProviderAdapter, StructuredRequest } from "../src/providers/adapter.js";
 
 test("offline provider adapter returns schema-valid deterministic research analysis", async () => {
   const adapter = new OfflineAdapter();
@@ -63,6 +65,75 @@ test("Codex OAuth adapter delegates structured ResearchAnalysis requests to the 
     reasoningEffort: "low"
   });
   assert.equal(analysis.idea_summary, "Adapter test");
+});
+
+test("research pipeline uses provider adapter for Codex CLI staged agents", async () => {
+  const calls: string[] = [];
+  const adapter: ProviderAdapter = {
+    id: CODEX_CLI_PROVIDER_ID,
+    available: async () => true,
+    status: async () => ({ id: CODEX_CLI_PROVIDER_ID, available: true }),
+    structured: async <T>(request: StructuredRequest<T>) => {
+      calls.push(`${request.schemaName}:${request.promptFile ?? ""}`);
+      if (request.schemaName === "IdeaBrief") {
+        return request.validate({
+          idea_summary: "Adapter-driven pipeline idea.",
+          problem: "Need adapter driven staged agents.",
+          target_domain: "AI / LLM Agent",
+          target_venues: ["NeurIPS"],
+          method_keywords: ["agent", "runtime"],
+          task_keywords: ["benchmark"],
+          evaluation_keywords: ["baseline", "dataset", "metric"],
+          resource_constraints: ["single researcher"],
+          missing_information: [],
+          assumptions: ["adapter test"],
+          search_seed_terms: ["agent", "runtime", "benchmark"]
+        }) as T;
+      }
+      if (request.schemaName === "SearchPlan") {
+        const query = (suffix: string) => ({ query: `adapter runtime ${suffix}`, source_hints: ["openalex"], purpose: "adapter test" });
+        return request.validate({
+          core_concepts: ["adapter", "runtime"],
+          synonyms: ["agent"],
+          precision_queries: ["a", "b", "c", "d", "e"].map(query),
+          recall_queries: ["f", "g", "h", "i", "j"].map(query),
+          baseline_queries: [query("baseline")],
+          dataset_metric_queries: [query("dataset metric")],
+          venue_queries: [query("neurips")],
+          collision_queries: [query("collision")],
+          stop_condition: "stop after adapter test"
+        }) as T;
+      }
+      if (request.schemaName === "FeasibilityReview") {
+        return request.validate({
+          timeline_weeks: 12,
+          feasible_mvp: ["adapter mvp"],
+          ambitious_extensions: [],
+          risks: ["adapter risk"],
+          unavailable_resource_warnings: [],
+          verdict: "feasible for adapter test"
+        }) as T;
+      }
+      throw new Error(`unexpected schema ${request.schemaName}`);
+    }
+  };
+  setProviderAdapterFactoryForTests((id) => {
+    assert.equal(id, CODEX_CLI_PROVIDER_ID);
+    return adapter;
+  });
+  try {
+    const result = await runResearchPipeline("Adapter pipeline test", {
+      provider: CODEX_CLI_PROVIDER_ID,
+      allowNetwork: false,
+      timelineWeeks: 12,
+      resources: ["single researcher"]
+    });
+    assert.deepEqual(calls.slice(0, 2), ["IdeaBrief:00_intake_router.md", "SearchPlan:01_search_planner.md"]);
+    assert.ok(calls.includes("FeasibilityReview:07_feasibility_reviewer.md"));
+    assert.equal(result.ideaBrief.idea_summary, "Adapter-driven pipeline idea.");
+  } finally {
+    setProviderAdapterFactoryForTests(null);
+  }
 });
 
 test("generation uses the offline provider adapter while preserving offline fallback metadata", async () => {
