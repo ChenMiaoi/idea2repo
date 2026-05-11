@@ -18,10 +18,10 @@ import {
 import { diagnoseIdea, type Diagnosis } from "./scoring.js";
 import { safeSecurityReframe, securityGuardrailMarkdown } from "./security.js";
 import { appendRunLog, ensureChild, exists, readManifest, RUN_LOG_PATH, writeManifest, writeText } from "./state.js";
-import type { ProjectManifest, ResearchAnalysis } from "./types.js";
+import { validateResearchAnalysis, type ProjectManifest, type ResearchAnalysis } from "./types.js";
 import { inspectWorkspace } from "./workspace.js";
 import { runWorkflow, workflowSummary } from "./workflow.js";
-import { CodexOAuthClient } from "./auth/codex-oauth.js";
+import { createProviderAdapter } from "./providers/index.js";
 import { runResearchPipeline, type ResearchPipelineResult } from "./pipeline/research-pipeline.js";
 import { JsonlEventSink } from "./runtime/events.js";
 import { PlanEventSink } from "./runtime/plan.js";
@@ -369,11 +369,6 @@ async function analyzeWithProvider(
 ): Promise<ProviderAnalysis> {
   const selectedProvider = canonicalProvider(options.provider, Boolean(options.offline));
   const selectedApiShape = apiShapeForProvider(selectedProvider);
-  if (selectedProvider === OFFLINE_PROVIDER_ID) {
-    options.progressCallback?.("Provider: offline");
-    options.progressCallback?.("Analysis: offline deterministic fallback");
-    return { analysis: null, selectedProvider, selectedApiShape, fallbackReason: "offline mode requested" };
-  }
   if (selectedProvider === CODEX_CLI_PROVIDER_ID) {
     return {
       analysis: null,
@@ -384,19 +379,28 @@ async function analyzeWithProvider(
   }
   try {
     options.progressCallback?.(`Provider: ${selectedProvider}`);
-    const client = new CodexOAuthClient({
+    const adapter = createProviderAdapter(selectedProvider);
+    const analysis = await adapter.structured({
+      task: "Analyze an early research idea into the Idea2Repo ResearchAnalysis schema.",
+      schemaName: "ResearchAnalysis",
+      context: {
+        idea,
+        requestedDomains: options.requestedDomains,
+        timelineWeeks: options.timelineWeeks,
+        resources: options.resources,
+        stack: options.stack
+      },
+      validate: validateResearchAnalysis,
       model: options.model ?? undefined,
-      reasoningEffort: options.reasoningEffort ?? undefined
-    });
-    const result = await client.analyzeIdea(idea, {
-      requestedDomains: options.requestedDomains,
-      timelineWeeks: options.timelineWeeks,
-      resources: options.resources,
-      stack: options.stack,
+      reasoningEffort: options.reasoningEffort ?? undefined,
       progress: options.progressCallback
     });
-    const analysis = result.analysis;
-    return { analysis, selectedProvider, selectedApiShape, fallbackReason: "" };
+    return {
+      analysis: selectedProvider === OFFLINE_PROVIDER_ID ? null : analysis,
+      selectedProvider,
+      selectedApiShape,
+      fallbackReason: selectedProvider === OFFLINE_PROVIDER_ID ? "offline mode requested" : ""
+    };
   } catch (error) {
     options.progressCallback?.("Analysis: provider fallback selected");
     return {
