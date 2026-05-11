@@ -13,6 +13,16 @@ export function templateProfilesDir(): string {
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
 }
 
+export function latexTemplatesDir(): string {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    resolve(process.cwd(), "data", "latex_templates"),
+    resolve(moduleDir, "..", "data", "latex_templates"),
+    resolve(moduleDir, "..", "..", "..", "data", "latex_templates")
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
+}
+
 export function loadTemplateProfiles(path = templateProfilesDir()): VenueTemplateProfile[] {
   return readdirSync(path)
     .filter((file) => file.endsWith(".json"))

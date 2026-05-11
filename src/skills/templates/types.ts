@@ -57,3 +57,52 @@ export type TemplateResolveResult = {
   needsOfficialVerification: boolean;
   verificationTasks: string[];
 };
+
+export type PaperSection = {
+  id: string;
+  title: string;
+  body: string;
+};
+
+export type PaperRenderInput = {
+  profile: VenueTemplateProfile;
+  projectName: string;
+  title: string;
+  anonymous: boolean;
+  reviewMode?: ReviewMode;
+  sections?: PaperSection[];
+  bibFile?: string;
+  macrosFile?: string;
+};
+
+export type PaperRenderResult = {
+  files: Record<string, string>;
+  warnings: string[];
+};
+
+export type TemplateComplianceCheck = {
+  id: string;
+  status: "passed" | "failed" | "warning";
+  message: string;
+};
+
+export type TemplateComplianceResult = {
+  status: "passed" | "failed";
+  checks: TemplateComplianceCheck[];
+  errors: string[];
+  warnings: string[];
+};
+
+export type PaperCompileResult = {
+  compile_status: "passed" | "failed" | "skipped";
+  engine: "latexmk" | "tectonic" | "static";
+  pdf_path: string;
+  errors: string[];
+  warnings: string[];
+  log_path: string;
+};
+
+export type PaperPackageResult = {
+  files: Array<{ path: string; bytes: number }>;
+  warnings: string[];
+};

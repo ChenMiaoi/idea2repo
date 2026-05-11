@@ -28,6 +28,10 @@ export * from "./skills/analysis/ccf-a-score.js";
 export * from "./skills/analysis/idea-refine.js";
 export * from "./skills/templates/catalog.js";
 export * from "./skills/templates/resolve.js";
+export * from "./skills/templates/render.js";
+export * from "./skills/templates/compliance.js";
+export * from "./skills/templates/compile.js";
+export * from "./skills/templates/package.js";
 export * from "./skills/templates/types.js";
 export {
   AuthStorage,

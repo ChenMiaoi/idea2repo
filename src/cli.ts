@@ -31,8 +31,13 @@ import { strictCcfAScore, strictScoreMarkdown } from "./skills/analysis/ccf-a-sc
 import { experimentPlanMarkdown, feasibilityMarkdown, revisedIdeaMarkdown } from "./skills/analysis/idea-refine.js";
 import { loadTemplateProfiles, validateTemplateProfiles } from "./skills/templates/catalog.js";
 import { resolveTemplateProfile, templateDecisionMarkdown } from "./skills/templates/resolve.js";
+import { renderPaper } from "./skills/templates/render.js";
+import { anonymityMarkdown, checkTemplateCompliance, complianceMarkdown } from "./skills/templates/compliance.js";
+import { compilePaper } from "./skills/templates/compile.js";
+import { packagePaper } from "./skills/templates/package.js";
+import type { ReviewMode, TemplateResolveInput, VenueTemplateProfile } from "./skills/templates/types.js";
 
-const commandNames = new Set(["research", "generate", "literature", "papers", "score", "refine", "templates", "status", "resume", "validate", "doctor", "auth", "login", "logout", "provider", "venues", "github", "api", "web"]);
+const commandNames = new Set(["research", "generate", "literature", "papers", "score", "refine", "templates", "paper", "status", "resume", "validate", "doctor", "auth", "login", "logout", "provider", "venues", "github", "api", "web"]);
 
 type ParsedArgs = {
   _: string[];
@@ -69,6 +74,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         return await commandRefine(rest);
       case "templates":
         return await commandTemplates(rest);
+      case "paper":
+        return await commandPaper(rest);
       case "status":
         return await commandStatus(rest);
       case "resume":
@@ -233,6 +240,61 @@ async function commandTemplates(argv: string[]): Promise<number> {
     return 0;
   }
   throw new Error(`unknown templates action: ${action}`);
+}
+
+async function commandPaper(argv: string[]): Promise<number> {
+  const action = argv[0] ?? "render";
+  const parsed = parseArgs(argv.slice(1));
+  const root = stringFlag(parsed, "output") ?? "generated_repos/idea2repo-project";
+  if (action === "render") {
+    const profileInput = templateInputFromFlags(parsed);
+    const resolved = await resolveTemplateProfile(profileInput);
+    const manifest = await readManifestIfExists(root);
+    const title = stringFlag(parsed, "title") ?? titleFromProjectName(manifest?.project_name ?? "Evidence-First Research Draft");
+    const mode = stringFlag(parsed, "mode") ?? stringFlag(parsed, "review-mode") ?? resolved.profile.default_review_mode;
+    const reviewMode = normalizeReviewMode(mode, resolved.profile.default_review_mode);
+    const rendered = renderPaper({
+      profile: resolved.profile,
+      projectName: manifest?.project_name ?? "idea2repo-project",
+      title,
+      anonymous: reviewMode === "anonymous",
+      reviewMode,
+      bibFile: "references.bib",
+      macrosFile: "macros.tex"
+    });
+    for (const [relativePath, content] of Object.entries(rendered.files)) await writeText(ensureChild(root, relativePath), content);
+    await writeSubmissionTemplateArtifacts(root, resolved.profile, profileInput, resolved.verificationTasks, rendered.warnings);
+    console.log(`Paper rendered with ${resolved.profile.profile_id}: ${ensureChild(root, "paper/main.tex")}`);
+    if (rendered.warnings.length) console.log(`Warnings: ${rendered.warnings.length}`);
+    return 0;
+  }
+  if (action === "check") {
+    const profile = await profileFromRenderedOrFlags(root, parsed);
+    const explicitMode = stringFlag(parsed, "mode") ?? stringFlag(parsed, "review-mode");
+    const reviewMode = explicitMode ? normalizeReviewMode(explicitMode, profile.default_review_mode) : (await renderedReviewMode(root)) ?? normalizeReviewMode(profile.default_review_mode, profile.default_review_mode);
+    const compliance = await checkTemplateCompliance(root, {
+      profile,
+      anonymous: reviewMode === "anonymous",
+      strict: hasFlag(parsed, "strict")
+    });
+    await writeText(ensureChild(root, "docs/submission/template_compliance_report.md"), complianceMarkdown(compliance));
+    await writeText(ensureChild(root, "docs/submission/anonymity_check.md"), anonymityMarkdown(compliance));
+    if (hasFlag(parsed, "compile")) {
+      const compile = await compilePaper(root, profile);
+      await writeText(ensureChild(root, "docs/submission/compile_result.json"), JSON.stringify(compile, null, 2) + "\n");
+    }
+    console.log(`Template compliance: ${compliance.status}`);
+    console.log(`Report written: ${ensureChild(root, "docs/submission/template_compliance_report.md")}`);
+    return compliance.status === "failed" ? 1 : 0;
+  }
+  if (action === "package") {
+    const result = await packagePaper(root, { forOverleaf: hasFlag(parsed, "for-overleaf") });
+    await writeText(ensureChild(root, "docs/submission/submission_package.json"), JSON.stringify(result, null, 2) + "\n");
+    console.log(`Submission packages: ${result.files.map((file) => file.path).join(", ")}`);
+    if (result.warnings.length) console.log(`Warnings: ${result.warnings.length}`);
+    return 0;
+  }
+  throw new Error(`unknown paper action: ${action}`);
 }
 
 async function commandGenerate(argv: string[]): Promise<number> {
@@ -591,6 +653,93 @@ async function readJsonFile<T>(root: string, relativePath: string, fallback: T):
   return JSON.parse(await readFile(path, "utf8")) as T;
 }
 
+async function readManifestIfExists(root: string): Promise<Awaited<ReturnType<typeof readManifest>> | null> {
+  try {
+    return await readManifest(root);
+  } catch {
+    return null;
+  }
+}
+
+function templateInputFromFlags(parsed: ParsedArgs): TemplateResolveInput {
+  return {
+    venue: stringFlag(parsed, "venue") ?? (parsed._.join(" ").trim() || undefined),
+    domain: stringFlag(parsed, "domain") ?? undefined,
+    family: stringFlag(parsed, "family") ?? stringFlag(parsed, "template") ?? undefined,
+    year: optionalNumberFlag(parsed, "year") ?? optionalNumberFlag(parsed, "template-year"),
+    mode: normalizeTemplateMode(stringFlag(parsed, "mode") ?? stringFlag(parsed, "review-mode")),
+    paperType: stringFlag(parsed, "paper-type") ?? undefined
+  };
+}
+
+async function profileFromRenderedOrFlags(root: string, parsed: ParsedArgs): Promise<VenueTemplateProfile> {
+  const profilePath = ensureChild(root, "paper/template/profile.json");
+  if (await exists(profilePath)) return JSON.parse(await readFile(profilePath, "utf8")) as VenueTemplateProfile;
+  return (await resolveTemplateProfile(templateInputFromFlags(parsed))).profile;
+}
+
+async function renderedReviewMode(root: string): Promise<ReviewMode | null> {
+  const configPath = ensureChild(root, "paper/template/render_config.json");
+  if (!(await exists(configPath))) return null;
+  const config = JSON.parse(await readFile(configPath, "utf8")) as { review_mode?: string };
+  return normalizeReviewMode(config.review_mode ?? null, "anonymous");
+}
+
+async function writeSubmissionTemplateArtifacts(root: string, profile: VenueTemplateProfile, input: TemplateResolveInput, verificationTasks: string[], warnings: string[]): Promise<void> {
+  const resolved = await resolveTemplateProfile(input);
+  await writeText(ensureChild(root, "docs/submission/target_venue.md"), `# Target Venue\n\n${input.venue ?? profile.venue_name}\n`);
+  await writeText(ensureChild(root, "docs/submission/venue_template_profile.json"), JSON.stringify(profile, null, 2) + "\n");
+  await writeText(ensureChild(root, "docs/submission/template_decision.md"), templateDecisionMarkdown({ ...resolved, profile, verificationTasks }, input));
+  await writeText(ensureChild(root, "docs/submission/submission_checklist.md"), submissionChecklistMarkdown(profile, verificationTasks, warnings));
+  await writeText(ensureChild(root, "docs/submission/camera_ready_todo.md"), cameraReadyTodoMarkdown(profile));
+}
+
+function submissionChecklistMarkdown(profile: VenueTemplateProfile, verificationTasks: string[], warnings: string[]): string {
+  return `# Submission Checklist
+
+- [x] Template profile selected: ${profile.profile_id}
+- [ ] Official CFP and style files verified for target year
+- [ ] Anonymous mode checked
+- [ ] Compliance check passed
+- [ ] Page limits, checklist, appendix, and supplement rules confirmed
+
+## Verification Tasks
+
+${verificationTasks.length ? verificationTasks.map((task) => `- ${task}`).join("\n") : "- None"}
+
+## Render Warnings
+
+${warnings.length ? warnings.map((warning) => `- ${warning}`).join("\n") : "- None"}
+`;
+}
+
+function cameraReadyTodoMarkdown(profile: VenueTemplateProfile): string {
+  return `# Camera Ready TODO
+
+- Re-enable author and affiliation blocks only after acceptance.
+- Replace anonymous links with final artifact URLs when venue policy allows.
+- Confirm ${profile.venue_name} camera-ready page limits and rights blocks.
+- Re-run paper check and package commands before upload.
+`;
+}
+
+function titleFromProjectName(projectName: string): string {
+  return projectName
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase()) || "Evidence-First Research Draft";
+}
+
+function normalizeReviewMode(mode: string | null | undefined, fallback: ReviewMode): ReviewMode {
+  if (!mode) return fallback;
+  const normalized = mode.toLowerCase().replace("-", "_");
+  if (normalized === "camera_ready" || normalized === "camera") return "camera_ready";
+  if (normalized === "non_anonymous" || normalized === "nonanonymous" || normalized === "non_anonymized") return "non_anonymous";
+  if (normalized === "review" || normalized === "anonymous") return "anonymous";
+  return fallback;
+}
+
 function verifiedEvidencePaperCount(rows: ReturnType<typeof extractEvidenceRows>): number {
   return new Set(rows.filter((row) => row.status === "verified" && row.page && row.quote && row.chunk_id).map((row) => row.paper_id)).size;
 }
@@ -618,6 +767,7 @@ Usage:
   idea2repo score [--output dir] [--strict-ccf-a]
   idea2repo refine [--output dir]
   idea2repo templates list|show|validate
+  idea2repo paper render|check|package [--output dir] [--venue value]
   idea2repo status|resume|validate [--output dir]
   idea2repo auth status|login|logout
   idea2repo provider list|show|validate
