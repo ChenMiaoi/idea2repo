@@ -26,6 +26,7 @@ import { runResearchPipeline, type ResearchPipelineResult } from "./pipeline/res
 import { CompositeEventSink, JsonlEventSink, runtimeTimestamp, type EventSink, type Idea2RepoEvent } from "./runtime/events.js";
 import { PlanEventSink } from "./runtime/plan.js";
 import { RunStateEventSink, attachRunStateResult } from "./runtime/run-state.js";
+import { readRuntimeRunContext, writeRuntimeRunContext } from "./runtime/run-context.js";
 import { ApprovalRecorder, approvalPolicyFromPermissions } from "./runtime/approvals.js";
 import { createCoreToolRegistry, createToolContext, type ToolContext, type ToolRegistry } from "./runtime/tools.js";
 import { restoreRuntimeState, type RuntimeStateRestoreResult } from "./runtime/runs.js";
@@ -76,6 +77,7 @@ export type GenerateOptions = {
   jsonlEvents?: boolean;
   runId?: string;
   eventSink?: EventSink;
+  approvalMode?: "deny" | "block";
   signal?: AbortSignal;
 };
 
@@ -130,7 +132,9 @@ export async function generateResearchRepo(idea: string, output: string, options
   }
   if ((await exists(root)) && (await nonEmpty(root))) requirePermission(policy, "overwrite", root);
   requirePermission(policy, "write", root);
-  if ((options.allowNetwork || options.downloadPdfs) && !policy.allowNetwork) requirePermission(policy, "network", "research pipeline network access");
+  if ((options.allowNetwork || options.downloadPdfs) && !policy.allowNetwork && options.approvalMode !== "block") {
+    requirePermission(policy, "network", "research pipeline network access");
+  }
 
   const createdAt = options.createdAt ?? today();
   const toolRegistry = createCoreToolRegistry();
@@ -150,11 +154,34 @@ export async function generateResearchRepo(idea: string, output: string, options
     events: runtimeEvents,
     permissions: approvalPolicy,
     approvals: new ApprovalRecorder(root, approvalPolicy, runtimeEvents),
+    approvalMode: options.approvalMode ?? "deny",
     signal: options.signal
+  });
+  await writeRuntimeRunContext(root, {
+    run_id: runId,
+    provider: options.provider ?? (options.offline ? OFFLINE_PROVIDER_ID : null),
+    model: options.model ?? null,
+    reasoning_effort: options.reasoningEffort ?? null,
+    sources: options.sources ?? [],
+    venue: options.venue ?? null,
+    allow_network: Boolean(options.allowNetwork),
+    download_pdfs: Boolean(options.downloadPdfs),
+    max_papers: options.maxPapers ?? 20,
+    approval_policy: {
+      allow_write: approvalPolicy.allowWrite,
+      allow_overwrite: approvalPolicy.allowOverwrite,
+      allow_network: approvalPolicy.allowNetwork,
+      allow_publish: approvalPolicy.allowPublish,
+      allow_shell: approvalPolicy.allowShell
+    },
+    requested_domains: options.requestedDomains ?? [],
+    timeline_weeks: timelineWeeks,
+    resources: options.resources ?? [],
+    stack
   });
   const pipeline = options.runResearchPipeline
     ? await runResearchPipeline(idea, {
-        allowNetwork: Boolean(options.allowNetwork && policy.allowNetwork),
+        allowNetwork: Boolean(options.allowNetwork),
         downloadPdfs: options.downloadPdfs,
         maxPapers: options.maxPapers ?? 20,
         requestedDomains: options.requestedDomains,
@@ -170,6 +197,8 @@ export async function generateResearchRepo(idea: string, output: string, options
         strictCcfA: options.strictCcfA,
         events: runtimeEvents ? new PipelineCompletionSuppressingSink(runtimeEvents) : undefined,
         runId,
+        approvalPolicy,
+        approvalMode: options.approvalMode ?? "deny",
         signal: options.signal,
         progress: options.progressCallback
       })
@@ -468,29 +497,30 @@ async function continueResumedPipeline(
   if (restored.blocked_stages.length) return null;
   const stage = nextUnfinishedStage(restored);
   if (!stage) return null;
+  const context = await readRuntimeRunContext(root);
+  const approvalPolicy = approvalPolicyFromContext(context, policy, force);
   const traceEvents = new JsonlEventSink(join(root, ".idea2repo", "trace.jsonl"));
   const events = new PlanEventSink(root, restored.run_id, traceEvents, restored.plan);
   const pipeline = await runResearchPipeline(manifest.request.idea, {
     outputRoot: root,
-    provider: OFFLINE_PROVIDER_ID,
+    provider: context?.provider ?? OFFLINE_PROVIDER_ID,
+    model: context?.model,
+    reasoningEffort: context?.reasoning_effort,
+    sources: context?.sources,
+    venue: context?.venue ?? undefined,
+    allowNetwork: context?.allow_network ?? false,
+    downloadPdfs: context?.download_pdfs ?? false,
+    maxPapers: context?.max_papers ?? 20,
     requestedDomains: manifest.request.requested_domains,
     timelineWeeks: manifest.request.timeline_weeks,
     resources: manifest.request.resources,
     stack: manifest.request.stack,
     runId: restored.run_id,
     events,
+    approvalPolicy,
+    approvalMode: "block",
     stageOverrides: { fromStage: stage }
   });
-  const approvalPolicy = approvalPolicyFromPermissions(
-    {
-      allowWrite: policy.allowWrite,
-      allowOverwrite: force && policy.allowOverwrite,
-      allowNetwork: false,
-      allowPublish: false,
-      allowShell: false
-    },
-    "generate"
-  );
   const registry = createCoreToolRegistry();
   const ctx = createToolContext({
     runId: restored.run_id,
@@ -512,9 +542,27 @@ async function continueResumedPipeline(
 }
 
 function nextUnfinishedStage(restored: RuntimeStateRestoreResult): ResearchStageId | null {
-  const unfinished = restored.pipeline_state.stages.find((stage) => stage.status === "failed" || stage.status === "running" || stage.status === "pending");
+  const unfinished = restored.pipeline_state.stages.find((stage) => stage.status === "failed" || stage.status === "running" || stage.status === "blocked" || stage.status === "pending");
   if (!unfinished) return null;
   return researchStages.find((stage) => stage.id === unfinished.id)?.id ?? null;
+}
+
+function approvalPolicyFromContext(
+  context: Awaited<ReturnType<typeof readRuntimeRunContext>>,
+  policy: PermissionPolicy,
+  force: boolean
+) {
+  const stored = context?.approval_policy;
+  return approvalPolicyFromPermissions(
+    {
+      allowWrite: stored?.allow_write ?? policy.allowWrite,
+      allowOverwrite: stored?.allow_overwrite ?? (force && policy.allowOverwrite),
+      allowNetwork: stored?.allow_network ?? false,
+      allowPublish: stored?.allow_publish ?? false,
+      allowShell: stored?.allow_shell ?? false
+    },
+    "generate"
+  );
 }
 
 export function slugify(value: string): string {

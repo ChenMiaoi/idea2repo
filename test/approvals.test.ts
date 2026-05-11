@@ -11,9 +11,10 @@ import {
   approvalDecision,
   approvalPolicyForMode,
   enforceApproval,
-  readApprovalRecords
+  readApprovalRecords,
+  resolveApprovalRecord
 } from "../src/runtime/approvals.js";
-import { readJsonlEvents } from "../src/runtime/events.js";
+import { readJsonlEvents, type Idea2RepoEvent } from "../src/runtime/events.js";
 
 test("approval policy gates network publish and overwrite risks by runtime mode", () => {
   const plan = approvalPolicyForMode("plan");
@@ -67,6 +68,41 @@ test("approval recorder persists requested denied and auto-approved decisions", 
       ["pending", "denied", "auto_approved"]
     );
     assert.equal(records[0]?.action, "GitHub export publish");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("blocking approvals remain pending until a resolver resumes execution", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-approval-blocking-"));
+  const events: Idea2RepoEvent[] = [];
+  const sink = { emit: (event: Idea2RepoEvent) => { events.push(event); } };
+  try {
+    const policy = approvalPolicyForMode("generate");
+    const recorder = new ApprovalRecorder(root, policy, sink);
+    const pending = enforceApproval(
+      policy,
+      {
+        run_id: "run-blocked",
+        stage_id: "literature_search",
+        action: "tool:literature.search",
+        risk: ["network"]
+      },
+      recorder,
+      { waitForResolution: true }
+    );
+    const request = await waitForPendingApproval(root);
+    assert.equal(request.status, "pending");
+    assert.equal(request.stage_id, "literature_search");
+    assert.ok(events.some((event) => event.type === "approval.requested" && event.stage_id === "literature_search"));
+    assert.ok(events.some((event) => event.type === "stage.blocked" && event.stage_id === "literature_search"));
+
+    await resolveApprovalRecord(root, request.id, "approved", { reason: "Network search approved.", events: sink });
+    const resolved = await pending;
+    assert.equal(resolved?.status, "approved");
+
+    const records = await readApprovalRecords(root);
+    assert.deepEqual(records.map((record) => record.status), ["pending", "approved"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -129,3 +165,13 @@ test("generation wires approval recorder into runtime tool execution", async () 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+async function waitForPendingApproval(root: string) {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const pending = (await readApprovalRecords(root)).find((record) => record.status === "pending");
+    if (pending) return pending;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.fail("pending approval was not recorded before timeout");
+}

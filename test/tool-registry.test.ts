@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { generateResearchRepo } from "../src/generator.js";
-import { ApprovalRecorder, ApprovalRequiredError, approvalPolicyForMode, readApprovalRecords } from "../src/runtime/approvals.js";
+import { ApprovalRecorder, ApprovalRequiredError, approvalPolicyForMode, readApprovalRecords, resolveApprovalRecord } from "../src/runtime/approvals.js";
 import { EventBus, type Idea2RepoEvent } from "../src/runtime/events.js";
-import { createCoreToolRegistry, createToolContext, readToolCallRecords } from "../src/runtime/tools.js";
+import { ToolRegistry, createCoreToolRegistry, createToolContext, readToolCallRecords } from "../src/runtime/tools.js";
 
 test("core tool registry exposes plan-required tool names", () => {
   const names = createCoreToolRegistry().list().map((tool) => tool.name);
@@ -78,6 +78,52 @@ test("tool registry gates GitHub publish and records denied approval", async () 
   }
 });
 
+test("tool registry blocks on pending approval and resumes after approval", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-tools-blocking-"));
+  const events: Idea2RepoEvent[] = [];
+  const bus = new EventBus();
+  bus.subscribe((event) => events.push(event));
+  const registry = new ToolRegistry();
+  let handlerRan = false;
+  registry.register<Record<string, never>, { ok: true }>({
+    name: "mock.network",
+    description: "Mock network tool.",
+    risk: ["network"],
+    inputSchema: { type: "object" },
+    async handler() {
+      handlerRan = true;
+      return { ok: true };
+    }
+  });
+  const policy = approvalPolicyForMode("generate");
+  const ctx = createToolContext({
+    runId: "run-blocked-tool",
+    outputRoot: root,
+    events: bus,
+    permissions: policy,
+    approvals: new ApprovalRecorder(root, policy, bus),
+    approvalMode: "block",
+    stageId: "literature_search"
+  });
+  try {
+    const pending = registry.execute("mock.network", {}, ctx);
+    const request = await waitForPendingApproval(root);
+    assert.equal(handlerRan, false);
+    assert.equal(request.stage_id, "literature_search");
+    assert.ok(events.some((event) => event.type === "approval.requested" && event.stage_id === "literature_search"));
+    assert.ok(events.some((event) => event.type === "stage.blocked" && event.stage_id === "literature_search"));
+
+    await resolveApprovalRecord(root, request.id, "approved", { events: bus });
+    assert.deepEqual(await pending, { ok: true });
+    assert.equal(handlerRan, true);
+
+    const calls = await readToolCallRecords(root);
+    assert.deepEqual(calls.map((record) => `${record.tool_name}:${record.status}`), ["mock.network:started", "mock.network:completed"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("offline generation persists artifact tool call records", async () => {
   const root = await mkdtemp(join(tmpdir(), "idea2repo-tools-generate-"));
   const output = join(root, "project");
@@ -139,3 +185,13 @@ test("artifact.adopt records helper-generated compile PDFs", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+async function waitForPendingApproval(root: string) {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const pending = (await readApprovalRecords(root)).find((record) => record.status === "pending");
+    if (pending) return pending;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.fail("pending approval was not recorded before timeout");
+}

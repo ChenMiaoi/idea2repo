@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { runtimeTimestamp, type EventSink } from "./events.js";
 
 export const APPROVALS_PATH = join(".idea2repo", "approvals.jsonl");
@@ -25,6 +25,7 @@ export type ApprovalRecordStatus = "pending" | "approved" | "denied" | "auto_app
 export type ApprovalRecord = {
   id: string;
   run_id: string;
+  stage_id?: string;
   action: string;
   risk: ApprovalRisk[];
   mode: RuntimeMode;
@@ -36,10 +37,22 @@ export type ApprovalRecord = {
 
 export type ApprovalRequestInput = {
   run_id: string;
+  stage_id?: string;
   action: string;
   risk: ApprovalRisk[];
   reason?: string;
 };
+
+export type ApprovalWaitOptions = {
+  waitForResolution?: boolean;
+  signal?: AbortSignal;
+  onPending?: (record: ApprovalRecord) => Promise<void> | void;
+  onResolved?: (record: ApprovalRecord) => Promise<void> | void;
+};
+
+type ApprovalWaiter = (record: ApprovalRecord) => void;
+
+const approvalWaiters = new Map<string, Set<ApprovalWaiter>>();
 
 export class ApprovalRequiredError extends Error {
   constructor(
@@ -86,11 +99,15 @@ export function approvalDecision(policy: ApprovalPolicy, risk: ApprovalRisk[]): 
 }
 
 export class ApprovalRecorder {
+  private readonly resolvedRoot: string;
+
   constructor(
     private readonly root: string,
     private readonly policy: ApprovalPolicy,
     private readonly events?: EventSink
-  ) {}
+  ) {
+    this.resolvedRoot = resolve(root);
+  }
 
   async request(input: ApprovalRequestInput): Promise<ApprovalRecord> {
     const record = this.record(input, "pending");
@@ -99,10 +116,20 @@ export class ApprovalRecorder {
       type: "approval.requested",
       run_id: record.run_id,
       approval_id: record.id,
+      ...(record.stage_id ? { stage_id: record.stage_id } : {}),
       action: record.action,
       risk: record.risk.join(", "),
       timestamp: record.created_at
     });
+    if (record.stage_id) {
+      await this.events?.emit({
+        type: "stage.blocked",
+        run_id: record.run_id,
+        stage_id: record.stage_id,
+        reason: `Pending approval ${record.id} for ${record.action}: ${record.risk.join(", ")}`,
+        timestamp: record.created_at
+      });
+    }
     return record;
   }
 
@@ -117,6 +144,7 @@ export class ApprovalRecorder {
       decision: "approved",
       timestamp: record.resolved_at ?? now
     });
+    notifyApprovalResolution(this.resolvedRoot, record);
     return record;
   }
 
@@ -131,6 +159,7 @@ export class ApprovalRecorder {
       decision: "denied",
       timestamp: record.resolved_at ?? now
     });
+    notifyApprovalResolution(this.resolvedRoot, record);
     return record;
   }
 
@@ -150,7 +179,34 @@ export class ApprovalRecorder {
       decision: status,
       timestamp: now
     });
+    notifyApprovalResolution(this.resolvedRoot, record);
     return record;
+  }
+
+  async waitForResolution(approvalId: string, options: { signal?: AbortSignal } = {}): Promise<ApprovalRecord> {
+    throwIfAborted(options.signal);
+    const existing = latestApprovalRecords(await readApprovalRecords(this.resolvedRoot)).find((record) => record.id === approvalId);
+    if (existing && isResolvedApproval(existing)) return existing;
+    return new Promise<ApprovalRecord>((resolveWait, reject) => {
+      const key = approvalWaiterKey(this.resolvedRoot, approvalId);
+      const waiters = approvalWaiters.get(key) ?? new Set<ApprovalWaiter>();
+      const cleanup = (): void => {
+        waiters.delete(waiter);
+        if (!waiters.size) approvalWaiters.delete(key);
+        options.signal?.removeEventListener("abort", onAbort);
+      };
+      const waiter = (record: ApprovalRecord): void => {
+        cleanup();
+        resolveWait(record);
+      };
+      const onAbort = (): void => {
+        cleanup();
+        reject(options.signal?.reason instanceof Error ? options.signal.reason : new Error(options.signal?.reason ? String(options.signal.reason) : "approval wait cancelled"));
+      };
+      waiters.add(waiter);
+      approvalWaiters.set(key, waiters);
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+    });
   }
 
   private record(input: ApprovalRequestInput, status: ApprovalRecordStatus, resolvedAt?: string): ApprovalRecord {
@@ -158,6 +214,7 @@ export class ApprovalRecorder {
     return {
       id: randomUUID(),
       run_id: input.run_id,
+      ...(input.stage_id ? { stage_id: input.stage_id } : {}),
       action: input.action,
       risk: [...input.risk],
       mode: this.policy.mode,
@@ -178,12 +235,20 @@ export class ApprovalRecorder {
 export async function enforceApproval(
   policy: ApprovalPolicy,
   input: ApprovalRequestInput,
-  recorder?: ApprovalRecorder
+  recorder?: ApprovalRecorder,
+  options: ApprovalWaitOptions = {}
 ): Promise<ApprovalRecord | null> {
   const decision = approvalDecision(policy, input.risk);
   if (decision === "auto_approved") return (await recorder?.autoApprove(input)) ?? null;
   if (decision === "requires_approval") {
     const request = await recorder?.request(input);
+    if (options.waitForResolution && recorder && request) {
+      await options.onPending?.(request);
+      const resolved = await recorder.waitForResolution(request.id, { signal: options.signal });
+      await options.onResolved?.(resolved);
+      if (resolved.status === "approved") return resolved;
+      throw new ApprovalRequiredError("denied", input.action, input.risk);
+    }
     await recorder?.resolve(request!, "denied", "No approval grant was supplied to this non-interactive command.");
     throw new ApprovalRequiredError(decision, input.action, input.risk);
   }
@@ -231,6 +296,7 @@ export async function resolveApprovalRecord(
     decision,
     timestamp: now
   });
+  notifyApprovalResolution(resolve(root), record);
   return record;
 }
 
@@ -263,4 +329,26 @@ function riskDecision(policy: ApprovalPolicy, risk: ApprovalRisk): ApprovalDecis
     case "shell":
       return policy.allowShell ? "auto_approved" : "denied";
   }
+}
+
+function notifyApprovalResolution(root: string, record: ApprovalRecord): void {
+  if (!isResolvedApproval(record)) return;
+  const key = approvalWaiterKey(root, record.id);
+  const waiters = approvalWaiters.get(key);
+  if (!waiters) return;
+  for (const waiter of [...waiters]) waiter(record);
+  approvalWaiters.delete(key);
+}
+
+function approvalWaiterKey(root: string, approvalId: string): string {
+  return `${resolve(root)}\0${approvalId}`;
+}
+
+function isResolvedApproval(record: ApprovalRecord): boolean {
+  return record.status === "approved" || record.status === "denied";
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error ? signal.reason : new Error(signal.reason ? String(signal.reason) : "approval wait cancelled");
 }

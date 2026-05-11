@@ -148,6 +148,7 @@ async function route(request: IncomingMessage, response: ServerResponse, runMana
         jsonlEvents: body.jsonl_events !== false,
         runId,
         eventSink: events,
+        approvalMode: "block",
         signal,
         permissionPolicy: permissionPolicyFromBody(body, mode)
       });

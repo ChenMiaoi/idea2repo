@@ -47,7 +47,7 @@ import { anonymityMarkdown, complianceMarkdown } from "../skills/templates/compl
 import { createZipArchive, type ZipEntry } from "../skills/templates/package.js";
 import { templateDecisionMarkdown } from "../skills/templates/resolve.js";
 import type { PaperRenderInput, PaperRenderResult, TemplateComplianceResult, TemplateResolveInput, TemplateResolveResult } from "../skills/templates/types.js";
-import { ApprovalRecorder, approvalPolicyForMode } from "../runtime/approvals.js";
+import { ApprovalRecorder, approvalPolicyForMode, type ApprovalPolicy, type ApprovalRecord } from "../runtime/approvals.js";
 import { DecisionRecorder } from "../runtime/decisions.js";
 import { runtimeTimestamp, type EventSink, type Idea2RepoEvent } from "../runtime/events.js";
 import { appendScoreSnapshot, ensureRuntimeLedgers, evidenceItemsFromRows, replaceEvidenceItems, scoreSnapshotFromStrictScore } from "../runtime/ledgers.js";
@@ -88,6 +88,8 @@ export type ResearchPipelineOptions = {
   signal?: AbortSignal;
   progress?: (message: string) => void;
   stageOverrides?: ResearchPipelineStageOverrides;
+  approvalPolicy?: ApprovalPolicy;
+  approvalMode?: "deny" | "block";
 };
 
 export type ResearchPipelineStageOverrides = {
@@ -122,16 +124,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     throwIfAborted(options.signal);
   }
   const toolRegistry = createCoreToolRegistry();
-  const approvalPolicy = approvalPolicyForMode("generate", { allowNetwork: Boolean(options.allowNetwork), allowOverwrite: true });
-  const toolContext = createToolContext({
-    runId,
-    outputRoot,
-    events: options.events,
-    permissions: approvalPolicy,
-    approvals: options.outputRoot ? new ApprovalRecorder(outputRoot, approvalPolicy, options.events) : undefined,
-    recordToolCalls: Boolean(options.outputRoot),
-    signal: options.signal
-  });
+  const approvalPolicy = options.approvalPolicy ?? approvalPolicyForMode("generate", { allowNetwork: Boolean(options.allowNetwork), allowOverwrite: true });
   if (options.outputRoot) await ensureRuntimeLedgers(outputRoot);
   const restoredState = options.outputRoot ? await readResearchPipelineState(outputRoot) : null;
   if (restoredState && restoredState.idea !== idea) throw new Error(`research pipeline state belongs to a different idea: ${restoredState.idea}`);
@@ -197,6 +190,34 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     else if (status === "failed") await emitRuntimeEvent({ type: "stage.failed", run_id: runId, stage_id: id, error: error ?? "stage failed", timestamp });
     if (status === "completed" || status === "skipped" || status === "failed") activeStage = null;
   };
+  const markActiveStageBlocked = async (record: ApprovalRecord): Promise<void> => {
+    const stage = activeStage;
+    if (!stage) return;
+    state = markStage(state, stage.id, "blocked", {
+      error: `Pending approval ${record.id} for ${record.action}: ${record.risk.join(", ")}`,
+      artifacts: stageArtifactPaths(stage.id)
+    });
+    if (options.outputRoot) await writeResearchPipelineState(outputRoot, state);
+  };
+  const restartActiveStageAfterApproval = async (record: ApprovalRecord): Promise<void> => {
+    if (record.status !== "approved") return;
+    const stage = activeStage;
+    if (!stage) return;
+    await setStage(stage.id, "running");
+  };
+  const toolContext = createToolContext({
+    runId,
+    outputRoot,
+    events: options.events,
+    permissions: approvalPolicy,
+    approvals: options.outputRoot ? new ApprovalRecorder(outputRoot, approvalPolicy, options.events) : undefined,
+    recordToolCalls: Boolean(options.outputRoot),
+    approvalMode: options.approvalMode ?? "deny",
+    stageId: () => activeStage?.id,
+    onApprovalPending: markActiveStageBlocked,
+    onApprovalResolved: restartActiveStageAfterApproval,
+    signal: options.signal
+  });
   const applySkipOverride = async (id: ResearchStageId): Promise<boolean> => {
     const reason = options.stageOverrides?.skipStages?.[id]?.trim();
     if (!reason) return false;

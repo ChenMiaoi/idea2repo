@@ -51,7 +51,7 @@ export function markStage(
       ...stage,
       status,
       started_at: status === "running" ? now : stage.started_at,
-      completed_at: status === "completed" || status === "failed" || status === "skipped" ? now : stage.completed_at,
+      completed_at: status === "completed" || status === "failed" || status === "skipped" ? now : status === "running" ? undefined : stage.completed_at,
       error: options.error,
       artifacts: options.artifacts ?? stage.artifacts
     };

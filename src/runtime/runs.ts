@@ -5,9 +5,10 @@ import { runResearchPipeline } from "../pipeline/research-pipeline.js";
 import { createResearchPipelineState, markStage, readResearchPipelineState, writeResearchPipelineState, type ResearchPipelineState } from "../pipeline/stage-state.js";
 import { researchStages, stageDefinition, type ResearchStageId } from "../pipeline/stages.js";
 import { ensureChild, exists, readManifest, status as projectStatus } from "../state.js";
-import { APPROVALS_PATH, readApprovalRecords } from "./approvals.js";
+import { APPROVALS_PATH, approvalPolicyFromPermissions, readApprovalRecords } from "./approvals.js";
 import { DecisionRecorder } from "./decisions.js";
 import { readPlanState, writePlanState, type PlanState } from "./plan.js";
+import { readRuntimeRunContext } from "./run-context.js";
 import { JsonlEventSink, EventBus, readJsonlEvents, runtimeTimestamp, type EventSink, type EventListener, type Idea2RepoEvent } from "./events.js";
 import { refreshManifestArtifactHashes, snapshotArtifact, type ArtifactSnapshotRecord } from "./artifacts.js";
 import { createRunState, writeRunState, type RuntimeRunStatus } from "./run-state.js";
@@ -125,6 +126,8 @@ export class RunManager {
     run.event_count = run.events.length;
     run.updated_at = event.timestamp;
     if (event.type === "run.started") run.status = "running";
+    if (event.type === "stage.started" && run.status === "blocked") run.status = "running";
+    if (event.type === "stage.blocked") run.status = "blocked";
     if (event.type === "run.completed") {
       run.status = "completed";
       run.finalEventSeen = true;
@@ -300,19 +303,36 @@ async function executeRetry(
 ): Promise<void> {
   const state = await readOrCreatePipelineState(root);
   const manifest = await readManifest(root);
+  const context = await readRuntimeRunContext(root);
+  const approvalPolicy = approvalPolicyFromPermissions(
+    {
+      allowWrite: context?.approval_policy.allow_write ?? true,
+      allowOverwrite: context?.approval_policy.allow_overwrite ?? true,
+      allowNetwork: context?.approval_policy.allow_network ?? false,
+      allowPublish: context?.approval_policy.allow_publish ?? false,
+      allowShell: context?.approval_policy.allow_shell ?? false
+    },
+    "generate"
+  );
   const pipelineEvents = new SuppressRunCompletedSink(events);
   const result = await runResearchPipeline(state.idea || manifest.request.idea, {
     outputRoot: root,
-    provider: "offline",
-    allowNetwork: Boolean(options.allowNetwork),
-    downloadPdfs: Boolean(options.downloadPdfs),
-    maxPapers: options.maxPapers ?? 20,
+    provider: context?.provider ?? "offline",
+    model: context?.model,
+    reasoningEffort: context?.reasoning_effort,
+    sources: context?.sources,
+    venue: context?.venue ?? undefined,
+    allowNetwork: options.allowNetwork ?? context?.allow_network ?? false,
+    downloadPdfs: options.downloadPdfs ?? context?.download_pdfs ?? false,
+    maxPapers: options.maxPapers ?? context?.max_papers ?? 20,
     requestedDomains: manifest.request.requested_domains,
     timelineWeeks: manifest.request.timeline_weeks,
     resources: manifest.request.resources,
     stack: manifest.request.stack,
     runId,
     events: pipelineEvents,
+    approvalPolicy,
+    approvalMode: "block",
     stageOverrides: { retryFromStage: options.stageId }
   });
   const written: string[] = [];
@@ -421,7 +441,7 @@ function planFromPipelineState(runId: string, state: ResearchPipelineState): Pla
         id: stage.id,
         stage_id: stage.id,
         step: stage.label,
-        status: snapshot?.status === "completed" ? "completed" : snapshot?.status === "running" ? "in_progress" : snapshot?.status === "failed" || snapshot?.status === "skipped" ? "blocked" : "pending",
+        status: snapshot?.status === "completed" ? "completed" : snapshot?.status === "running" ? "in_progress" : snapshot?.status === "failed" || snapshot?.status === "skipped" || snapshot?.status === "blocked" ? "blocked" : "pending",
         ...(snapshot?.error ? { blocker: snapshot.error } : {}),
         artifacts: snapshot?.artifacts ?? stage.artifactPaths,
         updated_at: state.updated_at || now
@@ -481,6 +501,8 @@ async function rebuildTraceIfMissing(
       await emit({ type: "stage.skipped", run_id: runId, stage_id: snapshot.id, reason: snapshot.error ?? "stage skipped", timestamp: snapshot.completed_at ?? state.updated_at });
     } else if (snapshot.status === "failed") {
       await emit({ type: "stage.failed", run_id: runId, stage_id: snapshot.id, error: snapshot.error ?? "stage failed", timestamp: snapshot.completed_at ?? state.updated_at });
+    } else if (snapshot.status === "blocked") {
+      await emit({ type: "stage.blocked", run_id: runId, stage_id: snapshot.id, reason: snapshot.error ?? "stage blocked", timestamp: snapshot.completed_at ?? state.updated_at });
     }
   }
   await emit({ type: "plan.updated", run_id: runId, plan: plan.items, timestamp: plan.updated_at });

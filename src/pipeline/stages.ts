@@ -16,7 +16,7 @@ export const researchStageIds = [
 
 export type ResearchStageId = (typeof researchStageIds)[number];
 
-export type ResearchStageStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+export type ResearchStageStatus = "pending" | "running" | "completed" | "failed" | "skipped" | "blocked";
 
 export type ResearchStageDefinition = {
   id: ResearchStageId;

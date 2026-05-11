@@ -5,7 +5,7 @@ import { runtimeTimestamp, type EventSink, type Idea2RepoEvent } from "./events.
 export const RUN_STATE_PATH = join(".idea2repo", "run_state.json");
 const runStateWriteQueues = new Map<string, Promise<void>>();
 
-export type RuntimeRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type RuntimeRunStatus = "queued" | "running" | "blocked" | "completed" | "failed" | "cancelled";
 
 export type PersistedRunState = {
   version: 1;
@@ -47,6 +47,10 @@ export function updateRunStateForEvent(state: PersistedRunState, event: Idea2Rep
     next.status = "running";
     next.idea = event.idea;
     next.output_root = event.output_root;
+  } else if (event.type === "stage.started") {
+    if (next.status === "blocked") next.status = "running";
+  } else if (event.type === "stage.blocked") {
+    next.status = "blocked";
   } else if (event.type === "run.completed") {
     next.status = "completed";
     delete next.error;

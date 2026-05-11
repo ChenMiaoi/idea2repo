@@ -65,13 +65,16 @@ test("RunStateEventSink persists run status from events", async () => {
       now: "2026-05-11T00:00:00Z"
     });
     await sink.emit({ type: "run.started", run_id: "run-1", idea: "test idea", output_root: root, timestamp: "2026-05-11T00:00:01Z" });
-    await sink.emit({ type: "score.updated", run_id: "run-1", stage_id: "ccf_a_strict_scoring", score: 45, max_score: 100, confidence: 0.4, hard_blockers: ["No PDF read"], timestamp: "2026-05-11T00:00:02Z" });
-    await sink.emit({ type: "run.completed", run_id: "run-1", timestamp: "2026-05-11T00:00:03Z" });
+    await sink.emit({ type: "stage.blocked", run_id: "run-1", stage_id: "literature_search", reason: "Waiting for network approval", timestamp: "2026-05-11T00:00:02Z" });
+    assert.equal((await readRunState(root)).status, "blocked");
+    await sink.emit({ type: "stage.started", run_id: "run-1", stage_id: "literature_search", label: "Literature search", timestamp: "2026-05-11T00:00:03Z" });
+    await sink.emit({ type: "score.updated", run_id: "run-1", stage_id: "ccf_a_strict_scoring", score: 45, max_score: 100, confidence: 0.4, hard_blockers: ["No PDF read"], timestamp: "2026-05-11T00:00:04Z" });
+    await sink.emit({ type: "run.completed", run_id: "run-1", timestamp: "2026-05-11T00:00:05Z" });
 
     const state = await readRunState(root);
     assert.equal(state.id, "run-1");
     assert.equal(state.status, "completed");
-    assert.equal(state.event_count, 3);
+    assert.equal(state.event_count, 5);
     assert.equal(state.last_event_type, "run.completed");
     assert.equal(await readRunState(root).then(() => true), true);
     assert.equal(RUN_STATE_PATH, join(".idea2repo", "run_state.json"));

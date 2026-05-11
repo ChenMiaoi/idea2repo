@@ -707,6 +707,7 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
         jsonlEvents: true,
         runId,
         eventSink: runtimeEvents,
+        approvalMode: "block",
         allowNetwork: policy.allowNetwork,
         permissionPolicy: {
           allowWrite: policy.allowWrite,

@@ -11,6 +11,7 @@ import { listArtifactSnapshots } from "../src/runtime/artifacts.js";
 import { readDecisionRecords } from "../src/runtime/decisions.js";
 import { readJsonlEvents } from "../src/runtime/events.js";
 import { readPlanState } from "../src/runtime/plan.js";
+import { readRuntimeRunContext } from "../src/runtime/run-context.js";
 import { retryRuntimeStage, skipRuntimeStage } from "../src/runtime/runs.js";
 import type { Idea2RepoEvent } from "../src/runtime/events.js";
 
@@ -76,6 +77,38 @@ test("executed retry snapshots pipeline artifacts outside the stage artifact tab
     const result = await retryRuntimeStage(output, "search_planning", { execute: true, reason: "Execute retry with full artifact protection." });
     assert.equal(result.executed, true);
     assert.ok((await listArtifactSnapshots(output)).some((snapshot) => snapshot.path === "docs/reference/claim_evidence_matrix.csv"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("executed retry reuses the original run provider and venue context", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-retry-context-"));
+  const output = join(root, "project");
+  try {
+    await generateResearchRepo("A local-first literature agent with CCF-A scoring.", output, {
+      offline: true,
+      provider: "offline",
+      model: "gpt-test-model",
+      reasoningEffort: "high",
+      sources: ["arxiv"],
+      venue: "ICLR",
+      maxPapers: 7,
+      runResearchPipeline: true,
+      jsonlEvents: true
+    });
+    const context = await readRuntimeRunContext(output);
+    assert.equal(context?.provider, "offline");
+    assert.equal(context?.model, "gpt-test-model");
+    assert.equal(context?.reasoning_effort, "high");
+    assert.deepEqual(context?.sources, ["arxiv"]);
+    assert.equal(context?.venue, "ICLR");
+    assert.equal(context?.max_papers, 7);
+    assert.equal(context?.approval_policy.allow_network, false);
+
+    await writeFile(join(output, "docs", "submission", "target_venue.md"), "Wrong venue\n", "utf8");
+    await retryRuntimeStage(output, "venue_template_packaging", { execute: true, reason: "Retry venue packaging with preserved context." });
+    assert.match(await readFile(join(output, "docs", "submission", "target_venue.md"), "utf8"), /ICLR/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

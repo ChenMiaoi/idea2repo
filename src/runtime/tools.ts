@@ -23,6 +23,7 @@ import {
   ApprovalRecorder,
   approvalPolicyForMode,
   enforceApproval,
+  type ApprovalRecord,
   type ApprovalPolicy,
   type ApprovalRisk
 } from "./approvals.js";
@@ -38,6 +39,10 @@ export type ToolContext = {
   permissions: ApprovalPolicy;
   approvals?: ApprovalRecorder;
   toolCalls?: ToolCallRecorder;
+  approvalMode?: "deny" | "block";
+  stageId?: string | (() => string | undefined);
+  onApprovalPending?: (record: ApprovalRecord) => Promise<void> | void;
+  onApprovalResolved?: (record: ApprovalRecord) => Promise<void> | void;
   signal?: AbortSignal;
 };
 
@@ -107,7 +112,17 @@ export class ToolRegistry {
     await ctx.toolCalls?.record(started);
     await ctx.events.emit({ type: "tool.started", run_id: ctx.runId, tool_call_id: toolCallId, tool_name: spec.name, timestamp: startedAt });
     try {
-      await enforceApproval(ctx.permissions, { run_id: ctx.runId, action: `tool:${spec.name}`, risk: approvalRisks(risk) }, ctx.approvals);
+      await enforceApproval(
+        ctx.permissions,
+        { run_id: ctx.runId, stage_id: currentStageId(ctx), action: `tool:${spec.name}`, risk: approvalRisks(risk) },
+        ctx.approvals,
+        {
+          waitForResolution: ctx.approvalMode === "block",
+          signal: ctx.signal,
+          onPending: ctx.onApprovalPending,
+          onResolved: ctx.onApprovalResolved
+        }
+      );
       throwIfAborted(ctx.signal);
       const output = await spec.handler(input, ctx);
       throwIfAborted(ctx.signal);
@@ -134,6 +149,10 @@ export function createToolContext(options: {
   approvals?: ApprovalRecorder;
   toolCalls?: ToolCallRecorder;
   recordToolCalls?: boolean;
+  approvalMode?: "deny" | "block";
+  stageId?: string | (() => string | undefined);
+  onApprovalPending?: (record: ApprovalRecord) => Promise<void> | void;
+  onApprovalResolved?: (record: ApprovalRecord) => Promise<void> | void;
   signal?: AbortSignal;
 }): ToolContext {
   const permissions = options.permissions ?? approvalPolicyForMode("generate");
@@ -144,6 +163,10 @@ export function createToolContext(options: {
     permissions,
     approvals: options.approvals,
     toolCalls: options.recordToolCalls === false ? undefined : options.toolCalls ?? new ToolCallRecorder(options.outputRoot),
+    approvalMode: options.approvalMode,
+    stageId: options.stageId,
+    onApprovalPending: options.onApprovalPending,
+    onApprovalResolved: options.onApprovalResolved,
     signal: options.signal
   };
 }
@@ -396,6 +419,10 @@ export type TemplateCheckInput = {
 
 function approvalRisks(risk: ToolRisk[]): ApprovalRisk[] {
   return [...new Set(risk.map((item) => (item === "write-state" ? "write" : item)))];
+}
+
+function currentStageId(ctx: ToolContext): string | undefined {
+  return typeof ctx.stageId === "function" ? ctx.stageId() : ctx.stageId;
 }
 
 function summarizeUnknown(value: unknown): string {
