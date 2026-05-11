@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { homedir } from "node:os";
 import { test } from "node:test";
-import { directoryEnterAction, directoryPickerStartLabel, directoryPickerStartPath, isWindowsDriveRootPath, layoutForTerminal, pageBudgetForLayout, windowsDriveRootForPath, type TuiPageMode } from "../src/tui/App.js";
+import { autoRunOutputForIdea, directoryEnterAction, directoryPickerStartLabel, directoryPickerStartPath, isWindowsDriveRootPath, layoutForTerminal, pageBudgetForLayout, windowsDriveRootForPath, type TuiPageMode } from "../src/tui/App.js";
 
 test("TUI layout adapts to narrow and short terminals", () => {
   const tiny = layoutForTerminal(50, 18);
@@ -60,4 +60,18 @@ test("TUI directory picker opens folders on enter and selects only current folde
   assert.equal(directoryEnterAction("directory"), "open");
   assert.equal(directoryEnterAction("parent"), "open");
   assert.equal(directoryEnterAction("select-current"), "select");
+});
+
+test("TUI auto run output uses timestamped safe slug", () => {
+  const output = autoRunOutputForIdea("LLM agents need long-term memory compression!!!", {
+    baseDir: "idea2repo-runs",
+    now: new Date(2026, 4, 12, 9, 7)
+  }).replace(/\\/g, "/");
+  assert.equal(output, "idea2repo-runs/20260512-0907-llm-agents-need-long-term-memory-compression");
+
+  const fallback = autoRunOutputForIdea("研究想法", {
+    baseDir: "runs",
+    now: new Date(2026, 4, 12, 9, 7)
+  }).replace(/\\/g, "/");
+  assert.equal(fallback, "runs/20260512-0907-idea2repo-project");
 });

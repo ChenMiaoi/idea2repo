@@ -155,7 +155,7 @@ const LIMITS_REFRESH_INTERVAL_MS = 60_000;
 const WINDOWS_DRIVE_PICKER_CWD = "Windows drives";
 const WINDOWS_DRIVE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
-export function App({ defaultOutput = "generated_repos/idea2repo-project" }: AppProps): React.ReactElement {
+export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.ReactElement {
   const { exit } = useApp();
   const terminal = useTerminalSize();
   const layout = useMemo(() => layoutForTerminal(terminal.columns, terminal.rows), [terminal.columns, terminal.rows]);
@@ -182,6 +182,7 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
   const [reasoning, setReasoning] = useState<ReasoningEffort>(initialReasoning);
   const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>("generate");
   const [output, setOutput] = useState(defaultOutput);
+  const [outputBase, setOutputBase] = useState(defaultOutput);
   const [busy, setBusy] = useState(false);
   const [authStatus, setAuthStatus] = useState("checking");
   const [pinnedLimits, setPinnedLimits] = useState<PinnedLimits | null>(null);
@@ -766,33 +767,13 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
       return;
     }
     captureIdea(trimmedIdea);
-    const suggestedName = await suggestProjectName(trimmedIdea);
-    const projectNameInput = await promptForInput(`Project name suggested: ${suggestedName}`, {
-      submittedMessage: "confirmed project name",
-      cancelMessage: "Research setup cancelled before naming.",
-      historyEnabled: false,
-      initialValue: suggestedName
-    });
-    if (!projectNameInput.trim()) return;
-    const projectName = slugify(projectNameInput);
-    if (!projectName) return;
-    const parent = await promptForDirectoryParent(output);
-    if (!parent) return;
-    const finalOutputDefault = join(parent, projectName);
-    const finalOutput = await promptForInput("Final output directory:", {
-      submittedMessage: "confirmed output directory",
-      cancelMessage: "Research setup cancelled before generation.",
-      historyEnabled: true,
-      initialValue: finalOutputDefault
-    });
-    if (!finalOutput.trim()) return;
-    const finalOutputPath = finalOutput.trim();
+    const finalOutputPath = autoRunOutputForIdea(trimmedIdea, { baseDir: outputBase });
     setOutput(finalOutputPath);
     append({
       role: "assistant",
-      title: "Research setup ready",
+      title: "Research run started",
       text: `Output path selected: ${finalOutputPath}`,
-      details: [`Project name: ${projectName}`, `Parent: ${parent}`]
+      details: ["Project/output setup can be changed with /output before the next run."]
     });
     await runGenerate(trimmedIdea, finalOutputPath);
   }
@@ -833,8 +814,8 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
     const initialValue = value || join(parent, outputDirectoryName(output));
     const nextOutput = value || (await promptForInput("Output directory:", { submittedMessage: "submitted output directory", historyEnabled: true, initialValue }));
     if (!nextOutput.trim()) return;
-    setOutput(nextOutput);
-    append({ role: "assistant", title: "Output updated", text: "Generated artifacts will be written to the selected directory.", details: [nextOutput] });
+    setOutputBase(nextOutput);
+    append({ role: "assistant", title: "Output updated", text: "New research runs will be written under this directory.", details: [nextOutput] });
   }
 
   function chooseProvider(value: string): void {
@@ -1487,6 +1468,25 @@ export function layoutForTerminal(columns: number, rows: number): TuiLayout {
     quotaBarWidth: safeColumns < 56 ? 10 : safeColumns < 80 ? 16 : 28,
     weekStyle: safeColumns >= 104 ? "full" : safeColumns >= 72 ? "compact" : "bar"
   };
+}
+
+export function autoRunOutputForIdea(
+  idea: string,
+  options: { baseDir?: string; now?: Date } = {}
+): string {
+  const baseDir = options.baseDir?.trim() || "idea2repo-runs";
+  const stamp = formatRunStamp(options.now ?? new Date());
+  const slug = slugify(idea).slice(0, 48) || "idea2repo-project";
+  return join(baseDir, `${stamp}-${slug}`);
+}
+
+function formatRunStamp(date: Date): string {
+  const year = String(date.getFullYear()).padStart(4, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${year}${month}${day}-${hour}${minute}`;
 }
 
 export function pageBudgetForLayout(
