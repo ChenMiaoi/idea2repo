@@ -101,9 +101,10 @@ export class PlanEventSink implements EventSink {
   constructor(
     private readonly root: string,
     runId: string,
-    private readonly downstream?: EventSink
+    private readonly downstream?: EventSink,
+    initialState?: PlanState
   ) {
-    this.state = createPlanState(runId);
+    this.state = initialState ?? createPlanState(runId);
   }
 
   current(): PlanState {

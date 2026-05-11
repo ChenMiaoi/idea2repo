@@ -27,8 +27,9 @@ import { CompositeEventSink, JsonlEventSink, runtimeTimestamp, type EventSink, t
 import { PlanEventSink } from "./runtime/plan.js";
 import { ApprovalRecorder, approvalPolicyFromPermissions } from "./runtime/approvals.js";
 import { createCoreToolRegistry, createToolContext, type ToolContext, type ToolRegistry } from "./runtime/tools.js";
-import { restoreRuntimeState } from "./runtime/runs.js";
+import { restoreRuntimeState, type RuntimeStateRestoreResult } from "./runtime/runs.js";
 import { writeResearchPipelineState } from "./pipeline/stage-state.js";
+import { researchStages, type ResearchStageId } from "./pipeline/stages.js";
 import { resolveTemplateProfile, templateDecisionMarkdown } from "./skills/templates/resolve.js";
 import { renderPaper } from "./skills/templates/render.js";
 import { anonymityMarkdown, checkTemplateCompliance, complianceMarkdown } from "./skills/templates/compliance.js";
@@ -421,15 +422,87 @@ export async function resumeResearchRepo(output: string, options: { force?: bool
   await appendRunLog(root, "resume_started", { force: Boolean(options.force) });
   const result = await regenerateFromManifest(root, manifest, options.force ?? false, policy);
   const restored = await restoreRuntimeState(root);
+  const continuation = await continueResumedPipeline(root, manifest, restored, options.force ?? false, policy);
   await appendRunLog(root, "resume_completed", { files: result.files.length });
   await appendRunLog(root, "runtime_state_restored", {
     run_id: restored.run_id,
     trace_rebuilt: restored.trace_rebuilt,
     blocked_stages: restored.blocked_stages.length,
     missing_artifacts: restored.missing_artifacts.length,
-    modified_artifacts: restored.modified_artifacts.length
+    modified_artifacts: restored.modified_artifacts.length,
+    resumed_stage: continuation?.stage_id ?? null,
+    resumed_files: continuation?.files.length ?? 0
   });
-  return result;
+  return {
+    ...result,
+    files: [...result.files, ...(continuation?.files ?? [])],
+    research_pipeline: continuation?.pipeline ?? result.research_pipeline
+  };
+}
+
+type ResumeContinuation = {
+  stage_id: ResearchStageId;
+  pipeline: ResearchPipelineResult;
+  files: string[];
+};
+
+async function continueResumedPipeline(
+  root: string,
+  manifest: ProjectManifest,
+  restored: RuntimeStateRestoreResult,
+  force: boolean,
+  policy: PermissionPolicy
+): Promise<ResumeContinuation | null> {
+  if (restored.blocked_stages.length) return null;
+  const stage = nextUnfinishedStage(restored);
+  if (!stage) return null;
+  const traceEvents = new JsonlEventSink(join(root, ".idea2repo", "trace.jsonl"));
+  const events = new PlanEventSink(root, restored.run_id, traceEvents, restored.plan);
+  const pipeline = await runResearchPipeline(manifest.request.idea, {
+    outputRoot: root,
+    provider: OFFLINE_PROVIDER_ID,
+    requestedDomains: manifest.request.requested_domains,
+    timelineWeeks: manifest.request.timeline_weeks,
+    resources: manifest.request.resources,
+    stack: manifest.request.stack,
+    runId: restored.run_id,
+    events,
+    stageOverrides: { fromStage: stage }
+  });
+  const approvalPolicy = approvalPolicyFromPermissions(
+    {
+      allowWrite: policy.allowWrite,
+      allowOverwrite: force && policy.allowOverwrite,
+      allowNetwork: false,
+      allowPublish: false,
+      allowShell: false
+    },
+    "generate"
+  );
+  const registry = createCoreToolRegistry();
+  const ctx = createToolContext({
+    runId: restored.run_id,
+    outputRoot: root,
+    events,
+    permissions: approvalPolicy,
+    approvals: new ApprovalRecorder(root, approvalPolicy, events)
+  });
+  const written: string[] = [];
+  for (const [relativePath, content] of Object.entries(pipeline.artifacts)) {
+    const path = ensureChild(root, relativePath);
+    if ((await exists(path)) && !force) continue;
+    if (await exists(path)) requirePermission(policy, "overwrite", path);
+    requirePermission(policy, "write", path);
+    written.push(await writeGeneratedArtifact(registry, ctx, relativePath, content));
+  }
+  written.push(join(root, ".idea2repo", "research_pipeline_state.json"));
+  return { stage_id: stage, pipeline, files: written };
+}
+
+function nextUnfinishedStage(restored: RuntimeStateRestoreResult): ResearchStageId | null {
+  const unfinished = restored.pipeline_state.stages.find((stage) => stage.status === "failed" || stage.status === "running" || stage.status === "pending");
+  if (!unfinished) return null;
+  return researchStages.find((stage) => stage.id === unfinished.id)?.id ?? null;
 }
 
 export function slugify(value: string): string {

@@ -117,6 +117,35 @@ test("resume restores runtime plan trace approvals and blocks missing stage arti
   }
 });
 
+test("resume continues from the next unfinished pipeline stage", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-resume-continues-"));
+  const output = join(root, "project");
+  try {
+    await generateResearchRepo("A local-first literature agent with CCF-A scoring.", output, {
+      offline: true,
+      provider: "offline",
+      runResearchPipeline: true,
+      jsonlEvents: true
+    });
+    const completedState = await readResearchPipelineState(output);
+    assert.ok(completedState);
+    await writeResearchPipelineState(output, markStage(completedState, "search_planning", "pending"));
+    await rm(join(output, ".idea2repo", "trace.jsonl"), { force: true });
+
+    const resumed = await resumeResearchRepo(output);
+
+    assert.equal(resumed.research_pipeline?.state.stages.find((stage) => stage.id === "search_planning")?.status, "completed");
+    assert.ok(resumed.files.some((file) => file.split("\\").join("/").endsWith(".idea2repo/research_pipeline_state.json")));
+    const state = await readResearchPipelineState(output);
+    assert.equal(state?.stages.find((stage) => stage.id === "search_planning")?.status, "completed");
+    const trace = await readJsonlEvents(join(output, ".idea2repo", "trace.jsonl"));
+    assert.ok(trace.some((event) => event.type === "stage.started" && event.stage_id === "search_planning"));
+    assert.ok(trace.some((event) => event.type === "run.completed"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("pipeline cancellation emits run.cancelled instead of run.failed", async () => {
   const root = await mkdtemp(join(tmpdir(), "idea2repo-cancel-"));
   const controller = new AbortController();
