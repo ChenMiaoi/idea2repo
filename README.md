@@ -48,6 +48,10 @@ Use deterministic local generation without network or OAuth:
 idea2repo "A benchmark for defensive agent security evaluation" --offline --output generated_repos/demo
 ```
 
+## Agent Runtime Roadmap
+
+Idea2Repo is adding an observable agent runtime with typed events, live plans, visible decision records, approval policy, tool calls, SSE run events, and artifact snapshots. See [docs/AGENT_RUNTIME_ROADMAP.md](docs/AGENT_RUNTIME_ROADMAP.md), [docs/RUNTIME_CONTRACT.md](docs/RUNTIME_CONTRACT.md), and [docs/REFERENCE_CODEX_DEEPSEEK_TUI.md](docs/REFERENCE_CODEX_DEEPSEEK_TUI.md).
+
 Useful commands:
 
 ```bash
