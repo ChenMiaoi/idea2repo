@@ -13,9 +13,23 @@ test("slash command suggestions match command prefixes", () => {
 
 test("slash command completion handles command names", () => {
   assert.equal(completeSlashInput("/stat"), "/status");
+  assert.equal(completeSlashInput("/trac"), "/trace");
+  assert.equal(completeSlashInput("/deci"), "/decisions");
+  assert.equal(completeSlashInput("/artifa"), "/artifact");
   assert.equal(completeSlashInput("/prov"), "/provider");
   assert.equal(completeSlashInput("/provider o"), "/provider o");
   assert.equal(completeSlashInput("/github d"), "/github d");
+});
+
+test("slash command suggestions include runtime commands", () => {
+  assert.deepEqual(
+    getSlashSuggestions("/art").map((suggestion) => suggestion.name),
+    ["/artifacts", "/artifact"]
+  );
+  assert.deepEqual(
+    getSlashSuggestions("/dec").map((suggestion) => suggestion.name),
+    ["/decisions"]
+  );
 });
 
 test("slash command selection resolves partial commands", () => {
@@ -27,10 +41,14 @@ test("slash command selection resolves partial commands", () => {
   assert.equal(resolveSlashCommandInput("/provider offline", 0), "/provider offline");
   assert.equal(resolveSlashCommandInput("/lim", 0), "/limits");
   assert.equal(resolveSlashCommandInput("/limit", 0), "/limit");
+  assert.equal(resolveSlashCommandInput("/retry", 0), "/retry");
+  assert.equal(resolveSlashCommandInput("/mode g", 0), "/mode g");
 });
 
 test("slash command hint describes usage and misses", () => {
   assert.match(getSlashHint("/research"), /Press Enter to enter a value/);
+  assert.match(getSlashHint("/artifact"), /Args:/);
+  assert.match(getSlashHint("/mode"), /Args: plan \| generate \| publish/);
   assert.match(getSlashHint("/generate"), /Legacy alias/);
   assert.match(getSlashHint("/model"), /Press Enter to choose/);
   assert.match(getSlashHint("/does-not-exist"), /No matching command/);

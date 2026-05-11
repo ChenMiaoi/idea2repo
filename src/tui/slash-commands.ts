@@ -34,6 +34,32 @@ export const slashCommands: SlashCommand[] = [
     description: "Show generated project manifest status."
   },
   {
+    name: "/plan",
+    usage: "/plan",
+    description: "Show the current runtime live plan."
+  },
+  {
+    name: "/trace",
+    usage: "/trace",
+    description: "Show recent runtime events."
+  },
+  {
+    name: "/decisions",
+    usage: "/decisions",
+    description: "Show visible decision records."
+  },
+  {
+    name: "/artifacts",
+    usage: "/artifacts",
+    description: "Show generated artifact paths."
+  },
+  {
+    name: "/artifact",
+    usage: "/artifact <path>",
+    description: "Read one generated text artifact.",
+    arguments: ["docs/diagnosis/ccf_a_readiness_report.md", "docs/relative_work/search_plan.json", "docs/proposal/revised_idea.md"]
+  },
+  {
     name: "/auth",
     usage: "/auth",
     description: "Choose Codex auth status, login, logout, or limits.",
@@ -105,6 +131,32 @@ export const slashCommands: SlashCommand[] = [
     usage: "/github",
     description: "Choose a GitHub export action.",
     interactive: "select"
+  },
+  {
+    name: "/retry",
+    usage: "/retry <stage_id>",
+    description: "Retry a runtime stage when recovery support is available."
+  },
+  {
+    name: "/skip",
+    usage: "/skip <stage_id>",
+    description: "Skip a runtime stage with a decision when recovery support is available."
+  },
+  {
+    name: "/cancel",
+    usage: "/cancel",
+    description: "Cancel the active runtime run when cancellation support is available."
+  },
+  {
+    name: "/mode",
+    usage: "/mode plan|generate|publish",
+    description: "Show or change runtime mode when approval support is available.",
+    arguments: ["plan", "generate", "publish"]
+  },
+  {
+    name: "/approvals",
+    usage: "/approvals",
+    description: "Show pending approvals when approval support is available."
   },
   {
     name: "/output",

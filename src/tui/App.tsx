@@ -1,15 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
 import chalk from "chalk";
-import { readdir } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { Box, render, Text, useApp, useInput } from "ink";
 import { generateResearchRepo, resumeResearchRepo, slugify } from "../generator.js";
 import { loadCodexModelCatalog, type CodexModel, type ReasoningEffort } from "../models.js";
 import { OFFLINE_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../providers.js";
-import { status as projectStatus, validate as validateProject } from "../state.js";
+import { ensureChild, readManifest, status as projectStatus, validate as validateProject } from "../state.js";
 import { AuthStorage, CodexOAuthClient, openaiCodexOAuthProvider, type CodexUsageSnapshot, type CreditsSnapshot, type RateLimitWindow } from "../auth/codex-oauth.js";
 import { buildGithubExportPlan } from "../github-export.js";
+import { formatDecisions, readDecisionRecords } from "../runtime/decisions.js";
+import { readJsonlEvents } from "../runtime/events.js";
+import { formatPlan, readPlanState } from "../runtime/plan.js";
 import {
   activateWorkflowStep,
   completeWorkflowSteps,
@@ -22,6 +25,7 @@ import {
 } from "./presentation.js";
 import { completeSlashInput, getSlashHint, getSlashSuggestions, resolveSlashCommandInput, selectedSlashSuggestion, slashCommands } from "./slash-commands.js";
 import { addHistoryEntry, readTuiInputHistory, writeTuiInputHistory } from "./history.js";
+import type { RuntimeArtifactEntry } from "./ArtifactPanel.js";
 
 type Message = {
   role: "system" | "user" | "assistant" | "error";
@@ -428,6 +432,41 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
           });
         });
         return;
+      case "/plan":
+        await runBusy(async () => {
+          const plan = await readPlanState(output);
+          append({ role: "assistant", title: "Runtime plan", text: `Plan has ${plan.items.length} stage items.`, details: formatPlan(plan).split("\n").slice(0, 8) });
+        });
+        return;
+      case "/trace":
+        await runBusy(async () => {
+          const events = await readJsonlEvents(resolve(output, ".idea2repo", "trace.jsonl"));
+          append({ role: "assistant", title: "Runtime trace", text: `${events.length} event${events.length === 1 ? "" : "s"} recorded.`, details: events.slice(-8).map((event) => `${event.timestamp} ${event.type}`) });
+        });
+        return;
+      case "/decisions":
+        await runBusy(async () => {
+          const records = await readDecisionRecords(output);
+          append({ role: "assistant", title: "Decision records", text: `${records.length} visible decision${records.length === 1 ? "" : "s"} recorded.`, details: formatDecisions(records).split("\n").slice(0, 8) });
+        });
+        return;
+      case "/artifacts":
+        await runBusy(async () => {
+          const artifacts = await runtimeArtifactEntries(output);
+          append({ role: "assistant", title: "Artifacts", text: `${artifacts.length} artifact${artifacts.length === 1 ? "" : "s"} found.`, details: artifacts.slice(0, 8).map((artifact) => `${artifact.path} (${artifact.bytes} bytes)`) });
+        });
+        return;
+      case "/artifact":
+        await runBusy(async () => {
+          const artifactPath = rest.trim();
+          if (!artifactPath) {
+            append({ role: "error", title: "Artifact path required", text: "Use /artifact docs/diagnosis/ccf_a_readiness_report.md." });
+            return;
+          }
+          const content = await readFile(ensureChild(output, artifactPath), "utf8");
+          append({ role: "assistant", title: artifactPath, text: compactText(content, 160), details: content.split(/\r?\n/).filter(Boolean).slice(0, 8) });
+        });
+        return;
       case "/auth":
         chooseAuthAction(parts.join(" "));
         return;
@@ -471,6 +510,13 @@ export function App({ defaultOutput = "generated_repos/idea2repo-project" }: App
         return;
       case "/github":
         chooseGithubAction(parts.join(" "));
+        return;
+      case "/retry":
+      case "/skip":
+      case "/cancel":
+      case "/mode":
+      case "/approvals":
+        append({ role: "assistant", title: "Runtime action pending", text: `${command} is registered; the underlying runtime action is implemented in the recovery and approval runtime phases.` });
         return;
       case "/research":
       case "/generate":
@@ -2134,6 +2180,30 @@ function compactText(value: string, maxLength: number): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+async function runtimeArtifactEntries(root: string): Promise<RuntimeArtifactEntry[]> {
+  const manifest = await readManifest(root);
+  const entries: RuntimeArtifactEntry[] = [];
+  for (const artifact of manifest.artifacts) {
+    const artifactPath = ensureChild(root, artifact.path);
+    try {
+      const info = await stat(artifactPath);
+      if (!info.isFile()) continue;
+      entries.push({
+        path: artifact.path,
+        bytes: info.size,
+        text: isTextArtifact(artifact.path)
+      });
+    } catch {
+      // The manifest may include stale paths while a run is in progress.
+    }
+  }
+  return entries.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function isTextArtifact(path: string): boolean {
+  return /\.(?:csv|json|jsonl|md|py|ts|tsx|txt|ya?ml)$/i.test(path);
 }
 
 function formatLimitWindow(label: string, window: RateLimitWindow): string {
