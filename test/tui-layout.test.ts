@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { homedir } from "node:os";
 import { test } from "node:test";
-import { autoRunOutputForIdea, directoryEnterAction, directoryPickerStartLabel, directoryPickerStartPath, isWindowsDriveRootPath, layoutForTerminal, pageBudgetForLayout, projectNameCandidatesForIdea, windowsDriveRootForPath, type TuiPageMode } from "../src/tui/App.js";
+import { autoRunOutputForIdea, codexFallbackOptions, directoryEnterAction, directoryPickerStartLabel, directoryPickerStartPath, isWindowsDriveRootPath, layoutForTerminal, pageBudgetForLayout, projectNameCandidatesForIdea, researchWizardOutput, windowsDriveRootForPath, type TuiPageMode } from "../src/tui/App.js";
 
 test("TUI layout adapts to narrow and short terminals", () => {
   const tiny = layoutForTerminal(50, 18);
@@ -82,4 +82,27 @@ test("TUI project name candidates come from optimized direction before raw short
   assert.equal(candidates.some((candidate) => candidate.startsWith("evidence-gated-adaptive-retrieval")), true);
   assert.notEqual(candidates[0], "rag");
   assert.equal(candidates.length, 3);
+});
+
+test("TUI research wizard resolves parent plus project name and preserves source", () => {
+  const resolved = researchWizardOutput({
+    idea: "LLM agents need long-term memory compression",
+    projectName: "Evidence Guided Agent Memory",
+    outputParent: "D:/research",
+    projectNameSource: "codex_suggested"
+  });
+  assert.equal(resolved.projectName, "evidence-guided-agent-memory");
+  assert.equal(resolved.root.replace(/\\/g, "/"), "D:/research/evidence-guided-agent-memory");
+  assert.deepEqual(resolved.naming, {
+    projectName: "evidence-guided-agent-memory",
+    outputParent: "D:/research",
+    projectNameSource: "codex_suggested"
+  });
+  assert.throws(() => researchWizardOutput({ idea: "x", projectName: "x", outputParent: "", projectNameSource: "fallback" }), /output parent directory is required/);
+});
+
+test("TUI Codex fallback choices require an explicit continuation action", () => {
+  const values = codexFallbackOptions("idea_intake").map((option) => option.value);
+  assert.deepEqual(values, ["retry", "manual_continue", "switch_offline"]);
+  assert.match(codexFallbackOptions("project_name")[0]?.description ?? "", /Codex repository name/);
 });

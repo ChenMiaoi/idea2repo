@@ -257,6 +257,7 @@ export async function generateResearchRepo(idea: string, output: string, options
   const workspace = inspectWorkspace();
   const providerReport = providerConfigReport({
     analysis,
+    analysisSource: providerAnalysis.analysisSource ?? (analysis ? "codex" : "offline_fallback"),
     fallbackReason: providerAnalysis.fallbackReason,
     providerId: providerAnalysis.selectedProvider,
     apiShape: providerAnalysis.selectedApiShape,
@@ -357,6 +358,7 @@ export async function generateResearchRepo(idea: string, output: string, options
     workspace,
     generation: generationMetadata({
       analysis,
+      analysisSource: providerAnalysis.analysisSource ?? (analysis ? "codex" : "offline_fallback"),
       fallbackReason: providerAnalysis.fallbackReason,
       selectedProvider: providerAnalysis.selectedProvider,
       requestedProvider: options.provider ?? null,
@@ -1041,6 +1043,7 @@ function stringCell(value: unknown): string {
 
 function generationMetadata(options: {
   analysis: ResearchAnalysis | null;
+  analysisSource: GeneratedProject["analysis_source"];
   fallbackReason: string;
   selectedProvider: string;
   requestedProvider: string | null;
@@ -1055,7 +1058,7 @@ function generationMetadata(options: {
 }): Record<string, unknown> {
   return {
     runtime: "node",
-    analysis_source: options.analysis ? "codex" : "offline_fallback",
+    analysis_source: options.analysisSource,
     provider_id: options.selectedProvider,
     api_shape: options.selectedApiShape,
     model: options.model,
@@ -1081,6 +1084,7 @@ function generationMetadata(options: {
 
 function providerConfigReport(options: {
   analysis: ResearchAnalysis | null;
+  analysisSource?: GeneratedProject["analysis_source"];
   fallbackReason: string;
   providerId: string;
   apiShape: string;
@@ -1089,6 +1093,24 @@ function providerConfigReport(options: {
 }): string {
   if (!options.analysis) {
     if (options.fallbackReason === "offline mode requested") return safeProviderReport(OFFLINE_PROVIDER_ID);
+    if (options.analysisSource === "codex") {
+      return `# Provider Configuration
+
+## Active Provider
+
+- Provider ID: ${options.providerId}
+- API shape: ${options.apiShape}
+- Provider: Codex staged research pipeline
+- Login: logged in or delegated to the selected Codex provider
+- Model: ${options.model || "codex default"}
+- Reasoning effort: ${options.reasoningEffort || "model default"}
+
+## Boundary
+
+- Staged research agents produced pipeline artifacts; the legacy aggregate ResearchAnalysis object is intentionally not used for this run.
+- Do not read ~/.codex auth files, scrape browser cookies, or write tokens into this repository.
+`;
+    }
     return `# Provider Configuration
 
 ## Active Provider

@@ -137,6 +137,31 @@ test("research generation wires pipeline artifacts and venue-aware paper package
   }
 });
 
+test("Codex staged pipeline metadata is not reported as offline fallback", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-codex-pipeline-metadata-"));
+  const output = join(root, "project");
+  try {
+    const result = await generateResearchRepo(
+      "Build an evidence-first LLM agent benchmark with baselines, datasets, metrics, ablations, and failure cases.",
+      output,
+      {
+        provider: "openai-codex",
+        allowNetwork: false,
+        runResearchPipeline: true,
+        strictCcfA: true
+      }
+    );
+    assert.equal(result.analysis_source, "codex");
+    assert.equal(result.provider_id, "openai-codex");
+    const manifest = await readManifest(output);
+    assert.equal(manifest.generation.analysis_source, "codex");
+    assert.doesNotMatch(await readFile(join(output, "docs/runtime/provider_config.md"), "utf8"), /offline fallback/i);
+    assert.match(await readFile(join(output, "docs/runtime/provider_config.md"), "utf8"), /Codex staged research pipeline/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("provider secret detector and venue database work", () => {
   assert.equal(containsSecretMaterial("OPENAI_API_KEY=sk-test"), true);
   assert.equal(containsSecretMaterial("OPENAI_API_KEY=<redacted>"), false);

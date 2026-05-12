@@ -47,6 +47,14 @@ type ProjectNameSelection = {
   source: ProjectNameSource | "regenerated";
 };
 
+type ProjectNameSuggestion = {
+  name: string;
+  source: "codex" | "fallback";
+  provider: string;
+};
+
+export type CodexFallbackAction = "retry" | "manual_continue" | "switch_offline";
+
 type AppProps = {
   defaultOutput?: string;
 };
@@ -698,7 +706,8 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
   async function runGenerate(
     idea: string,
     outputOverride = output,
-    naming?: { projectName?: string; outputParent?: string; projectNameSource?: ProjectNameSource }
+    naming?: { projectName?: string; outputParent?: string; projectNameSource?: ProjectNameSource },
+    providerOverride = provider
   ): Promise<void> {
     if (!idea.trim()) {
       append({ role: "error", title: "Missing idea", text: "Use /research, then enter an idea when prompted." });
@@ -706,7 +715,8 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
     }
     const runId = randomUUID();
     const outputRoot = resolve(outputOverride);
-    const policy = researchApprovalPolicy(runtimeMode, provider);
+    const runProvider = providerOverride;
+    const policy = researchApprovalPolicy(runtimeMode, runProvider);
     setRuntimeSnapshot(createTuiRuntimeSnapshot(runId, outputRoot));
     setInspectorTab("idea_score");
     let terminalRuntimeEvent = false;
@@ -721,8 +731,8 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
       const controller = new AbortController();
       activeAbortController.current = controller;
       const result = await generateResearchRepo(idea, outputOverride, {
-        provider,
-        offline: provider === OFFLINE_PROVIDER_ID,
+        provider: runProvider,
+        offline: runProvider === OFFLINE_PROVIDER_ID,
         model,
         reasoningEffort: reasoning,
         projectName: naming?.projectName,
@@ -738,7 +748,7 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
         eventSink: runtimeEvents,
         approvalMode: "block",
         allowNetwork: policy.allowNetwork,
-        downloadPdfs: researchDownloadPdfsDefault(runtimeMode, provider),
+        downloadPdfs: researchDownloadPdfsDefault(runtimeMode, runProvider),
         allowPdfDownload: policy.allowPdfDownload,
         approvalRuntimeMode: runtimeMode,
         permissionPolicy: {
@@ -800,23 +810,41 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
       return;
     }
     captureIdea(trimmedIdea);
-    const expansion = await prepareIdeaExpansion(trimmedIdea);
-    let suggestedName = await suggestProjectName(expansion.optimizedDirection);
-    let candidates = projectNameCandidatesForIdea(trimmedIdea, expansion.optimizedDirection, suggestedName);
+    append({
+      role: "assistant",
+      title: "Stage 1: Understanding idea with Codex",
+      text: "Preparing the research brief before repository naming."
+    });
+    let effectiveProvider = provider;
+    const expansion = await prepareIdeaExpansion(trimmedIdea, effectiveProvider);
+    if (!expansion) return;
+    effectiveProvider = expansion.provider;
+    let suggestedName = await suggestProjectName(expansion.optimizedDirection, effectiveProvider);
+    if (!suggestedName) return;
+    effectiveProvider = suggestedName.provider;
+    let candidates = projectNameCandidatesForIdea(trimmedIdea, expansion.optimizedDirection, suggestedName.name);
     let selection = await chooseProjectName(candidates, suggestedName);
     while (selection?.source === "regenerated") {
-      suggestedName = await suggestProjectName(expansion.optimizedDirection);
-      candidates = projectNameCandidatesForIdea(trimmedIdea, expansion.optimizedDirection, suggestedName);
+      suggestedName = await suggestProjectName(expansion.optimizedDirection, effectiveProvider);
+      if (!suggestedName) return;
+      effectiveProvider = suggestedName.provider;
+      candidates = projectNameCandidatesForIdea(trimmedIdea, expansion.optimizedDirection, suggestedName.name);
       selection = await chooseProjectName(candidates, suggestedName);
     }
     if (!selection) return;
-    const projectName = selection.name;
-    const parent = await promptForDirectoryParent(join(outputBase, projectName));
+    const parent = await promptForDirectoryParent(join(outputBase, selection.name));
     if (!parent) {
       append({ role: "assistant", title: "Research run cancelled", text: "No output parent directory was selected." });
       return;
     }
-    const finalOutputPath = join(parent, projectName);
+    const resolvedWizard = researchWizardOutput({
+      idea: trimmedIdea,
+      projectName: selection.name,
+      outputParent: parent,
+      projectNameSource: selection.source
+    });
+    const projectName = resolvedWizard.projectName;
+    const finalOutputPath = resolvedWizard.root;
     setOutputBase(parent);
     setOutput(finalOutputPath);
     append({
@@ -829,45 +857,56 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
       ]
     });
     await runGenerate(trimmedIdea, finalOutputPath, {
-      projectName,
-      outputParent: parent,
-      projectNameSource: selection.source
-    });
+      ...resolvedWizard.naming
+    }, effectiveProvider);
   }
 
-  async function prepareIdeaExpansion(idea: string): Promise<{ ideaBrief: IdeaBrief; optimizedDirection: string }> {
-    if (provider === OFFLINE_PROVIDER_ID) {
+  async function prepareIdeaExpansion(idea: string, activeProvider: string): Promise<{ ideaBrief: IdeaBrief; optimizedDirection: string; provider: string } | null> {
+    if (activeProvider === OFFLINE_PROVIDER_ID) {
       const ideaBrief = localIdeaBrief(idea);
       const optimizedDirection = optimizedDirectionFromBrief(ideaBrief);
       append({ role: "assistant", title: "Idea expanded", text: compactText(optimizedDirection, 180), details: ["Offline provider selected; using deterministic local idea expansion."] });
-      return { ideaBrief, optimizedDirection };
+      return { ideaBrief, optimizedDirection, provider: activeProvider };
     }
-    setBusy(true);
-    try {
-      const client = new CodexOAuthClient({ model, reasoningEffort: reasoning });
-      const result = await client.intakeIdea(idea, { timelineWeeks: 12 }, recordProgress);
-      const optimizedDirection = optimizedDirectionFromBrief(result.idea_brief);
-      append({ role: "assistant", title: "Idea expanded", text: compactText(optimizedDirection, 180), details: [`Domain: ${result.idea_brief.target_domain}`, `Venues: ${result.idea_brief.target_venues.join(", ") || "auto"}`] });
-      return { ideaBrief: result.idea_brief, optimizedDirection };
-    } catch (error) {
-      const ideaBrief = localIdeaBrief(idea);
-      const optimizedDirection = optimizedDirectionFromBrief(ideaBrief);
-      append({
-        role: "error",
-        title: "Codex idea expansion unavailable",
-        text: "Using a deterministic local optimized direction before naming.",
-        details: [compactText(error instanceof Error ? error.message : String(error || "unknown error"), 120)]
-      });
-      return { ideaBrief, optimizedDirection };
-    } finally {
-      setBusy(false);
+    for (;;) {
+      setBusy(true);
+      try {
+        const client = new CodexOAuthClient({ model, reasoningEffort: reasoning });
+        const result = await client.intakeIdea(idea, { timelineWeeks: 12 }, recordProgress);
+        const optimizedDirection = optimizedDirectionFromBrief(result.idea_brief);
+        append({ role: "assistant", title: "Idea expanded", text: compactText(optimizedDirection, 180), details: [`Domain: ${result.idea_brief.target_domain}`, `Venues: ${result.idea_brief.target_venues.join(", ") || "auto"}`] });
+        setBusy(false);
+        return { ideaBrief: result.idea_brief, optimizedDirection, provider: activeProvider };
+      } catch (error) {
+        setBusy(false);
+        const message = error instanceof Error ? error.message : String(error || "unknown error");
+        const action = await promptForCodexFallback("idea_intake", message);
+        if (!action) {
+          append({ role: "assistant", title: "Research run cancelled", text: "Codex fallback handling was cancelled before local fallback could run." });
+          return null;
+        }
+        if (action === "retry") continue;
+        const ideaBrief = localIdeaBrief(idea);
+        const optimizedDirection = optimizedDirectionFromBrief(ideaBrief);
+        const nextProvider = action === "switch_offline" ? OFFLINE_PROVIDER_ID : activeProvider;
+        if (action === "switch_offline") setProvider(OFFLINE_PROVIDER_ID);
+        append({
+          role: action === "switch_offline" ? "assistant" : "error",
+          title: action === "switch_offline" ? "Offline provider selected" : "Manual idea expansion selected",
+          text: action === "switch_offline"
+            ? "Continuing with deterministic local idea expansion."
+            : "Continuing with a deterministic local optimized direction before naming.",
+          details: [compactText(message, 120)]
+        });
+        return { ideaBrief, optimizedDirection, provider: nextProvider };
+      }
     }
   }
 
-  async function chooseProjectName(candidates: string[], suggestedName?: string): Promise<ProjectNameSelection | null> {
+  async function chooseProjectName(candidates: string[], suggestedName?: ProjectNameSuggestion): Promise<ProjectNameSelection | null> {
     const editOption = { label: "Edit", value: "__edit__", description: "Type a custom repository name." };
     const regenerateOption = { label: "Regenerate", value: "__regenerate__", description: "Ask Codex for another repository name." };
-    const preferred = slugify(suggestedName ?? "");
+    const preferred = slugify(suggestedName?.name ?? "");
     const options = [
       ...candidates.map((candidate, index) => ({ label: candidate, value: candidate, description: index === 0 ? "Recommended project name." : "Alternative project name." })),
       editOption,
@@ -892,40 +931,69 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
         const name = slugify(option.value).slice(0, 48);
         resolveName({
           name,
-          source: preferred && name === preferred.slice(0, 48) ? "codex_suggested" : "user_edited"
+          source: preferred && name === preferred.slice(0, 48)
+            ? suggestedName?.source === "codex" ? "codex_suggested" : "fallback"
+            : "user_edited"
         });
       }, () => resolveName(null));
     });
   }
 
-  async function suggestProjectName(idea: string): Promise<string> {
+  async function suggestProjectName(idea: string, activeProvider: string): Promise<ProjectNameSuggestion | null> {
     const fallback = slugify(idea);
-    if (provider === OFFLINE_PROVIDER_ID) {
+    if (activeProvider === OFFLINE_PROVIDER_ID) {
       append({ role: "assistant", title: "Project name suggested", text: fallback, details: ["Offline provider selected; using deterministic local naming."] });
-      return fallback;
+      return { name: fallback, source: "fallback", provider: activeProvider };
     }
-    setBusy(true);
-    try {
-      const client = new CodexOAuthClient({
-        model,
-        reasoningEffort: reasoning
-      });
-      const suggestion = await client.suggestProjectName(idea, recordProgress);
-      const name = slugify(suggestion.project_name);
-      append({ role: "assistant", title: "Project name suggested", text: name, details: ["Edit the name if it does not fit."] });
-      return name || fallback;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error || "unknown error");
-      append({
-        role: "error",
-        title: "Codex naming unavailable",
-        text: "Using a local fallback name. You can edit it before continuing.",
-        details: [compactText(message, 120)]
-      });
-      return fallback;
-    } finally {
-      setBusy(false);
+    for (;;) {
+      setBusy(true);
+      try {
+        const client = new CodexOAuthClient({
+          model,
+          reasoningEffort: reasoning
+        });
+        const suggestion = await client.suggestProjectName(idea, recordProgress);
+        const name = slugify(suggestion.project_name);
+        append({ role: "assistant", title: "Project name suggested", text: name, details: ["Edit the name if it does not fit."] });
+        setBusy(false);
+        return { name: name || fallback, source: name ? "codex" : "fallback", provider: activeProvider };
+      } catch (error) {
+        setBusy(false);
+        const message = error instanceof Error ? error.message : String(error || "unknown error");
+        const action = await promptForCodexFallback("project_name", message);
+        if (!action) {
+          append({ role: "assistant", title: "Research run cancelled", text: "Codex fallback handling was cancelled before local fallback naming could run." });
+          return null;
+        }
+        if (action === "retry") continue;
+        const nextProvider = action === "switch_offline" ? OFFLINE_PROVIDER_ID : activeProvider;
+        if (action === "switch_offline") setProvider(OFFLINE_PROVIDER_ID);
+        append({
+          role: action === "switch_offline" ? "assistant" : "error",
+          title: action === "switch_offline" ? "Offline provider selected" : "Manual project naming selected",
+          text: "Using a local fallback name. You can edit it before continuing.",
+          details: [compactText(message, 120)]
+        });
+        return { name: fallback, source: "fallback", provider: nextProvider };
+      }
     }
+  }
+
+  async function promptForCodexFallback(stage: "idea_intake" | "project_name", errorMessage: string): Promise<CodexFallbackAction | null> {
+    append({
+      role: "error",
+      title: stage === "idea_intake" ? "Codex idea expansion unavailable" : "Codex naming unavailable",
+      text: "Choose how to continue before the wizard proceeds.",
+      details: [compactText(errorMessage, 120)]
+    });
+    return new Promise((resolveAction) => {
+      openSelect(
+        "Codex unavailable",
+        codexFallbackOptions(stage),
+        (option) => resolveAction(option.value as CodexFallbackAction),
+        () => resolveAction(null)
+      );
+    });
   }
 
   async function chooseOutput(value: string): Promise<void> {
@@ -1790,6 +1858,39 @@ export function projectNameCandidatesForIdea(idea: string, optimizedDirection: s
     .slice(0, 3)
     .concat(["evidence-first-research", "ccf-a-research-cockpit", "idea2repo-project"].filter((value) => !seen.has(value)))
     .slice(0, 3);
+}
+
+export function researchWizardOutput(input: {
+  idea: string;
+  projectName: string;
+  outputParent: string;
+  projectNameSource: ProjectNameSource;
+}): {
+  root: string;
+  projectName: string;
+  naming: { projectName: string; outputParent: string; projectNameSource: ProjectNameSource };
+} {
+  const projectName = slugify(input.projectName).slice(0, 48) || slugify(input.idea).slice(0, 48) || "idea2repo-project";
+  const outputParent = input.outputParent.trim();
+  if (!outputParent) throw new Error("output parent directory is required");
+  return {
+    root: join(outputParent, projectName),
+    projectName,
+    naming: {
+      projectName,
+      outputParent,
+      projectNameSource: input.projectNameSource
+    }
+  };
+}
+
+export function codexFallbackOptions(stage: "idea_intake" | "project_name"): Array<{ label: string; value: CodexFallbackAction; description: string }> {
+  const target = stage === "idea_intake" ? "idea brief" : "repository name";
+  return [
+    { label: "Retry Codex", value: "retry", description: `Try Codex ${target} generation again before proceeding.` },
+    { label: "Continue manually", value: "manual_continue", description: `Use deterministic local ${target} output and keep the current provider for the run.` },
+    { label: "Switch offline", value: "switch_offline", description: `Use deterministic local ${target} output and switch future steps to offline mode.` }
+  ];
 }
 
 function localIdeaBrief(idea: string): IdeaBrief {
