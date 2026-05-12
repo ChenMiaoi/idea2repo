@@ -3,7 +3,7 @@ import { test } from "node:test";
 import React from "react";
 import { ApprovalDialog } from "../src/tui/ApprovalDialog.js";
 import { ArtifactPanel } from "../src/tui/ArtifactPanel.js";
-import { approvalRecordFromRequestedEvent, cockpitMutationBlocker, cockpitOpenArtifactPath, cockpitOpenFallbackMessage, cockpitShortcutForInput, cockpitStageTarget, isBusySubmissionAllowed } from "../src/tui/App.js";
+import { approvalRecordFromRequestedEvent, cockpitMutationBlocker, cockpitOpenArtifactPath, cockpitOpenFallbackMessage, cockpitShortcutForInput, cockpitStageTarget, isBusySubmissionAllowed, researchApprovalPolicy, researchDownloadPdfsDefault } from "../src/tui/App.js";
 import { PlanPanel } from "../src/tui/PlanPanel.js";
 import { cockpitActionLine, nextInspectorTab, ResearchCockpit } from "../src/tui/ResearchCockpit.js";
 import { TracePanel } from "../src/tui/TracePanel.js";
@@ -46,6 +46,16 @@ test("runtime TUI panels render as React elements", () => {
   assert.equal(React.isValidElement(TracePanel({ events })), true);
   assert.equal(React.isValidElement(ArtifactPanel({ artifacts: [{ path: "docs/idea.md", bytes: 12, text: true }] })), true);
   assert.equal(React.isValidElement(ApprovalDialog({ approvalId: "approval-1", action: "publish", risk: "network", selectedDecision: "denied" })), true);
+});
+
+test("TUI offline provider suppresses research network defaults", () => {
+  const offlinePolicy = researchApprovalPolicy("research", "offline");
+  assert.equal(offlinePolicy.allowNetwork, false);
+  assert.equal(offlinePolicy.allowPdfDownload, false);
+  assert.equal(researchDownloadPdfsDefault("research", "offline"), false);
+  const codexPolicy = researchApprovalPolicy("research", "openai-codex");
+  assert.equal(codexPolicy.allowNetwork, true);
+  assert.equal(researchDownloadPdfsDefault("research", "openai-codex"), true);
 });
 
 test("TUI runtime snapshot follows live runtime events", () => {

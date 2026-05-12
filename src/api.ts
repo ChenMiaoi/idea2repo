@@ -206,9 +206,9 @@ async function route(request: IncomingMessage, response: ServerResponse, runMana
           events: runControlEvents(runManager, run),
           reason: stringOrNull(body.reason) ?? undefined,
           execute: body.execute !== false,
-          allowNetwork: Boolean(body.allow_network),
-          downloadPdfs: Boolean(body.download_pdfs),
-          maxPapers: numberValue(body.max_papers, 20)
+          allowNetwork: body.allow_network === undefined ? undefined : Boolean(body.allow_network),
+          downloadPdfs: body.download_pdfs === undefined ? undefined : Boolean(body.download_pdfs),
+          maxPapers: optionalNumberValue(body.max_papers)
         });
         sendJson(response, 200, result as unknown as Record<string, unknown>);
         return;
@@ -533,12 +533,12 @@ function generateOptionsFromBody(body: Record<string, unknown>, mode = runtimeMo
     reasoningEffort: stringOrNull(body.reasoning_effort),
     projectName: stringOrNull(body.project_name) ?? undefined,
     outputParent: stringOrNull(body.output_parent) ?? undefined,
-    projectNameSource: stringOrNull(body.project_name) ? "api_project_name" : undefined,
+    projectNameSource: stringOrNull(body.project_name) ? "user_edited" : undefined,
     runResearchPipeline: Boolean(body.run_research_pipeline),
     allowNetwork: allowNetworkFromBody(body, mode),
     downloadPdfs: downloadPdfsFromBody(body, mode),
     allowPdfDownload: allowPdfDownloadFromBody(body, mode),
-    maxPapers: numberValue(body.max_papers, 20),
+    maxPapers: numberValue(body.max_papers, mode.product === "research" || mode.product === "danger" ? 50 : 20),
     sources: stringArray(body.sources),
     strictCcfA: Boolean(body.strict_ccf_a),
     venue: stringOrNull(body.venue) ?? undefined,
@@ -569,7 +569,12 @@ function runtimeModeFromBody(body: Record<string, unknown>): RuntimeModeSelectio
 }
 
 function allowNetworkFromBody(body: Record<string, unknown>, mode: RuntimeModeSelection): boolean {
-  if (mode.product === "research" || mode.product === "danger") return body.allow_network !== false;
+  const offlineProvider = Boolean(body.offline) || stringOrNull(body.provider) === "offline";
+  if (mode.product === "research" || mode.product === "danger") {
+    if (offlineProvider && body.allow_network === undefined) return false;
+    return body.allow_network !== false;
+  }
+  if (offlineProvider && body.allow_network === undefined) return false;
   return Boolean(body.allow_network);
 }
 

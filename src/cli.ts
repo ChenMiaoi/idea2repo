@@ -175,9 +175,9 @@ async function commandStage(argv: string[]): Promise<number> {
     const result = await retryRuntimeStage(root, stageId, {
       reason: reason || undefined,
       execute: !hasFlag(parsed, "no-execute"),
-      allowNetwork: hasFlag(parsed, "allow-network"),
-      downloadPdfs: hasFlag(parsed, "download-pdfs"),
-      maxPapers: numberFlag(parsed, "max-papers", 20)
+      allowNetwork: parsed.flags.has("allow-network") ? hasFlag(parsed, "allow-network") : undefined,
+      downloadPdfs: parsed.flags.has("download-pdfs") ? hasFlag(parsed, "download-pdfs") : undefined,
+      maxPapers: optionalNumberFlag(parsed, "max-papers")
     });
     console.log(`Stage retry ${result.executed ? "executed" : "prepared"}: ${result.stage_id}`);
     console.log(`Snapshots: ${result.snapshots.length}`);
@@ -439,6 +439,11 @@ async function commandGenerate(argv: string[], researchMode = false): Promise<nu
   const weeks = numberFlag(parsed, "weeks", 12);
   const offline = hasFlag(parsed, "offline");
   const provider = stringFlag(parsed, "provider") ?? (offline ? "offline" : null);
+  const runResearchPipeline = researchMode || hasFlag(parsed, "run-research-pipeline");
+  const offlineProvider = canonicalProvider(provider, offline) === "offline";
+  const allowNetwork = parsed.flags.has("allow-network") ? hasFlag(parsed, "allow-network") : runResearchPipeline && !offlineProvider;
+  const downloadPdfs = parsed.flags.has("download-pdfs") ? hasFlag(parsed, "download-pdfs") : runResearchPipeline;
+  const maxPapers = numberFlag(parsed, "max-papers", runResearchPipeline ? 50 : 20);
   const result = await generateResearchRepo(idea, stringFlag(parsed, "output") ?? "generated_repos/idea2repo-project", {
     requestedDomains: valuesFlag(parsed, "domain"),
     timelineWeeks: weeks,
@@ -451,12 +456,12 @@ async function commandGenerate(argv: string[], researchMode = false): Promise<nu
     reasoningEffort: stringFlag(parsed, "reasoning"),
     projectName: stringFlag(parsed, "project-name") ?? undefined,
     outputParent: stringFlag(parsed, "output-parent") ?? undefined,
-    projectNameSource: stringFlag(parsed, "project-name") ? "cli_project_name" : undefined,
-    runResearchPipeline: researchMode || hasFlag(parsed, "run-research-pipeline"),
-    allowNetwork: hasFlag(parsed, "allow-network"),
-    downloadPdfs: hasFlag(parsed, "download-pdfs"),
-    allowPdfDownload: hasFlag(parsed, "allow-network") && hasFlag(parsed, "download-pdfs"),
-    maxPapers: numberFlag(parsed, "max-papers", 20),
+    projectNameSource: stringFlag(parsed, "project-name") ? "user_edited" : undefined,
+    runResearchPipeline,
+    allowNetwork,
+    downloadPdfs,
+    allowPdfDownload: false,
+    maxPapers,
     sources: valuesFlag(parsed, "source"),
     strictCcfA: hasFlag(parsed, "strict-ccf-a"),
     venue: stringFlag(parsed, "venue") ?? undefined,
@@ -467,7 +472,7 @@ async function commandGenerate(argv: string[], researchMode = false): Promise<nu
     compilePaper: hasFlag(parsed, "compile-paper"),
     packageOverleaf: hasFlag(parsed, "package-overleaf"),
     jsonlEvents: hasFlag(parsed, "jsonl-events"),
-    permissionPolicy: policyFromFlags(parsed)
+    permissionPolicy: policyFromFlags(parsed, { allowNetwork })
   });
   const diagnosis = result.diagnosis;
   console.log(`Generated Idea2Repo project: ${result.root}`);
@@ -494,7 +499,7 @@ async function commandLiterature(argv: string[]): Promise<number> {
       requestedDomains: valuesFlag(parsed, "domain"),
       timelineWeeks: numberFlag(parsed, "weeks", 12),
       resources: valuesFlag(parsed, "resource"),
-      maxPapers: numberFlag(parsed, "max-papers", 20),
+      maxPapers: numberFlag(parsed, "max-papers", 50),
       provider: "offline",
       strictCcfA: hasFlag(parsed, "strict-ccf-a")
     });
@@ -1147,11 +1152,11 @@ function safePaperId(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "paper";
 }
 
-function policyFromFlags(parsed: ParsedArgs): PermissionPolicy {
+function policyFromFlags(parsed: ParsedArgs, defaults: { allowNetwork?: boolean } = {}): PermissionPolicy {
   return {
     allowWrite: true,
     allowOverwrite: hasFlag(parsed, "force"),
-    allowNetwork: hasFlag(parsed, "allow-network"),
+    allowNetwork: parsed.flags.has("allow-network") ? hasFlag(parsed, "allow-network") : Boolean(defaults.allowNetwork),
     allowLogin: hasFlag(parsed, "allow-login"),
     allowInstall: hasFlag(parsed, "allow-install"),
     allowPublish: hasFlag(parsed, "allow-publish")

@@ -12,6 +12,7 @@ export type RuntimeRunContext = {
   reasoning_effort: string | null;
   sources: string[];
   venue: string | null;
+  project_name: string;
   allow_network: boolean;
   download_pdfs: boolean;
   max_papers: number;

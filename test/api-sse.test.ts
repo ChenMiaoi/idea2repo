@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -19,7 +19,6 @@ test("runtime API starts runs and streams shared runtime events over SSE", async
       idea: "A local-first agent runtime with evidence-gated literature review and live plan updates.",
       output,
       mode: "research",
-      allow_network: false,
       offline: true,
       provider: "offline",
       run_research_pipeline: true,
@@ -56,6 +55,10 @@ test("runtime API starts runs and streams shared runtime events over SSE", async
     assert.equal(run.legacy_mode, "generate");
     assert.match(run.events_url, /\/events$/);
     await waitForRunResult(server.url, String(started.run_id));
+    const context = JSON.parse(await readFile(join(output, ".idea2repo/run_context.json"), "utf8")) as { allow_network: boolean; download_pdfs: boolean; max_papers: number };
+    assert.equal(context.allow_network, false);
+    assert.equal(context.download_pdfs, true);
+    assert.equal(context.max_papers, 50);
 
     const listed = await getJson(`${server.url}/runs`);
     const listedRun = listed.runs.find((entry: { run_id: string }) => entry.run_id === started.run_id);

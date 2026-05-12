@@ -5,7 +5,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { Box, render, Text, useApp, useInput } from "ink";
-import { generateResearchRepo, resumeResearchRepo, slugify } from "../generator.js";
+import { generateResearchRepo, resumeResearchRepo, slugify, type ProjectNameSource } from "../generator.js";
 import type { IdeaBrief } from "../agents/schemas.js";
 import { loadCodexModelCatalog, type CodexModel, type ReasoningEffort } from "../models.js";
 import { OFFLINE_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID } from "../providers.js";
@@ -44,7 +44,7 @@ type Message = {
 
 type ProjectNameSelection = {
   name: string;
-  source: string;
+  source: ProjectNameSource | "regenerated";
 };
 
 type AppProps = {
@@ -696,7 +696,7 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
   async function runGenerate(
     idea: string,
     outputOverride = output,
-    naming?: { projectName?: string; outputParent?: string; projectNameSource?: string }
+    naming?: { projectName?: string; outputParent?: string; projectNameSource?: ProjectNameSource }
   ): Promise<void> {
     if (!idea.trim()) {
       append({ role: "error", title: "Missing idea", text: "Use /research, then enter an idea when prompted." });
@@ -704,7 +704,7 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
     }
     const runId = randomUUID();
     const outputRoot = resolve(outputOverride);
-    const policy = approvalPolicyForMode(runtimeMode);
+    const policy = researchApprovalPolicy(runtimeMode, provider);
     setRuntimeSnapshot(createTuiRuntimeSnapshot(runId, outputRoot));
     setInspectorTab("idea_score");
     let terminalRuntimeEvent = false;
@@ -730,13 +730,13 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
         jsonlEvents: true,
         runId,
         derivedConfig: {
-          project_name_source: naming?.projectNameSource ?? "output_basename"
+          project_name_source: naming?.projectNameSource ?? "fallback"
         },
         projectNameSource: naming?.projectNameSource,
         eventSink: runtimeEvents,
         approvalMode: "block",
         allowNetwork: policy.allowNetwork,
-        downloadPdfs: runtimeMode === "research" || runtimeMode === "danger-full-access",
+        downloadPdfs: researchDownloadPdfsDefault(runtimeMode, provider),
         allowPdfDownload: policy.allowPdfDownload,
         approvalRuntimeMode: runtimeMode,
         permissionPolicy: {
@@ -890,7 +890,7 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
         const name = slugify(option.value).slice(0, 48);
         resolveName({
           name,
-          source: preferred && name === preferred.slice(0, 48) ? "codex_suggested" : "tui_selected_candidate"
+          source: preferred && name === preferred.slice(0, 48) ? "codex_suggested" : "user_edited"
         });
       }, () => resolveName(null));
     });
@@ -3120,6 +3120,15 @@ function runtimeModeOptions(): SelectOption[] {
     { label: "publish", value: "publish", description: "Prepare publish actions; publish still requires explicit approval." },
     { label: "danger-full-access", value: "danger-full-access", description: "Allow write and network operations; publish and shell remain gated." }
   ];
+}
+
+export function researchApprovalPolicy(runtimeMode: RuntimeMode, provider: string) {
+  const policy = approvalPolicyForMode(runtimeMode);
+  return provider === OFFLINE_PROVIDER_ID ? { ...policy, allowNetwork: false, allowPdfDownload: false } : policy;
+}
+
+export function researchDownloadPdfsDefault(runtimeMode: RuntimeMode, provider: string): boolean {
+  return provider !== OFFLINE_PROVIDER_ID && (runtimeMode === "research" || runtimeMode === "danger-full-access");
 }
 
 export function isBusySubmissionAllowed(input: string): boolean {

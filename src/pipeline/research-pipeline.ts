@@ -93,6 +93,7 @@ export type ResearchPipelineOptions = {
   allowNetwork?: boolean;
   downloadPdfs?: boolean;
   maxPapers?: number;
+  projectName?: string;
   requestedDomains?: string[];
   timelineWeeks?: number;
   resources?: string[];
@@ -150,6 +151,7 @@ type PipelineClaimEvidenceRow = ClaimEvidenceRow | PlannedClaimEvidenceRow;
 export async function runResearchPipeline(idea: string, options: ResearchPipelineOptions = {}): Promise<ResearchPipelineResult> {
   if (!idea.trim()) throw new Error("idea must not be empty");
   const outputRoot = options.outputRoot ?? process.cwd();
+  const maxPapers = options.maxPapers ?? 50;
   const runId = options.runId ?? randomUUID();
   const emitRuntimeEvent = async (event: Idea2RepoEvent): Promise<void> => {
     await options.events?.emit(event);
@@ -343,19 +345,21 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
   });
 
   let searchPlan: SearchPlan;
-  const resumedSearchPlan = await readJsonArtifact<SearchPlan>(readArtifact, "docs/relative_work/search_plan.json");
+  const resumedSearchPlan =
+    (await readJsonArtifact<SearchPlan>(readArtifact, "docs/relative_work/search_plan.json")) ??
+    parseEmbeddedJsonArtifact<SearchPlan>((await readArtifact("docs/relative_work/search_plan.md")) ?? "");
   if ((await canResumeStage("search_planning")) && resumedSearchPlan) {
     searchPlan = resumedSearchPlan;
   } else {
     await setStage("search_planning", "running");
     searchPlan = await stagedOrFallback(
       () => agent?.planLiteratureSearch(idea, { requestedDomains: options.requestedDomains, targetVenues: venues, timelineWeeks: options.timelineWeeks, resources: options.resources }, options.progress).then((result) => result.search_plan),
-      () => offlineSearchPlan(ideaBrief, options.maxPapers ?? 20),
+      () => offlineSearchPlan(ideaBrief, maxPapers),
       warnings,
       "search planning",
       options.signal
     );
-    searchPlan = enforceSearchPlanGate(searchPlan, offlineSearchPlan(ideaBrief, options.maxPapers ?? 20), warnings);
+    searchPlan = enforceSearchPlanGate(searchPlan, offlineSearchPlan(ideaBrief, maxPapers), warnings);
     await recordDecision({
       stage_id: "search_planning",
       title: "Literature search plan selected",
@@ -367,7 +371,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     });
     await setStage("search_planning", "completed");
   }
-  searchPlan = enforceSearchPlanGate(searchPlan, offlineSearchPlan(ideaBrief, options.maxPapers ?? 20), warnings);
+  searchPlan = enforceSearchPlanGate(searchPlan, offlineSearchPlan(ideaBrief, maxPapers), warnings);
 
   let candidates: PaperCandidate[];
   let searchReport: string;
@@ -381,7 +385,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     const literature = await toolRegistry.execute<LiteratureSearchOptions, LiteratureSearchResult>("literature.search", {
       queries,
       allowNetwork: Boolean(options.allowNetwork),
-      limit: options.maxPapers ?? 20,
+      limit: maxPapers,
       idea,
       targetVenues: venues,
       sources: options.sources as LiteratureSource[] | undefined
@@ -935,7 +939,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     await setStage("venue_template_packaging", "running");
     templatePackage = await templatePackageArtifacts({
       idea,
-      projectName: "evidence-first-research-draft",
+      projectName: researchProjectName(options.projectName, idea),
       venue: options.venue ?? venues[0],
       domain: route.domain.key,
       strict: Boolean(options.strictCcfA)
@@ -1538,6 +1542,7 @@ function stageArtifactPaths(id: Parameters<typeof markStage>[1], extraArtifacts:
 async function legacyResumeArtifactExists(outputRoot: string, id: Parameters<typeof markStage>[1], relativePath: string): Promise<boolean> {
   const legacyPath = (() => {
     if (id === "idea_intake" && relativePath === "docs/idea/idea_brief.json") return "docs/idea/idea_brief.md";
+    if (id === "search_planning" && relativePath === "docs/relative_work/search_plan.json") return "docs/relative_work/search_plan.md";
     if (id === "search_planning" && relativePath === "docs/relative_work/search_plan.md") return "docs/relative_work/search_plan.json";
     if (id === "literature_search" && relativePath === "docs/relative_work/candidates.md") return "docs/relative_work/candidates.json";
     if (id === "related_work_analysis" && relativePath === "docs/relative_work/survey.md") return "docs/relative_work/topic_clusters.md";
@@ -2115,14 +2120,23 @@ function extractMarkdownSection(markdown: string, heading: string): string {
 }
 
 function parseIdeaBriefArtifact(markdown: string): IdeaBrief | null {
+  return parseEmbeddedJsonArtifact<IdeaBrief>(markdown);
+}
+
+function parseEmbeddedJsonArtifact<T>(markdown: string): T | null {
   const start = markdown.indexOf("{");
   const end = markdown.lastIndexOf("}");
   if (start < 0 || end <= start) return null;
   try {
-    return JSON.parse(markdown.slice(start, end + 1)) as IdeaBrief;
+    return JSON.parse(markdown.slice(start, end + 1)) as T;
   } catch {
     return null;
   }
+}
+
+function researchProjectName(projectName: string | undefined, idea: string): string {
+  const source = projectName?.trim() || titleFromIdea(idea);
+  return source.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64) || "evidence-first-research-draft";
 }
 
 function createStagedAgent(options: ResearchPipelineOptions): StagedResearchAgent | null {

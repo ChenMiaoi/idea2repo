@@ -73,14 +73,14 @@ test("generation can derive output root from parent and project name", async () 
       provider: "offline",
       projectName: "Evidence Guided Agent Memory",
       outputParent: root,
-      projectNameSource: "test_project_name"
+      projectNameSource: "user_edited"
     });
     const output = join(root, "evidence-guided-agent-memory");
     assert.equal(result.root, output);
     assert.equal(result.project_name, "evidence-guided-agent-memory");
     const manifest = await readManifest(output);
     assert.equal(manifest.project_name, "evidence-guided-agent-memory");
-    assert.equal(manifest.generation.project_name_source, "test_project_name");
+    assert.equal(manifest.generation.project_name_source, "user_edited");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -114,6 +114,13 @@ test("research generation wires pipeline artifacts and venue-aware paper package
     assert.equal(result.template_profile_id, "acm-sigconf");
     assert.equal((await validate(output)).length, 0);
     assert.equal((await stat(join(output, ".idea2repo/research_pipeline_state.json"))).isFile(), true);
+    const runContext = JSON.parse(await readFile(join(output, ".idea2repo/run_context.json"), "utf8")) as { project_name: string; allow_network: boolean; download_pdfs: boolean; max_papers: number };
+    assert.equal(runContext.project_name, "project");
+    assert.equal(runContext.allow_network, false);
+    assert.equal(runContext.download_pdfs, true);
+    assert.equal(runContext.max_papers, 50);
+    const manifest = await readManifest(output);
+    assert.equal(manifest.generation.project_name_source, "fallback");
     assert.match(await readFile(join(output, "docs/idea/idea_brief.md"), "utf8"), /Idea Brief/);
     assert.match(await readFile(join(output, "docs/relative_work/search_plan.json"), "utf8"), /precision_queries/);
     assert.match(await readFile(join(output, "docs/diagnosis/ccf_a_strict_scorecard.md"), "utf8"), /Strict mode: preliminary-only \(CCF-A venue gate blocked\)/);

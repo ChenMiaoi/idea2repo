@@ -214,7 +214,7 @@ test("research pipeline resumes completed stages from validated artifacts", asyn
     };
     await writeArtifact(root, "docs/idea/idea_brief.md", `# Idea Brief\n\n${JSON.stringify(ideaBrief, null, 2)}\n`);
     await writeArtifact(root, "docs/idea/assumptions.md", "# Assumptions\n\n- resume test\n");
-    await writeArtifact(root, "docs/relative_work/search_plan.json", JSON.stringify(sampleSearchPlan(), null, 2) + "\n");
+    await writeArtifact(root, "docs/relative_work/search_plan.md", `# Literature Search Plan\n\nLegacy structured payload:\n\n\`\`\`json\n${JSON.stringify(sampleSearchPlan(), null, 2)}\n\`\`\`\n`);
     let state = createResearchPipelineState(idea, root);
     state = markStage(state, "idea_intake", "completed");
     state = markStage(state, "search_planning", "completed");

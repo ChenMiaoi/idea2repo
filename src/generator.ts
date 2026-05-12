@@ -39,6 +39,7 @@ import { packagePaper } from "./skills/templates/package.js";
 import type { PaperRenderInput, PaperRenderResult, ReviewMode, TemplateComplianceResult, TemplateResolveInput, TemplateResolveResult, VenueTemplateProfile } from "./skills/templates/types.js";
 
 export type Stack = "python" | "ts";
+export type ProjectNameSource = "codex_suggested" | "user_edited" | "fallback";
 
 export type GenerateOptions = {
   requestedDomains?: string[];
@@ -61,7 +62,7 @@ export type GenerateOptions = {
   derivedConfig?: Record<string, unknown>;
   projectName?: string;
   outputParent?: string;
-  projectNameSource?: string;
+  projectNameSource?: ProjectNameSource;
   discussionAssumptions?: string[];
   progressCallback?: (message: string) => void;
   runResearchPipeline?: boolean;
@@ -116,6 +117,8 @@ type ProviderAnalysis = {
 
 export async function generateResearchRepo(idea: string, output: string, options: GenerateOptions = {}): Promise<GeneratedProject> {
   const root = resolveGenerationRoot(output, options);
+  const researchDefaults = researchGenerationDefaults(options);
+  const resolvedProjectName = options.projectName ? slugify(options.projectName) : slugify(root.split(/[\\/]/).pop() || idea);
   const runId = options.runId ?? randomUUID();
   const traceEvents = (options.jsonlEvents || options.runResearchPipeline) ? new JsonlEventSink(join(root, ".idea2repo", "trace.jsonl")) : undefined;
   const baseEvents = combineEventSinks(traceEvents, options.eventSink);
@@ -134,13 +137,13 @@ export async function generateResearchRepo(idea: string, output: string, options
   const stack = options.stack ?? "python";
   if (stack !== "python" && stack !== "ts") throw new Error("stack must be one of: python, ts");
 
-  const policy = options.permissionPolicy ?? defaultPolicy({ allowOverwrite: options.force });
+  const policy = options.permissionPolicy ?? { ...defaultPolicy({ allowOverwrite: options.force }), allowNetwork: researchDefaults.allowNetwork };
   if ((await exists(root)) && (await nonEmpty(root)) && !options.force) {
     throw new Error(`output directory already exists and is not empty: ${root}`);
   }
   if ((await exists(root)) && (await nonEmpty(root))) requirePermission(policy, "overwrite", root);
   requirePermission(policy, "write", root);
-  if ((options.allowNetwork || options.downloadPdfs) && !policy.allowNetwork && options.approvalMode !== "block") {
+  if ((researchDefaults.allowNetwork || (researchDefaults.downloadPdfs && researchDefaults.allowNetwork)) && !policy.allowNetwork && options.approvalMode !== "block") {
     requirePermission(policy, "network", "research pipeline network access");
   }
 
@@ -151,7 +154,7 @@ export async function generateResearchRepo(idea: string, output: string, options
       allowWrite: policy.allowWrite,
       allowOverwrite: policy.allowOverwrite,
       allowNetwork: policy.allowNetwork,
-      allowPdfDownload: Boolean(options.allowPdfDownload),
+      allowPdfDownload: researchDefaults.allowPdfDownload,
       allowPublish: policy.allowPublish,
       allowShell: false
     },
@@ -173,9 +176,10 @@ export async function generateResearchRepo(idea: string, output: string, options
     reasoning_effort: options.reasoningEffort ?? null,
     sources: options.sources ?? [],
     venue: options.venue ?? null,
-    allow_network: Boolean(options.allowNetwork),
-    download_pdfs: Boolean(options.downloadPdfs),
-    max_papers: options.maxPapers ?? 20,
+    project_name: resolvedProjectName,
+    allow_network: researchDefaults.allowNetwork,
+    download_pdfs: researchDefaults.downloadPdfs,
+    max_papers: researchDefaults.maxPapers,
     approval_policy: {
       allow_write: approvalPolicy.allowWrite,
       allow_overwrite: approvalPolicy.allowOverwrite,
@@ -191,9 +195,9 @@ export async function generateResearchRepo(idea: string, output: string, options
   });
   const pipeline = options.runResearchPipeline
     ? await runResearchPipeline(idea, {
-        allowNetwork: Boolean(options.allowNetwork),
-        downloadPdfs: options.downloadPdfs,
-        maxPapers: options.maxPapers ?? 20,
+        allowNetwork: researchDefaults.allowNetwork,
+        downloadPdfs: researchDefaults.downloadPdfs,
+        maxPapers: researchDefaults.maxPapers,
         requestedDomains: options.requestedDomains,
         timelineWeeks,
         resources: options.resources ?? [],
@@ -203,6 +207,7 @@ export async function generateResearchRepo(idea: string, output: string, options
         reasoningEffort: options.reasoningEffort,
         sources: options.sources,
         outputRoot: root,
+        projectName: resolvedProjectName,
         venue: options.venue,
         strictCcfA: options.strictCcfA,
         events: runtimeEvents ? new PipelineCompletionSuppressingSink(runtimeEvents) : undefined,
@@ -247,7 +252,7 @@ export async function generateResearchRepo(idea: string, output: string, options
   if (analysis) diagnosis = diagnosisFromAnalysis(diagnosis, analysis);
 
   const artifactIdea = safeSecurityReframe(idea, diagnosis.security_assessment);
-  const projectName = options.projectName ? slugify(options.projectName) : slugify(root.split(/[\\/]/).pop() || idea);
+  const projectName = resolvedProjectName;
   const projectNameSource = projectNameSourceFor(options);
   const workspace = inspectWorkspace();
   const providerReport = providerConfigReport({
@@ -423,8 +428,29 @@ function resolveGenerationRoot(output: string, options: Pick<GenerateOptions, "p
   return resolve(output);
 }
 
-function projectNameSourceFor(options: Pick<GenerateOptions, "projectName" | "projectNameSource" | "derivedConfig">): string {
-  return options.projectNameSource ?? (stringCell(options.derivedConfig?.project_name_source) || (options.projectName ? "option_project_name" : "output_basename"));
+function projectNameSourceFor(options: Pick<GenerateOptions, "projectName" | "projectNameSource" | "derivedConfig">): ProjectNameSource {
+  const explicit = normalizeProjectNameSource(options.projectNameSource);
+  if (explicit) return explicit;
+  const derived = normalizeProjectNameSource(stringCell(options.derivedConfig?.project_name_source));
+  if (derived) return derived;
+  return options.projectName ? "user_edited" : "fallback";
+}
+
+function normalizeProjectNameSource(value: string | null | undefined): ProjectNameSource | null {
+  if (value === "codex_suggested" || value === "user_edited" || value === "fallback") return value;
+  return null;
+}
+
+function researchGenerationDefaults(options: Pick<GenerateOptions, "runResearchPipeline" | "offline" | "provider" | "allowNetwork" | "downloadPdfs" | "allowPdfDownload" | "maxPapers">): { allowNetwork: boolean; downloadPdfs: boolean; allowPdfDownload: boolean; maxPapers: number } {
+  const researchMode = Boolean(options.runResearchPipeline);
+  const provider = canonicalProvider(options.provider, Boolean(options.offline));
+  const defaultAllowNetwork = researchMode && provider !== OFFLINE_PROVIDER_ID;
+  return {
+    allowNetwork: options.allowNetwork ?? defaultAllowNetwork,
+    downloadPdfs: options.downloadPdfs ?? researchMode,
+    allowPdfDownload: options.allowPdfDownload ?? false,
+    maxPapers: options.maxPapers ?? (researchMode ? 50 : 20)
+  };
 }
 
 async function writeGeneratedArtifact(registry: ToolRegistry, ctx: ToolContext, relativePath: string, content: string): Promise<string> {
@@ -532,9 +558,10 @@ async function continueResumedPipeline(
     reasoningEffort: context?.reasoning_effort,
     sources: context?.sources,
     venue: context?.venue ?? undefined,
+    projectName: context?.project_name ?? manifest.project_name,
     allowNetwork: context?.allow_network ?? false,
     downloadPdfs: context?.download_pdfs ?? false,
-    maxPapers: context?.max_papers ?? 20,
+    maxPapers: context?.max_papers ?? 50,
     requestedDomains: manifest.request.requested_domains,
     timelineWeeks: manifest.request.timeline_weeks,
     resources: manifest.request.resources,
@@ -1021,7 +1048,7 @@ function generationMetadata(options: {
   model: string | null;
   reasoningEffort: string | null;
   derivedConfig?: Record<string, unknown>;
-  projectNameSource?: string;
+  projectNameSource?: ProjectNameSource;
   discussionAssumptions?: string[];
   pipeline?: ResearchPipelineResult | null;
   templateProfileId?: string | null;
@@ -1038,7 +1065,7 @@ function generationMetadata(options: {
         ? { from: LEGACY_OAUTH_PROVIDER_ID, to: OPENAI_CODEX_PROVIDER_ID }
         : null,
     derived_config: options.derivedConfig ?? {},
-    project_name_source: options.projectNameSource ?? "output_basename",
+    project_name_source: normalizeProjectNameSource(options.projectNameSource) ?? "fallback",
     discussion_assumptions: options.discussionAssumptions ?? [],
     research_pipeline: options.pipeline
       ? {
