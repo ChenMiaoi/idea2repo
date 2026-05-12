@@ -33,6 +33,8 @@ export type TuiRuntimeResearchSummary = {
     found: number;
     ccfA: number;
     mainTrack: number;
+    pdfAvailable: number;
+    pendingApproval: number;
     downloaded: number;
     verifiedEvidence: number;
   };
@@ -45,6 +47,9 @@ export type TuiRuntimeResearchSummary = {
     total: number;
     verified: number;
     metadataOnly: number;
+    ok: number;
+    weak: number;
+    empty: number;
   };
   surveyStats?: {
     verifiedPapers: number;
@@ -244,7 +249,9 @@ function researchSummaryFor(snapshot: TuiRuntimeSnapshot): TuiRuntimeResearchSum
     paperStats: {
       found: papers.length,
       ccfA: papers.filter((paper) => paper.ccf_rank === "A").length,
-      mainTrack: papers.filter((paper) => paper.track_status === "main_conference" || paper.track_status === "journal").length,
+      mainTrack: papers.filter((paper) => paper.ccf_rank === "A" && (paper.track_status === "main_conference" || paper.track_status === "journal")).length,
+      pdfAvailable: papers.filter((paper) => paper.pdf_status === "available" || paper.pdf_status === "needs_approval" || paper.pdf_status === "downloaded").length,
+      pendingApproval: papers.filter((paper) => paper.pdf_status === "needs_approval").length,
       downloaded: downloaded.size,
       verifiedEvidence: evidencePapers.size
     },
@@ -256,7 +263,10 @@ function researchSummaryFor(snapshot: TuiRuntimeSnapshot): TuiRuntimeResearchSum
     noteStats: {
       total: notes.length,
       verified: notes.filter((note) => note.status === "verified").length,
-      metadataOnly: notes.filter((note) => note.status === "metadata_only").length
+      metadataOnly: notes.filter((note) => note.status === "metadata_only").length,
+      ok: snapshot.events.filter((event) => event.type === "pdf.downloaded" && event.extraction_quality === "ok").length,
+      weak: snapshot.events.filter((event) => event.type === "pdf.downloaded" && event.extraction_quality === "weak").length,
+      empty: snapshot.events.filter((event) => event.type === "pdf.downloaded" && event.extraction_quality === "empty").length
     },
     surveyStats: survey
       ? {
@@ -279,9 +289,9 @@ function researchSummaryFor(snapshot: TuiRuntimeSnapshot): TuiRuntimeResearchSum
 function emptyResearchSummary(): TuiRuntimeResearchSummary {
   return {
     fatalBlockers: [],
-    paperStats: { found: 0, ccfA: 0, mainTrack: 0, downloaded: 0, verifiedEvidence: 0 },
+    paperStats: { found: 0, ccfA: 0, mainTrack: 0, pdfAvailable: 0, pendingApproval: 0, downloaded: 0, verifiedEvidence: 0 },
     reviewerStats: { reviewers: 0, openTasks: 0, resolvedTasks: 0 },
-    noteStats: { total: 0, verified: 0, metadataOnly: 0 },
+    noteStats: { total: 0, verified: 0, metadataOnly: 0, ok: 0, weak: 0, empty: 0 },
     solutionStats: { generated: 0, artifacts: [] },
     nextUserAction: "Submit an idea or wait for the next research event."
   };

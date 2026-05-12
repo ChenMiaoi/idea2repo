@@ -30,13 +30,19 @@ export function ResearchCockpit({
   snapshot,
   height,
   width,
-  activeInspectorTab = "idea_score"
+  activeInspectorTab = "idea_score",
+  authStatus = "unknown",
+  model = "unknown",
+  mode = "Research"
 }: {
   snapshot: TuiRuntimeSnapshot;
   height: number;
   width: number;
   compact?: boolean;
   activeInspectorTab?: InspectorTab;
+  authStatus?: string;
+  model?: string;
+  mode?: string;
 }): React.ReactElement {
   if (height < 3) {
     return (
@@ -56,7 +62,7 @@ export function ResearchCockpit({
 
   return (
     <Box height={height} flexShrink={0} flexDirection="column">
-      <HeaderLine snapshot={snapshot} width={width} />
+      <HeaderLine snapshot={snapshot} width={width} authStatus={authStatus} model={model} mode={mode} />
       <NowNextNeedsBar snapshot={snapshot} width={width} />
       {tabRows}
       <FocusPanel snapshot={snapshot} height={focusRows} width={width} activeTab={activeInspectorTab} />
@@ -66,17 +72,20 @@ export function ResearchCockpit({
   );
 }
 
-function HeaderLine({ snapshot, width }: { snapshot: TuiRuntimeSnapshot; width: number }): React.ReactElement {
-  const score = snapshot.researchSummary.currentScore;
-  const scoreText = score ? `${score.score}/${score.maxScore}` : "score pending";
+function HeaderLine({ snapshot, width, authStatus, model, mode }: { snapshot: TuiRuntimeSnapshot; width: number; authStatus: string; model: string; mode: string }): React.ReactElement {
+  const auth = compactAuth(authStatus);
+  const outputWidth = Math.max(10, width - auth.length - model.length - mode.length - 37);
   return (
     <Text>
-      <Text bold color={colors.text}>Research Cockpit</Text>
+      <Text bold color={colors.text}>Idea2Repo</Text>
       <Text color={colors.dim}>  </Text>
-      <Text color={statusColor(snapshot.status)}>{snapshot.status}</Text>
-      <Text color={colors.dim}>  score </Text>
-      <Text color={score ? colors.accent : colors.dim}>{scoreText}</Text>
-      <Text color={colors.dim}>  run {snapshot.runId.slice(0, 8)}  {compactText(snapshot.outputRoot, Math.max(12, width - 54))}</Text>
+      <Text color={auth === "Codex logged in" ? colors.success : colors.warning}>Auth: {auth}</Text>
+      <Text color={colors.dim}>  Model: </Text>
+      <Text color={colors.text}>{compactText(model, 18)}</Text>
+      <Text color={colors.dim}>  Mode: </Text>
+      <Text color={statusColor(snapshot.status)}>{mode}</Text>
+      <Text color={colors.dim}>  Output: </Text>
+      <Text color={colors.muted}>{compactText(snapshot.outputRoot, outputWidth)}</Text>
     </Text>
   );
 }
@@ -171,7 +180,10 @@ export function cockpitActionLine(snapshot: TuiRuntimeSnapshot, tab: InspectorTa
   const activeStage = snapshot.plan.items.find((item) => item.status === "blocked" || item.status === "in_progress");
   if (pending) return `Action: approve/deny ${pending.action}${pending.stage_id ? ` at ${pending.stage_id}` : ""}`;
   if (activeStage?.status === "blocked") return `Action: retry/skip ${activeStage.stage_id}`;
-  if (tab === "files" && snapshot.artifacts.length) return `Action: open ${snapshot.artifacts.at(-1)?.path}`;
+  if (tab === "files") {
+    const artifact = [...snapshot.artifacts].reverse().find((item) => isUserFacingArtifact(item.path));
+    if (artifact) return `Action: open ${artifact.path}`;
+  }
   if (tab === "idea_score") return snapshot.researchSummary.nextUserAction;
   if (tab === "literature") return snapshot.researchSummary.surveyStats ? "Action: inspect related-work survey" : "Action: inspect candidate set";
   if (tab === "paper_notes") return snapshot.researchSummary.noteStats.total ? "Action: open latest paper note" : "Action: wait for paper notes";
@@ -213,8 +225,9 @@ function ideaScoreLines(snapshot: TuiRuntimeSnapshot, limit: number): Array<{ te
   const questions = snapshot.events.filter((event): event is Extract<Idea2RepoEvent, { type: "question.asked" }> => event.type === "question.asked");
   const lines: Array<{ text: string; color: string }> = [
     { text: `Idea: ${snapshot.researchSummary.ideaSummary ?? "pending"}`, color: colors.muted },
-    { text: `Strict score: ${score ? `${score.score}/${score.maxScore} confidence ${score.confidence}` : "pending"}`, color: score ? colors.accent : colors.dim },
-    { text: `Fatal blockers: ${snapshot.researchSummary.fatalBlockers.slice(0, 3).join("; ") || "none recorded"}`, color: snapshot.researchSummary.fatalBlockers.length ? colors.warning : colors.success },
+    { text: `Strict score: ${score ? `${score.score}/${score.maxScore} ${score.scoreType ?? "type pending"} confidence ${score.confidence}` : "pending"}`, color: score ? colors.accent : colors.dim },
+    { text: `Active caps: ${score?.activeCaps.length ? score.activeCaps.map((cap) => `${cap.reason}: cap ${cap.cap}`).slice(0, 3).join("; ") : "none recorded"}`, color: score?.activeCaps.length ? colors.warning : colors.success },
+    { text: `Top action: ${score?.topAction ?? snapshot.researchSummary.nextUserAction}`, color: score?.topAction ? colors.warning : colors.muted },
     ...questions.slice(-Math.max(0, limit - 3)).map((event) => ({ text: `Question: ${event.question} | ${event.why_it_matters}`, color: colors.warning }))
   ];
   return lines.slice(0, limit);
@@ -225,8 +238,9 @@ function literatureLines(snapshot: TuiRuntimeSnapshot, limit: number): Array<{ t
   const survey = snapshot.researchSummary.surveyStats;
   const papers = snapshot.events.filter((event): event is Extract<Idea2RepoEvent, { type: "paper.found" }> => event.type === "paper.found");
   const lines: Array<{ text: string; color: string }> = [
-    { text: `Papers ${stats.found} found | CCF-A ${stats.ccfA} | main/full ${stats.mainTrack}`, color: colors.muted },
-    { text: `PDFs ${stats.downloaded} downloaded | verified evidence papers ${stats.verifiedEvidence}`, color: colors.muted },
+    { text: `Papers found: ${stats.found} | CCF-A candidates: ${stats.ccfA} | main/full eligible: ${stats.mainTrack}/8`, color: colors.muted },
+    { text: `PDF available: ${stats.pdfAvailable} | pending approval: ${stats.pendingApproval} | downloaded: ${stats.downloaded}`, color: stats.pendingApproval ? colors.warning : colors.muted },
+    { text: `Verified evidence papers: ${stats.verifiedEvidence}`, color: stats.verifiedEvidence ? colors.success : colors.warning },
     {
       text: survey
         ? `Survey ${survey.verifiedPapers} verified papers | clusters ${survey.clusters} | B/D/M ${survey.baselines}/${survey.datasets}/${survey.metrics}`
@@ -246,7 +260,8 @@ function paperNoteLines(snapshot: TuiRuntimeSnapshot, limit: number): Array<{ te
   const notes = snapshot.events.filter((event): event is Extract<Idea2RepoEvent, { type: "paper.note.written" }> => event.type === "paper.note.written");
   const evidence = snapshot.events.filter((event): event is Extract<Idea2RepoEvent, { type: "evidence.extracted" }> => event.type === "evidence.extracted");
   const lines: Array<{ text: string; color: string }> = [
-    { text: `Notes ${stats.total} total | verified ${stats.verified} | metadata-only ${stats.metadataOnly}`, color: stats.verified ? colors.success : colors.warning },
+    { text: `Paper notes: ${stats.total} total | verified ${stats.verified} | metadata-only ${stats.metadataOnly}`, color: stats.verified ? colors.success : colors.warning },
+    { text: `Extraction quality: ok ${stats.ok} | weak ${stats.weak} | empty ${stats.empty}`, color: stats.weak || stats.empty ? colors.warning : colors.muted },
     ...notes.slice(-Math.max(0, Math.min(3, limit - 1))).map((event) => ({
       text: `${event.paper_id} ${event.status} (${event.evidence_rows} evidence rows) -> ${event.path}`,
       color: event.status === "verified" ? colors.success : colors.warning
@@ -299,7 +314,8 @@ function solutionLines(snapshot: TuiRuntimeSnapshot, limit: number): Array<{ tex
 }
 
 function fileLines(snapshot: TuiRuntimeSnapshot, limit: number): Array<{ text: string; color: string }> {
-  if (!snapshot.artifacts.length) return [{ text: "No artifacts written yet.", color: colors.dim }];
+  const visibleArtifacts = snapshot.artifacts.filter((artifact) => isUserFacingArtifact(artifact.path));
+  if (!visibleArtifacts.length) return [{ text: "No user-facing artifacts written yet.", color: colors.dim }];
   const priority = (path: string): number => {
     const normalized = path.replace(/\\/g, "/");
     if (/^docs\/proposal\//i.test(normalized)) return 0;
@@ -308,13 +324,20 @@ function fileLines(snapshot: TuiRuntimeSnapshot, limit: number): Array<{ text: s
     if (/^docs\/diagnosis\//i.test(normalized)) return 3;
     return 4;
   };
-  return [...snapshot.artifacts]
+  return [...visibleArtifacts]
     .sort((left, right) => priority(left.path) - priority(right.path) || left.path.localeCompare(right.path))
     .slice(0, limit)
     .map((artifact) => ({
       text: `${artifact.text ? "[txt]" : "[bin]"} ${artifact.path} (${artifact.bytes} bytes)`,
       color: colors.text
     }));
+}
+
+function isUserFacingArtifact(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/");
+  if (normalized.startsWith(".idea2repo/")) return false;
+  if (/\.jsonl$/i.test(normalized)) return false;
+  return true;
 }
 
 function planSummary(snapshot: TuiRuntimeSnapshot): CockpitSummary {
@@ -366,11 +389,27 @@ function mark(status: TuiRuntimeSnapshot["plan"]["items"][number]["status"]): st
 }
 
 function shortStage(step: string): string {
-  return step
-    .replace(/\bresearch\b/gi, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 22);
+  const normalized = step.toLowerCase();
+  if (/idea intake/.test(normalized)) return "Intake";
+  if (/search planning/.test(normalized)) return "Search";
+  if (/literature search|candidate triage/.test(normalized)) return "Papers";
+  if (/pdf acquisition/.test(normalized)) return "PDF";
+  if (/pdf reading/.test(normalized)) return "Notes";
+  if (/related work/.test(normalized)) return "Survey";
+  if (/novelty/.test(normalized)) return "Novelty";
+  if (/scoring/.test(normalized)) return "Score";
+  if (/clarification/.test(normalized)) return "Questions";
+  if (/feasibility/.test(normalized)) return "Feasibility";
+  if (/better idea/.test(normalized)) return "Idea";
+  if (/artifact|venue template/.test(normalized)) return "Reports";
+  return step.replace(/\s+/g, " ").trim().slice(0, 22);
+}
+
+function compactAuth(status: string): string {
+  if (/logged in/i.test(status)) return "Codex logged in";
+  if (/not logged in/i.test(status)) return "not logged in";
+  if (/unknown/i.test(status)) return "unknown";
+  return compactText(status, 18);
 }
 
 function statusColor(status: TuiRuntimeSnapshot["status"]): string {

@@ -22,7 +22,7 @@ export type TuiActivity = {
 const workflowBase: Array<Omit<TuiWorkflowStep, "status">> = [
   ...researchStages.map((stage) => ({
     id: stage.id,
-    label: stage.label,
+    label: researchStageShortLabel(stage.id),
     detail: stage.artifactPaths.length ? `Writes ${stage.artifactPaths[0]}.` : "Runtime research stage."
   }))
 ];
@@ -148,4 +148,24 @@ export function mergeActivity(current: TuiActivity[], next: TuiActivity, limit =
 function visibleWorkflowStep(step: WorkflowStepId): ResearchStageId {
   if (step === "route" || step === "provider") return "search_planning";
   return step;
+}
+
+function researchStageShortLabel(stage: ResearchStageId): string {
+  const labels: Record<ResearchStageId, string> = {
+    idea_intake: "Intake",
+    search_planning: "Search",
+    literature_search: "Papers",
+    candidate_triage: "Papers",
+    pdf_acquisition: "PDF",
+    pdf_reading: "Notes",
+    related_work_analysis: "Survey",
+    novelty_analysis: "Novelty",
+    ccf_a_strict_scoring: "Score",
+    clarification_dialogue: "Questions",
+    feasibility_review: "Feasibility",
+    better_idea_synthesis: "Idea",
+    artifact_writing: "Reports",
+    venue_template_packaging: "Reports"
+  };
+  return labels[stage];
 }

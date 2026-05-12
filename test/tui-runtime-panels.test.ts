@@ -169,6 +169,52 @@ test("research cockpit hides raw trace outside Debug inspector tab", () => {
       timestamp: "2026-01-01T00:00:02Z"
     },
     {
+      type: "paper.found",
+      run_id: "run-1",
+      paper_id: "paper-2",
+      title: "Approval Needed Agents",
+      venue: "ICSE",
+      year: 2026,
+      ccf_rank: "A",
+      track_status: "main_conference",
+      pdf_status: "needs_approval",
+      timestamp: "2026-01-01T00:00:02Z"
+    },
+    {
+      type: "paper.found",
+      run_id: "run-1",
+      paper_id: "paper-3",
+      title: "Workshop Agents",
+      venue: "NeurIPS Workshop",
+      year: 2026,
+      ccf_rank: "A",
+      track_status: "workshop",
+      pdf_status: "available",
+      timestamp: "2026-01-01T00:00:02Z"
+    },
+    {
+      type: "paper.found",
+      run_id: "run-1",
+      paper_id: "paper-4",
+      title: "Non CCF Main Agents",
+      venue: "LocalConf",
+      year: 2026,
+      ccf_rank: "B",
+      track_status: "main_conference",
+      pdf_status: "available",
+      timestamp: "2026-01-01T00:00:02Z"
+    },
+    {
+      type: "pdf.downloaded",
+      run_id: "run-1",
+      paper_id: "paper-1",
+      path: "docs/reference/pdfs/paper-1.pdf",
+      sha256: "abc",
+      bytes: 120,
+      extraction_quality: "ok",
+      timestamp: "2026-01-01T00:00:02Z"
+    },
+    {
       type: "evidence.extracted",
       run_id: "run-1",
       evidence_id: "e1",
@@ -217,8 +263,12 @@ test("research cockpit hides raw trace outside Debug inspector tab", () => {
   assert.deepEqual(snapshot.researchSummary.currentScore?.activeCaps, [{ reason: "No reproduction yet", cap: 65 }]);
   assert.equal(snapshot.researchSummary.currentScore?.topAction, "Work the top blocker: No reproduction yet.");
 
-  const defaultText = textContent(ResearchCockpit({ snapshot, height: 18, width: 120, activeInspectorTab: "paper_notes" }));
-  assert.match(defaultText, /Research Cockpit/);
+  const defaultText = textContent(ResearchCockpit({ snapshot, height: 18, width: 140, activeInspectorTab: "paper_notes", authStatus: "logged in:acct", model: "gpt-5.4", mode: "Research" }));
+  assert.match(defaultText, /Idea2Repo/);
+  assert.match(defaultText, /Auth: Codex logged in/);
+  assert.match(defaultText, /Model: gpt-5\.4/);
+  assert.match(defaultText, /Mode: Research/);
+  assert.match(defaultText, /Output:/);
   assert.match(defaultText, /Now/);
   assert.match(defaultText, /Needs/);
   assert.match(defaultText, /Stages/);
@@ -232,16 +282,28 @@ test("research cockpit hides raw trace outside Debug inspector tab", () => {
   assert.match(defaultText, /Files/);
   assert.match(defaultText, /Debug/);
   assert.match(defaultText, /Uses page-level evidence/);
-  assert.match(defaultText, /score 62\/100/);
+  assert.match(defaultText, /Paper notes: 1 total \| verified 1 \| metadata-only 0/);
+  assert.match(defaultText, /Extraction quality: ok 1 \| weak 0 \| empty 0/);
   assert.match(defaultText, /Next: Work the top blocker/);
   assert.doesNotMatch(defaultText, /run\.started/);
   assert.doesNotMatch(defaultText, /Runtime trace/);
   assert.doesNotMatch(defaultText, /docs\/idea\/optimized_research_direction\.md/);
 
+  const scoreText = textContent(ResearchCockpit({ snapshot, height: 18, width: 140, activeInspectorTab: "idea_score" }));
+  assert.match(scoreText, /Strict score: 62\/100 Evidence-backed/);
+  assert.match(scoreText, /Active caps: No reproduction yet: cap 65/);
+  assert.match(scoreText, /Top action: Work the top blocker: No reproduction yet/);
+
+  const literatureText = textContent(ResearchCockpit({ snapshot, height: 18, width: 140, activeInspectorTab: "literature" }));
+  assert.match(literatureText, /Papers found: 4/);
+  assert.match(literatureText, /CCF-A candidates: 2/);
+  assert.match(literatureText, /main\/full eligible: 1\/8/);
+  assert.match(literatureText, /PDF available: 4 \| pending approval: 1 \| downloaded: 1/);
+
   const debugText = textContent(ResearchCockpit({ snapshot, height: 18, width: 120, activeInspectorTab: "debug" }));
   assert.match(debugText, /Debug/);
   assert.match(debugText, /Runtime trace/);
-  assert.match(debugText, /run\.started/);
+  assert.match(debugText, /score\.updated/);
   assert.equal(nextInspectorTab("idea_score", 1), "literature");
   assert.equal(nextInspectorTab("idea_score", -1), "debug");
 });
@@ -377,6 +439,7 @@ test("research cockpit exposes direct actions for inspector cards and stages", (
   assert.match(text, /Action: approve\/deny/);
   assert.match(text, /0\/14 done/);
   assert.match(text, /blocked/);
+  assert.match(textContent(ResearchCockpit({ snapshot, height: 18, width: 220, activeInspectorTab: "idea_score" })), /Intake[\s\S]*Search[\s\S]*Papers[\s\S]*PDF[\s\S]*Notes[\s\S]*Survey[\s\S]*Novelty[\s\S]*Score[\s\S]*Questions[\s\S]*Feasibility[\s\S]*Idea[\s\S]*Reports/);
   assert.equal(cockpitActionLine(snapshot, "idea_score"), "Action: approve/deny tool:pdf.acquire at pdf_acquisition");
   assert.equal(cockpitStageTarget(snapshot), "pdf_acquisition");
   assert.deepEqual(cockpitShortcutForInput("1"), { type: "tab", tab: "idea_score" });
@@ -429,6 +492,38 @@ test("research cockpit opens solution artifacts from the Solution tab", () => {
 
   assert.equal(cockpitOpenArtifactPath(snapshot, "solution"), "docs/proposal/solution_design.md");
   assert.equal(cockpitOpenArtifactPath(snapshot, "files"), "reports/ccf_a_readiness_report.md");
+});
+
+test("research cockpit files tab hides internal JSONL ledgers outside Debug", () => {
+  let snapshot = createTuiRuntimeSnapshot("run-1", "generated_repos/demo", "2026-01-01T00:00:00Z");
+  for (const event of [
+    {
+      type: "artifact.written",
+      run_id: "run-1",
+      path: "reports/final_ccf_a_report.md",
+      sha256: "report",
+      bytes: 220,
+      timestamp: "2026-01-01T00:00:01Z"
+    },
+    {
+      type: "artifact.written",
+      run_id: "run-1",
+      path: "reports/z_trace.jsonl",
+      sha256: "trace",
+      bytes: 120,
+      timestamp: "2026-01-01T00:00:02Z"
+    }
+  ] satisfies Idea2RepoEvent[]) {
+    snapshot = applyTuiRuntimeEvent(snapshot, event);
+  }
+
+  const filesText = textContent(ResearchCockpit({ snapshot, height: 12, width: 120, activeInspectorTab: "files" }));
+  assert.match(filesText, /reports\/final_ccf_a_report\.md/);
+  assert.match(filesText, /Action: open reports\/final_ccf_a_report\.md/);
+  assert.doesNotMatch(filesText, /\.idea2repo|trace\.jsonl|z_trace\.jsonl/);
+  assert.equal(cockpitOpenArtifactPath(snapshot, "files"), "reports/final_ccf_a_report.md");
+  const debugText = textContent(ResearchCockpit({ snapshot, height: 12, width: 120, activeInspectorTab: "debug" }));
+  assert.match(debugText, /artifact\.written/);
 });
 
 function textContent(value: unknown): string {

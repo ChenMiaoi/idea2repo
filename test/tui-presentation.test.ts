@@ -24,6 +24,7 @@ test("TUI progress presentation converts raw provider logs into polished activit
 test("TUI workflow route tracks active and completed steps", () => {
   const routed = activateWorkflowStep(createWorkflowSteps("idea_intake"), "related_work_analysis");
   assert.equal(routed.length, 14);
+  assert.deepEqual(routed.map((step) => step.label), ["Intake", "Search", "Papers", "Papers", "PDF", "Notes", "Survey", "Novelty", "Score", "Questions", "Feasibility", "Idea", "Reports", "Reports"]);
   assert.equal(routed.find((step) => step.id === "related_work_analysis")?.status, "active");
   assert.equal(routed.find((step) => step.id === "pdf_reading")?.status, "done");
   assert.equal(routed.find((step) => step.id === "novelty_analysis")?.status, "pending");

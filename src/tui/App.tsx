@@ -1743,6 +1743,8 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
           provider={provider}
           model={model}
           reasoning={reasoning}
+          authStatus={authStatus}
+          runtimeMode={runtimeMode}
           busy={busy}
           runtimeSnapshot={currentRuntimeSnapshot(output)}
           inspectorTab={inspectorTab}
@@ -2184,6 +2186,8 @@ function MainPanels({
   provider,
   model,
   reasoning,
+  authStatus,
+  runtimeMode,
   busy,
   runtimeSnapshot,
   inspectorTab
@@ -2197,6 +2201,8 @@ function MainPanels({
   provider: string;
   model: string;
   reasoning: ReasoningEffort;
+  authStatus: string;
+  runtimeMode: RuntimeMode;
   busy: boolean;
   runtimeSnapshot: TuiRuntimeSnapshot | null;
   inspectorTab: InspectorTab;
@@ -2210,7 +2216,7 @@ function MainPanels({
   }
 
   if (runtimeSnapshot) {
-    return <ResearchCockpit height={height} width={layout.columns} compact={!layout.sideBySide} snapshot={runtimeSnapshot} activeInspectorTab={inspectorTab} />;
+    return <ResearchCockpit height={height} width={layout.columns} compact={!layout.sideBySide} snapshot={runtimeSnapshot} activeInspectorTab={inspectorTab} authStatus={authLabel(authStatus)} model={model} mode={runtimeModeLabel(runtimeMode)} />;
   }
 
   if (layout.sideBySide) {
@@ -3364,8 +3370,15 @@ export function cockpitOpenArtifactPath(snapshot: TuiRuntimeSnapshot, tab: Inspe
       null
     );
   }
-  if (tab === "files") return snapshot.artifacts.at(-1)?.path ?? null;
+  if (tab === "files") return [...snapshot.artifacts].reverse().find((artifact) => isUserFacingCockpitArtifact(artifact.path))?.path ?? null;
   return null;
+}
+
+function isUserFacingCockpitArtifact(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/");
+  if (normalized.startsWith(".idea2repo/")) return false;
+  if (/\.jsonl$/i.test(normalized)) return false;
+  return true;
 }
 
 export function cockpitStageTarget(snapshot: TuiRuntimeSnapshot): ResearchStageId | null {
@@ -3396,6 +3409,11 @@ function authLabel(status: string): string {
   if (status.startsWith("logged in")) return status.replace(/^logged in:?/, "logged in ");
   if (status === "checking") return "checking auth";
   return status;
+}
+
+function runtimeModeLabel(mode: RuntimeMode): string {
+  if (mode === "danger-full-access") return "Full";
+  return mode.slice(0, 1).toUpperCase() + mode.slice(1);
 }
 
 function compactAuthLabel(status: string): string {
