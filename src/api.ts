@@ -19,6 +19,7 @@ import { CompositeEventSink, JsonlEventSink, readJsonlEvents, type Idea2RepoEven
 import { restoreArtifactSnapshot } from "./runtime/artifacts.js";
 import { activeClarificationQuestions, answerClarificationQuestion, readClarificationQuestions } from "./runtime/dialogue.js";
 import { readEvidenceLedger, readScoreSnapshots } from "./runtime/ledgers.js";
+import { readRebuttalTasks, resolveRebuttalTask } from "./runtime/rebuttal.js";
 import type { ResearchStageId } from "./pipeline/stages.js";
 import type { ArtifactProjection, ArtifactProjectionKind, RuntimeLegacyMode, RuntimeProductMode } from "./api-contract.js";
 
@@ -138,6 +139,16 @@ async function route(request: IncomingMessage, response: ServerResponse, runMana
       });
       return;
     }
+    if (suffix === "rebuttal-tasks") {
+      const tasks = await readRebuttalTasks(run.output_root, run.id);
+      sendJson(response, 200, {
+        run_id: run.id,
+        tasks,
+        open: tasks.filter((task) => task.status === "open"),
+        resolved: tasks.filter((task) => task.status === "resolved")
+      });
+      return;
+    }
     if (suffix === "approvals") {
       sendJson(response, 200, { run_id: run.id, approvals: await readApprovalRecords(run.output_root) });
       return;
@@ -227,6 +238,18 @@ async function route(request: IncomingMessage, response: ServerResponse, runMana
         events: runControlEvents(runManager, run)
       });
       runManager.attachClarificationProfile(run.id, result.profile);
+      sendJson(response, 200, result as unknown as Record<string, unknown>);
+      return;
+    }
+    const rebuttalTaskAction = /^rebuttal-tasks\/([^/]+)\/resolve$/.exec(suffix);
+    if (rebuttalTaskAction) {
+      const result = await resolveRebuttalTask(run.output_root, {
+        runId: run.id,
+        taskId: decodeURIComponent(rebuttalTaskAction[1]!),
+        resolution: requiredString(body.resolution, "resolution"),
+        evidenceRefs: stringArray(body.evidence_refs),
+        events: runControlEvents(runManager, run)
+      });
       sendJson(response, 200, result as unknown as Record<string, unknown>);
       return;
     }
@@ -485,6 +508,7 @@ function runLinks(runId: string): Record<string, unknown> {
     evidence_url: `/runs/${encoded}/evidence`,
     score_snapshots_url: `/runs/${encoded}/scores`,
     questions_url: `/runs/${encoded}/questions`,
+    rebuttal_tasks_url: `/runs/${encoded}/rebuttal-tasks`,
     approvals_url: `/runs/${encoded}/approvals`
   };
 }

@@ -2773,6 +2773,27 @@ function runtimeActivityForEvent(event: Idea2RepoEvent): TuiActivity | null {
         detail: `${event.score}/${event.max_score} confidence ${event.confidence}`,
         stage: "analysis"
       };
+    case "reviewer.reported":
+      return {
+        title: `${event.reviewer_id} ${event.verdict}`,
+        detail: compactText(`${event.role} -> ${event.artifact}`, 90),
+        stage: "review",
+        tone: event.verdict === "Weak accept" ? "success" : "warning"
+      };
+    case "rebuttal.task.created":
+      return {
+        title: `Rebuttal task ${event.task_id}`,
+        detail: compactText(`${event.title} -> ${event.binding_type}:${event.binding_ref}`, 90),
+        stage: "review",
+        tone: "warning"
+      };
+    case "rebuttal.task.resolved":
+      return {
+        title: `Rebuttal task ${event.task_id} resolved`,
+        detail: `Score snapshot ${event.score_snapshot_id}`,
+        stage: "review",
+        tone: "success"
+      };
     case "decision.recorded":
       return {
         title: "Decision recorded",

@@ -201,6 +201,52 @@ test("TUI runtime snapshot surfaces blocked stage state", () => {
   assert.equal(snapshot.message, undefined);
 });
 
+test("TUI reviewers tab tracks reviewer verdicts and rebuttal task status", () => {
+  let snapshot = createTuiRuntimeSnapshot("run-1", "generated_repos/demo", "2026-01-01T00:00:00Z");
+  for (const event of [
+    {
+      type: "reviewer.reported",
+      run_id: "run-1",
+      reviewer_id: "R1",
+      role: "Novelty / Related Work",
+      verdict: "Weak reject",
+      artifact: "docs/diagnosis/reviewer_1.md",
+      open_tasks: 1,
+      timestamp: "2026-01-01T00:00:01Z"
+    },
+    {
+      type: "rebuttal.task.created",
+      run_id: "run-1",
+      task_id: "R1-M1",
+      reviewer_id: "R1",
+      title: "Add verified related-work comparisons from paper notes.",
+      binding_type: "score_dimension",
+      binding_ref: "related_work",
+      score_dimension: "related_work",
+      evidence_refs: [],
+      timestamp: "2026-01-01T00:00:02Z"
+    },
+    {
+      type: "rebuttal.task.resolved",
+      run_id: "run-1",
+      task_id: "R1-M1",
+      reviewer_id: "R1",
+      score_snapshot_id: "score-1",
+      timestamp: "2026-01-01T00:00:03Z"
+    }
+  ] satisfies Idea2RepoEvent[]) {
+    snapshot = applyTuiRuntimeEvent(snapshot, event);
+  }
+
+  assert.equal(snapshot.researchSummary.reviewerStats.reviewers, 1);
+  assert.equal(snapshot.researchSummary.reviewerStats.openTasks, 0);
+  assert.equal(snapshot.researchSummary.reviewerStats.resolvedTasks, 1);
+  const text = textContent(ResearchCockpit({ snapshot, height: 24, width: 140, activeInspectorTab: "reviewers" }));
+  assert.match(text, /R1 Weak reject/);
+  assert.match(text, /resolved 1/);
+  assert.match(text, /R1-M1/);
+});
+
 test("TUI keeps approval commands available while a run is busy", () => {
   assert.equal(isBusySubmissionAllowed("/approve approval-1"), true);
   assert.equal(isBusySubmissionAllowed("/deny approval-1"), true);

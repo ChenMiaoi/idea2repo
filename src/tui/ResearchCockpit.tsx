@@ -283,11 +283,15 @@ function inspectorLines(snapshot: TuiRuntimeSnapshot, tab: Exclude<InspectorTab,
   }
   if (tab === "reviewers") {
     const stats = snapshot.researchSummary.reviewerStats;
+    const reviewerEvents = snapshot.events.filter((event): event is Extract<Idea2RepoEvent, { type: "reviewer.reported" }> => event.type === "reviewer.reported");
+    const taskEvents = snapshot.events.filter((event): event is Extract<Idea2RepoEvent, { type: "rebuttal.task.created" }> => event.type === "rebuttal.task.created");
     const reviewerArtifacts = snapshot.artifacts
       .filter((artifact) => /docs\/diagnosis\/reviewer_[123]\.md$/i.test(artifact.path.replace(/\\/g, "/")))
       .map((artifact) => artifact.path);
     const lines = [
       `Reviewers ${stats.reviewers}/3 | open tasks ${stats.openTasks} | resolved ${stats.resolvedTasks}`,
+      ...reviewerEvents.map((event) => `${event.reviewer_id} ${event.verdict}: ${event.role} (${event.open_tasks} open)`),
+      ...taskEvents.slice(-Math.max(0, limit - reviewerEvents.length - 1)).map((event) => `${event.task_id}: ${event.title} -> ${event.binding_type}:${event.binding_ref}`),
       ...reviewerArtifacts,
       ...(snapshot.artifacts.some((artifact) => /docs\/diagnosis\/rebuttal_tasks\.md$/i.test(artifact.path.replace(/\\/g, "/"))) ? ["docs/diagnosis/rebuttal_tasks.md"] : [])
     ];
@@ -379,6 +383,15 @@ function researchThreadEntries(events: Idea2RepoEvent[]): ResearchThreadEntry[] 
         break;
       case "score.updated":
         entries.push({ kind: "Score", text: `${event.score}/${event.max_score} confidence ${event.confidence}`, color: colors.accent });
+        break;
+      case "reviewer.reported":
+        entries.push({ kind: "Review", text: `${event.reviewer_id} ${event.verdict}: ${event.role}`, color: event.verdict === "Weak accept" ? colors.success : colors.warning });
+        break;
+      case "rebuttal.task.created":
+        entries.push({ kind: "Task", text: `${event.task_id}: ${event.title}`, color: colors.warning });
+        break;
+      case "rebuttal.task.resolved":
+        entries.push({ kind: "Task", text: `${event.task_id} resolved; score snapshot ${event.score_snapshot_id}`, color: colors.success });
         break;
       case "decision.recorded":
         entries.push({ kind: "Decision", text: event.title, color: colors.text });

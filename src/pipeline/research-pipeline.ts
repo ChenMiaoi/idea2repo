@@ -28,7 +28,8 @@ import {
   type RelatedWorkAnalysis,
   type ResearchStrategy,
   type SearchPlan,
-  type StrictCcfAReview
+  type StrictCcfAReview,
+  type ReviewerReport
 } from "../agents/schemas.js";
 import { CodexOAuthClient } from "../auth/codex-oauth.js";
 import { paperCandidateToRecord, referencesBib, type LiteratureSearchOptions, type LiteratureSearchResult, type PaperRecord } from "../literature.js";
@@ -52,6 +53,14 @@ import { ApprovalRecorder, approvalPolicyForMode, type ApprovalPolicy, type Appr
 import { DecisionRecorder } from "../runtime/decisions.js";
 import { runtimeTimestamp, type EventSink, type Idea2RepoEvent } from "../runtime/events.js";
 import { appendScoreSnapshot, ensureRuntimeLedgers, evidenceItemsFromRows, replaceEvidenceItems, scoreSnapshotFromStrictScore } from "../runtime/ledgers.js";
+import {
+  ensureRebuttalTasksLedger,
+  generateReviewerLoop,
+  rebuttalTasksMarkdown,
+  replaceRebuttalTasks,
+  reviewerReportMarkdown,
+  type RebuttalTask
+} from "../runtime/rebuttal.js";
 import {
   activeClarificationQuestions,
   clarificationQuestionsMarkdown,
@@ -116,6 +125,8 @@ export type ResearchPipelineResult = {
   datasetRecommendations: string[];
   metricRecommendations: string[];
   claimEvidenceRows: PipelineClaimEvidenceRow[];
+  reviewerReports: ReviewerReport[];
+  rebuttalTasks: RebuttalTask[];
   artifacts: Record<string, string>;
   warnings: string[];
   decisionSummaries: string[];
@@ -148,6 +159,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
   if (options.outputRoot) {
     await ensureRuntimeLedgers(outputRoot);
     await ensureClarificationQuestionsLedger(outputRoot);
+    await ensureRebuttalTasksLedger(outputRoot);
   }
   const restoredState = options.outputRoot ? await readResearchPipelineState(outputRoot) : null;
   if (restoredState && restoredState.idea !== idea) throw new Error(`research pipeline state belongs to a different idea: ${restoredState.idea}`);
@@ -714,6 +726,56 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     await setStage("clarification_dialogue", generatedQuestions.length ? "completed" : "skipped", generatedQuestions.length ? undefined : "No active clarification question required.");
   }
 
+  const reviewerLoop = generateReviewerLoop({
+    runId,
+    score,
+    scoreInput,
+    evidenceRows,
+    noteArtifacts,
+    ccfVenueGate
+  });
+  if (options.outputRoot) await replaceRebuttalTasks(outputRoot, { runId }, reviewerLoop.tasks);
+  for (const reviewer of reviewerLoop.reviewers) {
+    await emitRuntimeEvent({
+      type: "reviewer.reported",
+      run_id: runId,
+      reviewer_id: reviewer.reviewer_id,
+      role: reviewer.role,
+      verdict: reviewer.verdict,
+      artifact: `docs/diagnosis/reviewer_${reviewer.reviewer_id.slice(1)}.md`,
+      open_tasks: reviewerLoop.tasks.filter((task) => task.reviewer_id === reviewer.reviewer_id && task.status === "open").length,
+      timestamp: runtimeTimestamp()
+    });
+  }
+  for (const task of reviewerLoop.tasks) {
+    await emitRuntimeEvent({
+      type: "rebuttal.task.created",
+      run_id: runId,
+      task_id: task.id,
+      reviewer_id: task.reviewer_id,
+      title: task.title,
+      binding_type: task.binding.type,
+      binding_ref: task.binding.ref,
+      score_dimension: task.score_dimension,
+      evidence_refs: task.evidence_refs,
+      timestamp: task.created_at
+    });
+  }
+  await recordDecision({
+    stage_id: "ccf_a_strict_scoring",
+    title: "Reviewer rebuttal loop generated",
+    rationale_summary: `Generated ${reviewerLoop.reviewers.length} reviewer reports and ${reviewerLoop.tasks.filter((task) => task.status === "open").length} open rebuttal task(s).`,
+    inputs_considered: [`score=${score.total}`, `caps=${score.caps.map((cap) => cap.reason).join("; ") || "none"}`, `ccf_gate_preliminary=${ccfVenueGate.preliminary_only}`],
+    evidence_refs: [
+      { artifact: "docs/diagnosis/reviewer_1.md" },
+      { artifact: "docs/diagnosis/reviewer_2.md" },
+      { artifact: "docs/diagnosis/reviewer_3.md" },
+      { artifact: "docs/diagnosis/rebuttal_tasks.md" }
+    ],
+    alternatives: [{ option: "Only write a reviewer summary", why_not: "The plan requires actionable rebuttal tasks that can be resolved and rescored." }],
+    confidence: "high"
+  });
+
   let agentFeasibility: FeasibilityReview | null = null;
   if (!(await canResumeStage("feasibility_review"))) {
     await setStage("feasibility_review", "running");
@@ -832,6 +894,8 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     agentRelatedWork,
     agentNovelty,
     agentScore,
+    reviewerReports: reviewerLoop.reviewers,
+    rebuttalTasks: reviewerLoop.tasks,
     agentFeasibility,
     agentStrategy,
     templatePackage,
@@ -852,6 +916,8 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     datasetRecommendations,
     metricRecommendations,
     claimEvidenceRows,
+    reviewerReports: reviewerLoop.reviewers,
+    rebuttalTasks: reviewerLoop.tasks,
     artifacts,
     warnings: [...warnings, ...(options.allowNetwork ? [] : ["Network disabled; literature candidates require a later search stage."])],
     decisionSummaries
@@ -934,6 +1000,8 @@ function pipelineArtifacts(input: {
   agentRelatedWork: RelatedWorkAnalysis | null;
   agentNovelty: NoveltyGapAnalysis | null;
   agentScore: StrictCcfAReview | null;
+  reviewerReports: ReviewerReport[];
+  rebuttalTasks: RebuttalTask[];
   agentFeasibility: FeasibilityReview | null;
   agentStrategy: ResearchStrategy | null;
   templatePackage: PipelineTemplatePackage;
@@ -984,6 +1052,10 @@ function pipelineArtifacts(input: {
     "docs/reference/pdf_chunks.json": JSON.stringify(input.chunks, null, 2) + "\n",
     "docs/diagnosis/feasibility_report.md": feasibilityReport,
     "docs/diagnosis/reviewer_panel.md": agentReviewerPanelMarkdown(input.agentRelatedWork, input.agentNovelty, input.agentScore, input.agentFeasibility),
+    "docs/diagnosis/reviewer_1.md": reviewerReportMarkdown(input.reviewerReports.find((reviewer) => reviewer.reviewer_id === "R1") ?? fallbackReviewerReport("R1")),
+    "docs/diagnosis/reviewer_2.md": reviewerReportMarkdown(input.reviewerReports.find((reviewer) => reviewer.reviewer_id === "R2") ?? fallbackReviewerReport("R2")),
+    "docs/diagnosis/reviewer_3.md": reviewerReportMarkdown(input.reviewerReports.find((reviewer) => reviewer.reviewer_id === "R3") ?? fallbackReviewerReport("R3")),
+    "docs/diagnosis/rebuttal_tasks.md": rebuttalTasksMarkdown(input.rebuttalTasks),
     "docs/proposal/experiment_plan.md": experimentPlan,
     "docs/execution_plan/12_week_plan.md": executionPlan,
     "docs/proposal/revised_idea.md": revisedIdea,
@@ -1828,6 +1900,21 @@ ${markdownList(triage.missing_search_areas)}
 
 ${triage.rationale}
 `;
+}
+
+function fallbackReviewerReport(reviewerId: ReviewerReport["reviewer_id"]): ReviewerReport {
+  const role = reviewerId === "R1" ? "Novelty / Related Work" : reviewerId === "R2" ? "Method / Experiment" : "Venue / Story";
+  return {
+    reviewer_id: reviewerId,
+    role,
+    verdict: "Borderline",
+    summary: "Reviewer loop did not generate a blocking task for this role.",
+    major_concerns: [],
+    minor_concerns: [],
+    required_evidence: [],
+    questions_to_authors: [],
+    what_would_change_my_score: []
+  };
 }
 
 function agentRelatedWorkMarkdown(related: RelatedWorkAnalysis): string {

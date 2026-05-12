@@ -191,6 +191,14 @@ function researchSummaryFor(snapshot: TuiRuntimeSnapshot): TuiRuntimeResearchSum
       .filter((path) => /^docs\/diagnosis\/reviewer_[123]\.md$/i.test(path.replace(/\\/g, "/")))
   );
   const rebuttalArtifactPresent = snapshot.artifacts.some((artifact) => /docs\/diagnosis\/rebuttal_tasks\.md$/i.test(artifact.path.replace(/\\/g, "/")));
+  const reviewerEvents = new Set(snapshot.events.filter((event) => event.type === "reviewer.reported").map((event) => event.reviewer_id));
+  const rebuttalTasks = new Map<string, "open" | "resolved">();
+  for (const event of snapshot.events) {
+    if (event.type === "rebuttal.task.created") rebuttalTasks.set(event.task_id, "open");
+    if (event.type === "rebuttal.task.resolved") rebuttalTasks.set(event.task_id, "resolved");
+  }
+  const openRebuttalTasks = [...rebuttalTasks.values()].filter((status) => status === "open").length;
+  const resolvedRebuttalTasks = [...rebuttalTasks.values()].filter((status) => status === "resolved").length;
   const optimizedPath = snapshot.artifacts.find((artifact) => /docs\/idea\/optimized_research_direction\.md$/i.test(artifact.path.replace(/\\/g, "/")))?.path;
   return {
     optimizedIdea: optimizedPath ? `Artifact: ${optimizedPath}` : undefined,
@@ -204,9 +212,9 @@ function researchSummaryFor(snapshot: TuiRuntimeSnapshot): TuiRuntimeResearchSum
       verifiedEvidence: evidencePapers.size
     },
     reviewerStats: {
-      reviewers: reviewerArtifacts.size,
-      openTasks: rebuttalArtifactPresent ? 1 : 0,
-      resolvedTasks: 0
+      reviewers: Math.max(reviewerArtifacts.size, reviewerEvents.size),
+      openTasks: rebuttalTasks.size ? openRebuttalTasks : rebuttalArtifactPresent ? 1 : 0,
+      resolvedTasks: resolvedRebuttalTasks
     },
     nextUserAction: nextUserActionFor({ snapshot, pendingApproval, blockedStage, activeStage, latestQuestion, score })
   };

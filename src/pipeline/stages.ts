@@ -98,7 +98,13 @@ export const researchStages: ResearchStageDefinition[] = [
     label: "CCF-A strict scoring",
     prompt: "06_ccf_a_reviewer.md",
     deterministic: false,
-    artifactPaths: ["docs/diagnosis/ccf_a_strict_scorecard.md"]
+    artifactPaths: [
+      "docs/diagnosis/ccf_a_strict_scorecard.md",
+      "docs/diagnosis/reviewer_1.md",
+      "docs/diagnosis/reviewer_2.md",
+      "docs/diagnosis/reviewer_3.md",
+      "docs/diagnosis/rebuttal_tasks.md"
+    ]
   },
   {
     id: "clarification_dialogue",

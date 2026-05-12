@@ -120,6 +120,36 @@ export type Idea2RepoEvent =
       confidence: number;
       hard_blockers: string[];
       timestamp: string;
+    }
+  | {
+      type: "reviewer.reported";
+      run_id: string;
+      reviewer_id: "R1" | "R2" | "R3";
+      role: string;
+      verdict: "Weak reject" | "Borderline" | "Weak accept";
+      artifact: string;
+      open_tasks: number;
+      timestamp: string;
+    }
+  | {
+      type: "rebuttal.task.created";
+      run_id: string;
+      task_id: string;
+      reviewer_id: "R1" | "R2" | "R3";
+      title: string;
+      binding_type: "paper_note" | "evidence_ref" | "score_dimension";
+      binding_ref: string;
+      score_dimension?: string;
+      evidence_refs: string[];
+      timestamp: string;
+    }
+  | {
+      type: "rebuttal.task.resolved";
+      run_id: string;
+      task_id: string;
+      reviewer_id: "R1" | "R2" | "R3";
+      score_snapshot_id: string;
+      timestamp: string;
     };
 
 export interface EventSink {

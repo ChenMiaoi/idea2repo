@@ -149,6 +149,21 @@ export const StrictCcfAReviewSchema = Type.Object(
   { additionalProperties: false }
 );
 
+export const ReviewerReportSchema = Type.Object(
+  {
+    reviewer_id: Type.Union([Type.Literal("R1"), Type.Literal("R2"), Type.Literal("R3")]),
+    role: Type.Union([Type.Literal("Novelty / Related Work"), Type.Literal("Method / Experiment"), Type.Literal("Venue / Story")]),
+    verdict: Type.Union([Type.Literal("Weak reject"), Type.Literal("Borderline"), Type.Literal("Weak accept")]),
+    summary: Type.String(),
+    major_concerns: Type.Array(Type.String()),
+    minor_concerns: Type.Array(Type.String()),
+    required_evidence: Type.Array(Type.String()),
+    questions_to_authors: Type.Array(Type.String()),
+    what_would_change_my_score: Type.Array(Type.String())
+  },
+  { additionalProperties: false }
+);
+
 export const FeasibilityReviewSchema = Type.Object(
   {
     timeline_weeks: Type.Integer({ minimum: 1 }),
@@ -234,6 +249,7 @@ export type CandidateTriage = Static<typeof CandidateTriageSchema>;
 export type RelatedWorkAnalysis = Static<typeof RelatedWorkAnalysisSchema>;
 export type NoveltyGapAnalysis = Static<typeof NoveltyGapAnalysisSchema>;
 export type StrictCcfAReview = Static<typeof StrictCcfAReviewSchema>;
+export type ReviewerReport = Static<typeof ReviewerReportSchema>;
 export type FeasibilityReview = Static<typeof FeasibilityReviewSchema>;
 export type ResearchStrategy = Static<typeof ResearchStrategySchema>;
 export type PaperCandidate = Static<typeof PaperCandidateSchema>;
@@ -273,6 +289,10 @@ export function validateNoveltyGapAnalysis(value: unknown): NoveltyGapAnalysis {
 
 export function validateStrictCcfAReview(value: unknown): StrictCcfAReview {
   return validateWithSchema<StrictCcfAReview>(StrictCcfAReviewSchema, value, "StrictCcfAReview");
+}
+
+export function validateReviewerReport(value: unknown): ReviewerReport {
+  return validateWithSchema<ReviewerReport>(ReviewerReportSchema, value, "ReviewerReport");
 }
 
 export function validateFeasibilityReview(value: unknown): FeasibilityReview {

@@ -33,6 +33,7 @@ test("runtime API starts runs and streams shared runtime events over SSE", async
     assert.match(started.evidence_url, /\/evidence$/);
     assert.match(started.score_snapshots_url, /\/scores$/);
     assert.match(started.questions_url, /\/questions$/);
+    assert.match(started.rebuttal_tasks_url, /\/rebuttal-tasks$/);
 
     const eventsResponse = await fetch(`${server.url}/runs/${started.run_id}/events`);
     const eventsText = await eventsResponse.text();
@@ -66,6 +67,7 @@ test("runtime API starts runs and streams shared runtime events over SSE", async
     assert.match(listedRun.evidence_url, /\/evidence$/);
     assert.match(listedRun.score_snapshots_url, /\/scores$/);
     assert.match(listedRun.questions_url, /\/questions$/);
+    assert.match(listedRun.rebuttal_tasks_url, /\/rebuttal-tasks$/);
 
     const plan = await getJson(`${server.url}/runs/${started.run_id}/plan`);
     assert.equal(plan.plan.version, 1);
@@ -91,6 +93,18 @@ test("runtime API starts runs and streams shared runtime events over SSE", async
     assert.ok(Array.isArray(evidence.current));
     const scores = await getJson(`${server.url}/runs/${started.run_id}/scores`);
     assert.ok(scores.score_snapshots.some((snapshot: { score: number; hard_blockers: string[] }) => snapshot.score === 39 && snapshot.hard_blockers.includes("No PDF read")));
+    const rebuttalTasks = await getJson(`${server.url}/runs/${started.run_id}/rebuttal-tasks`);
+    assert.equal(rebuttalTasks.tasks.length > 0, true);
+    assert.equal(rebuttalTasks.open.length > 0, true);
+    assert.ok(rebuttalTasks.open.every((task: { binding: { type: string; ref: string } }) => task.binding.type && task.binding.ref));
+    const resolvedTask = await postJson(`${server.url}/runs/${started.run_id}/rebuttal-tasks/${encodeURIComponent(rebuttalTasks.open[0].id)}/resolve`, {
+      resolution: "Added reviewer-requested evidence and updated the bound artifact.",
+      evidence_refs: ["manual-e1"]
+    });
+    assert.equal(resolvedTask.task.status, "resolved");
+    assert.equal(resolvedTask.score_snapshot.stage_id, "reviewer_rebuttal_loop");
+    const rebuttalTasksAfter = await getJson(`${server.url}/runs/${started.run_id}/rebuttal-tasks`);
+    assert.equal(rebuttalTasksAfter.resolved.some((task: { id: string }) => task.id === rebuttalTasks.open[0].id), true);
     const questions = await getJson(`${server.url}/runs/${started.run_id}/questions`);
     assert.ok(Array.isArray(questions.questions));
     assert.ok(Array.isArray(questions.active));
@@ -174,6 +188,7 @@ test("runtime API starts runs and streams shared runtime events over SSE", async
     assert.match(controlEventsText, /event: decision\.recorded/);
     assert.match(controlEventsText, /event: artifact\.restored/);
     assert.match(controlEventsText, /event: approval\.resolved/);
+    assert.match(controlEventsText, /event: rebuttal\.task\.resolved/);
     const cancelled = await postJson(`${server.url}/runs/${started.run_id}/cancel`, { reason: "No-op cancel after completion." });
     assert.equal(cancelled.status, "completed");
 

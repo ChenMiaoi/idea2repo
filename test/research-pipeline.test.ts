@@ -47,6 +47,12 @@ test("offline research pipeline returns resumable stage state and core artifacts
   assert.match(result.artifacts["paper/related_work.md"] ?? "", /Related Work Draft/);
   assert.match(result.artifacts["papers/papers.bib"] ?? "", /Do not invent paper titles/);
   assert.ok(result.artifacts["docs/diagnosis/ccf_a_strict_scorecard.md"]?.includes("Strict mode: preliminary-only (CCF-A venue gate blocked)"));
+  assert.match(result.artifacts["docs/diagnosis/reviewer_1.md"] ?? "", /Novelty \/ Related Work/);
+  assert.match(result.artifacts["docs/diagnosis/reviewer_2.md"] ?? "", /Method \/ Experiment/);
+  assert.match(result.artifacts["docs/diagnosis/reviewer_3.md"] ?? "", /Venue \/ Story/);
+  assert.match(result.artifacts["docs/diagnosis/rebuttal_tasks.md"] ?? "", /Binding: `score_dimension:/);
+  assert.equal(result.reviewerReports.length, 3);
+  assert.ok(result.rebuttalTasks.every((task) => task.binding.type && task.binding.ref));
   assert.ok(result.artifacts["docs/diagnosis/clarification_questions.md"]?.includes("Why it matters"));
   assert.ok(result.artifacts["docs/diagnosis/feasibility_report.md"]);
   assert.ok(result.artifacts["docs/proposal/revised_idea.md"]);

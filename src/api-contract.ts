@@ -2,6 +2,7 @@ import type { ApprovalRecord } from "./runtime/approvals.js";
 import type { ClarificationAnswerResult, ClarificationQuestion } from "./runtime/dialogue.js";
 import type { Idea2RepoEvent } from "./runtime/events.js";
 import type { EvidenceItem, ScoreSnapshot } from "./runtime/ledgers.js";
+import type { RebuttalTask, ResolveRebuttalTaskResult } from "./runtime/rebuttal.js";
 import type { RuntimeRunSnapshot, RuntimeRunStatus, StageControlResult } from "./runtime/runs.js";
 import type { ResearchStageId } from "./pipeline/stages.js";
 
@@ -99,6 +100,7 @@ export type RuntimeRunLinks = {
   evidence_url: string;
   score_snapshots_url: string;
   questions_url: string;
+  rebuttal_tasks_url: string;
   approvals_url: string;
 };
 
@@ -160,6 +162,13 @@ export type RuntimeQuestionsResponse = {
   active: ClarificationQuestion[];
 };
 
+export type RuntimeRebuttalTasksResponse = {
+  run_id: string;
+  tasks: RebuttalTask[];
+  open: RebuttalTask[];
+  resolved: RebuttalTask[];
+};
+
 export type ClarificationAnswerRequest = {
   answer: string;
   idea?: string;
@@ -167,6 +176,13 @@ export type ClarificationAnswerRequest = {
 };
 
 export type ClarificationAnswerResponse = ClarificationAnswerResult;
+
+export type RebuttalTaskResolveRequest = {
+  resolution: string;
+  evidence_refs?: string[];
+};
+
+export type RebuttalTaskResolveResponse = ResolveRebuttalTaskResult;
 
 export type ArtifactProjectionKind = "reports" | "evidence" | "plans" | "paper" | "runtime" | "other";
 
