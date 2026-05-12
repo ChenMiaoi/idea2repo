@@ -20,12 +20,14 @@ export type RebuttalTask = {
   run_id: string;
   reviewer_id: "R1" | "R2" | "R3";
   status: "open" | "resolved";
+  source?: "deterministic" | "agent";
   title: string;
   details: string;
   binding: RebuttalTaskBinding;
   score_dimension?: string;
   cap_reason?: string;
   evidence_refs: string[];
+  score_input_context?: StrictScoreInput;
   created_at: string;
   resolved_at?: string;
   resolution?: string;
@@ -43,6 +45,7 @@ export type ResolveRebuttalTaskResult = {
   task: RebuttalTask;
   tasks: RebuttalTask[];
   score: StrictScoreResult;
+  score_input: StrictScoreInput;
   score_snapshot: ScoreSnapshot;
 };
 
@@ -79,11 +82,13 @@ export function generateReviewerLoop(input: {
     .filter((row) => row.status === "verified" && row.paper_id && row.chunk_id)
     .map((row) => `${row.paper_id}:${row.chunk_id}`);
   const caps = new Set(input.score.caps.map((cap) => cap.reason));
-  const tasks = [
+  const deterministicTasks = [
     ...reviewerOneTasks(input.runId, timestamp, caps, noteRefs, evidenceRefs, input.ccfVenueGate),
     ...reviewerTwoTasks(input.runId, timestamp, caps, evidenceRefs),
     ...reviewerThreeTasks(input.runId, timestamp, caps, input.score, input.ccfVenueGate)
   ];
+  const agentTasks = (input.agentReports ?? []).flatMap((report) => agentReviewerTasks(input.runId, timestamp, report, noteRefs, evidenceRefs));
+  const tasks = withScoreInputContext([...deterministicTasks, ...agentTasks], input.scoreInput);
   const deterministicReviewers = [
     reviewerReport("R1", verdictFor(input.score.total, tasks.some((task) => task.reviewer_id === "R1" && task.status === "open")), [
       "Novelty and related-work claims are not acceptable until every core comparison is grounded in paper notes.",
@@ -189,7 +194,7 @@ export async function resolveRebuttalTask(
     bytes: Buffer.byteLength(await readFile(artifactPath, "utf8")),
     timestamp: runtimeTimestamp()
   });
-  return { task: resolved, tasks: finalTasks, score, score_snapshot: snapshot };
+  return { task: resolved, tasks: finalTasks, score, score_input: scoreInput, score_snapshot: snapshot };
 }
 
 function topScoreAction(score: StrictScoreResult): string | undefined {
@@ -244,6 +249,7 @@ export function rebuttalTasksMarkdown(tasks: RebuttalTask[]): string {
         const evidence = task.evidence_refs.length ? task.evidence_refs.map((ref) => `\`${ref}\``).join(", ") : "none";
         return `- [${checked}] ${task.id}: ${task.title}
   - Reviewer: ${task.reviewer_id}
+  - Source: ${task.source ?? "deterministic"}
   - Status: ${task.status}
   - Binding: \`${binding}\`
   - Score dimension: ${task.score_dimension ?? "n/a"}
@@ -275,8 +281,9 @@ function reviewerOneTasks(
   if (caps.has("No verified related work")) {
     tasks.push(task(runId, "R1", "M1", timestamp, "Add verified related-work comparisons from paper notes.", "Each novelty claim must cite a paper note with page, quote, and chunk provenance.", binding("score_dimension", "related_work"), "related_work", "No verified related work", evidenceRefs));
   }
-  if (caps.has("No CCF-A core papers") || gate.preliminary_only) {
-    tasks.push(task(runId, "R1", "M2", timestamp, "Complete the CCF-A main/full core paper set.", "The verified CCF-A path requires at least eight qualified core papers before strict novelty/scoring can be trusted.", noteRefs[0] ? binding("paper_note", noteRefs[0]) : binding("score_dimension", "related_work"), "related_work", "No CCF-A core papers", evidenceRefs));
+  if (caps.has("No CCF-A core papers") || caps.has("CCF-A venue gate blocked") || gate.preliminary_only) {
+    const capReason = caps.has("CCF-A venue gate blocked") ? "CCF-A venue gate blocked" : "No CCF-A core papers";
+    tasks.push(task(runId, "R1", "M2", timestamp, "Complete the CCF-A main/full core paper set.", "The verified CCF-A path requires at least eight qualified core papers before strict novelty/scoring can be trusted.", noteRefs[0] ? binding("paper_note", noteRefs[0]) : binding("score_dimension", "related_work"), "related_work", capReason, evidenceRefs));
   }
   if (caps.has("High prior-work collision")) {
     tasks.push(task(runId, "R1", "M3", timestamp, "Narrow the novelty delta against the closest collision.", "State the idea-vs-prior-work difference using direct evidence rather than broad claims.", evidenceRefs[0] ? binding("evidence_ref", evidenceRefs[0]) : binding("score_dimension", "novelty"), "novelty", "High prior-work collision", evidenceRefs.slice(0, 2)));
@@ -310,7 +317,11 @@ function reviewerThreeTasks(
 ): RebuttalTask[] {
   const tasks: RebuttalTask[] = [];
   if (gate.preliminary_only) {
-    tasks.push(task(runId, "R3", "M1", timestamp, "Justify CCF-A main-track venue fit.", "Explain why the contribution belongs in a main/full CCF-A venue after the core paper gate is satisfied.", binding("score_dimension", "venue_story"), "venue_story", "No CCF-A core papers", []));
+    const capReason = caps.has("CCF-A venue gate blocked") ? "CCF-A venue gate blocked" : "No CCF-A core papers";
+    tasks.push(task(runId, "R3", "M1", timestamp, "Justify CCF-A main-track venue fit.", "Explain why the contribution belongs in a main/full CCF-A venue after the core paper gate is satisfied.", binding("score_dimension", "venue_story"), "venue_story", capReason, []));
+  }
+  if (caps.has("Single-person/12-week plan is clearly infeasible")) {
+    tasks.push(task(runId, "R3", `M${tasks.length + 2}`, timestamp, "Rescope the execution plan for the available resources.", "Reduce scope, extend timeline, or document concrete compute and staffing support before claiming feasibility.", binding("score_dimension", "feasibility_reproducibility"), "feasibility_reproducibility", "Single-person/12-week plan is clearly infeasible", []));
   }
   for (const cap of score.caps.filter((item) => /threat model|system evaluation|ML baselines|venue/i.test(item.reason))) {
     tasks.push(task(runId, "R3", `M${tasks.length + 2}`, timestamp, cap.reason, "Resolve the venue-specific story or evidence requirement before claiming submission readiness.", binding("score_dimension", "venue_story"), "venue_story", cap.reason, []));
@@ -335,6 +346,7 @@ function task(
     run_id: runId,
     reviewer_id: reviewerId,
     status: "open",
+    source: "deterministic",
     title,
     details,
     binding: bindingRef,
@@ -343,6 +355,78 @@ function task(
     evidence_refs: [...new Set(evidenceRefs)],
     created_at: timestamp
   };
+}
+
+function agentReviewerTasks(runId: string, timestamp: string, report: ReviewerReport, noteRefs: string[], evidenceRefs: string[]): RebuttalTask[] {
+  const concerns = report.major_concerns.map((concern, index) =>
+    agentTask(runId, report.reviewer_id, `A${index + 1}`, timestamp, `Address reviewer concern: ${shortTitle(concern)}`, concern, report.role, noteRefs, evidenceRefs)
+  );
+  const evidenceTasks = report.required_evidence.map((required, index) =>
+    agentTask(runId, report.reviewer_id, `E${index + 1}`, timestamp, `Provide reviewer-requested evidence: ${shortTitle(required)}`, required, report.role, noteRefs, evidenceRefs)
+  );
+  return [...concerns, ...evidenceTasks];
+}
+
+function agentTask(
+  runId: string,
+  reviewerId: RebuttalTask["reviewer_id"],
+  localId: string,
+  timestamp: string,
+  title: string,
+  details: string,
+  role: ReviewerReport["role"],
+  noteRefs: string[],
+  evidenceRefs: string[]
+): RebuttalTask {
+  const bindingRef = agentTaskBinding(details, role, noteRefs, evidenceRefs);
+  return {
+    id: `${reviewerId}-${localId}`,
+    run_id: runId,
+    reviewer_id: reviewerId,
+    status: "open",
+    source: "agent",
+    title,
+    details,
+    binding: bindingRef.binding,
+    score_dimension: bindingRef.scoreDimension,
+    evidence_refs: bindingRef.binding.type === "evidence_ref" ? [bindingRef.binding.ref] : evidenceRefs.slice(0, 3),
+    created_at: timestamp
+  };
+}
+
+function agentTaskBinding(
+  text: string,
+  role: ReviewerReport["role"],
+  noteRefs: string[],
+  evidenceRefs: string[]
+): { binding: RebuttalTaskBinding; scoreDimension: string } {
+  const scoreDimension = scoreDimensionForAgentTask(text, role);
+  if (/(paper note|paper_note|pdf|citation|related work)/i.test(text) && noteRefs[0]) return { binding: binding("paper_note", noteRefs[0]), scoreDimension };
+  if (/(evidence|page|quote|chunk)/i.test(text) && evidenceRefs[0]) return { binding: binding("evidence_ref", evidenceRefs[0]), scoreDimension };
+  return { binding: binding("score_dimension", scoreDimension), scoreDimension };
+}
+
+function scoreDimensionForAgentTask(text: string, role: ReviewerReport["role"]): string {
+  if (role === "Novelty / Related Work") return /paper|prior|literature|related/i.test(text) ? "related_work" : "novelty";
+  if (role === "Method / Experiment") return /baseline|dataset|metric|experiment|ablation|protocol|reproduc/i.test(text) ? "experimental_rigor" : "method_clarity";
+  return /feasib|resource|timeline|week|compute|scope/i.test(text) ? "feasibility_reproducibility" : "venue_story";
+}
+
+function withScoreInputContext(tasks: RebuttalTask[], scoreInput: StrictScoreInput): RebuttalTask[] {
+  const context = cloneScoreInput(scoreInput);
+  return tasks.map((taskItem) => ({ ...taskItem, score_input_context: context }));
+}
+
+function cloneScoreInput(scoreInput: StrictScoreInput): StrictScoreInput {
+  return {
+    ...scoreInput,
+    evidenceRefs: [...(scoreInput.evidenceRefs ?? [])]
+  };
+}
+
+function shortTitle(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized.length > 84 ? `${normalized.slice(0, 81)}...` : normalized || "reviewer item";
 }
 
 function reviewerReport(
@@ -370,11 +454,12 @@ function reviewerReport(
 function mergeReviewerReport(deterministic: ReviewerReport, agentReport: ReviewerReport | undefined, tasks: RebuttalTask[]): ReviewerReport {
   if (!agentReport || agentReport.role !== deterministic.role) return deterministic;
   const reviewerTasks = tasks.filter((taskItem) => taskItem.reviewer_id === deterministic.reviewer_id);
+  const hardTasks = reviewerTasks.filter((taskItem) => taskItem.source !== "agent");
   return validateReviewerReport({
     reviewer_id: deterministic.reviewer_id,
     role: deterministic.role,
     verdict: stricterVerdict(deterministic.verdict, agentReport.verdict, reviewerTasks.length > 0),
-    summary: `${agentReport.summary.trim() || deterministic.summary}\n\nDeterministic mandatory tasks remain binding: ${reviewerTasks.map((taskItem) => taskItem.id).join(", ") || "none"}.`,
+    summary: `${agentReport.summary.trim() || deterministic.summary}\n\nDeterministic mandatory tasks remain binding: ${hardTasks.map((taskItem) => taskItem.id).join(", ") || "none"}. Additional reviewer tasks are tracked separately in the rebuttal ledger.`,
     major_concerns: unique([...agentReport.major_concerns, ...deterministic.major_concerns]),
     minor_concerns: unique([...agentReport.minor_concerns, ...deterministic.minor_concerns]),
     required_evidence: unique([...agentReport.required_evidence, ...deterministic.required_evidence]),
@@ -395,6 +480,8 @@ function severityRank(verdict: ReviewerReport["verdict"]): number {
 }
 
 function scoreInputFromRebuttalTasks(tasks: RebuttalTask[]): StrictScoreInput {
+  const context = tasks.find((taskItem) => taskItem.score_input_context)?.score_input_context;
+  if (context) return scoreInputFromContextAndTaskState(context, tasks);
   const openCaps = new Set(tasks.filter((taskItem) => taskItem.status !== "resolved").map((taskItem) => taskItem.cap_reason).filter(Boolean) as string[]);
   const evidenceRefs = [...new Set(tasks.flatMap((taskItem) => taskItem.evidence_refs))];
   return {
@@ -416,6 +503,68 @@ function scoreInputFromRebuttalTasks(tasks: RebuttalTask[]): StrictScoreInput {
     hasStrongMlBaselines: ![...openCaps].some((cap) => /ML baselines/i.test(cap)),
     evidenceRefs
   };
+}
+
+function scoreInputFromContextAndTaskState(context: StrictScoreInput, tasks: RebuttalTask[]): StrictScoreInput {
+  const next: StrictScoreInput = {
+    ...context,
+    evidenceRefs: [...new Set([...(context.evidenceRefs ?? []), ...tasks.flatMap((taskItem) => taskItem.evidence_refs)])]
+  };
+  const capReasons = [...new Set(tasks.map((taskItem) => taskItem.cap_reason).filter(Boolean) as string[])];
+  for (const reason of capReasons) {
+    const capTasks = tasks.filter((taskItem) => taskItem.cap_reason === reason);
+    applyCapTaskState(next, reason, capTasks.some((taskItem) => taskItem.status !== "resolved"));
+  }
+  return next;
+}
+
+function applyCapTaskState(input: StrictScoreInput, reason: string, hasOpenTask: boolean): void {
+  switch (reason) {
+    case "No verified related work":
+      input.verifiedRelatedWorkCount = hasOpenTask ? 0 : Math.max(input.verifiedRelatedWorkCount ?? 0, 5);
+      break;
+    case "No PDF read":
+      input.pdfReadCount = hasOpenTask ? 0 : Math.max(input.pdfReadCount ?? 0, 5);
+      break;
+    case "No CCF-A core papers":
+      input.corePaperCount = hasOpenTask ? 0 : Math.max(input.corePaperCount ?? 0, 8);
+      if (!hasOpenTask) input.ccfAGateBlocked = false;
+      break;
+    case "CCF-A venue gate blocked":
+      input.ccfAGateBlocked = hasOpenTask;
+      input.corePaperCount = hasOpenTask ? input.corePaperCount : Math.max(input.corePaperCount ?? 0, 8);
+      break;
+    case "No baseline/dataset/metric":
+      input.hasStrongBaseline = !hasOpenTask;
+      input.hasDatasetOrBenchmark = !hasOpenTask;
+      input.hasMetric = !hasOpenTask;
+      break;
+    case "High prior-work collision":
+      input.highPriorWorkCollision = hasOpenTask;
+      break;
+    case "Engineering artifact without research question":
+      input.pureEngineeringIntegration = hasOpenTask;
+      input.hasScientificHypothesis = !hasOpenTask;
+      break;
+    case "No executable experiment plan":
+      input.hasExecutableExperimentPlan = !hasOpenTask;
+      break;
+    case "Single-person/12-week plan is clearly infeasible":
+      input.singlePersonTwelveWeekInfeasible = hasOpenTask;
+      break;
+    case "Target venue requires threat model but none exists":
+      input.venueRequiresThreatModel = true;
+      input.hasThreatModel = !hasOpenTask;
+      break;
+    case "Target venue requires system evaluation but prototype absent":
+      input.venueRequiresSystemEvaluation = true;
+      input.hasPrototype = !hasOpenTask;
+      break;
+    case "Target venue expects strong ML baselines but none defined":
+      input.venueExpectsStrongMlBaselines = true;
+      input.hasStrongMlBaselines = !hasOpenTask;
+      break;
+  }
 }
 
 function verdictFor(score: number, hasOpenTasks: boolean): ReviewerReport["verdict"] {
