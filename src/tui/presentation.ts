@@ -1,4 +1,6 @@
-export type WorkflowStepId = "intake" | "plan" | "route" | "provider" | "analysis" | "artifacts" | "review";
+import { researchStages, type ResearchStageId } from "../pipeline/stages.js";
+
+export type WorkflowStepId = ResearchStageId | "route" | "provider";
 
 export type WorkflowStepStatus = "pending" | "active" | "done";
 
@@ -18,14 +20,14 @@ export type TuiActivity = {
 };
 
 const workflowBase: Array<Omit<TuiWorkflowStep, "status">> = [
-  { id: "intake", label: "Intake", detail: "Understand the idea and missing context." },
-  { id: "plan", label: "Plan", detail: "Decide the next command and safe action." },
-  { id: "analysis", label: "Analysis", detail: "Turn the idea into scores, risks, and evidence needs." },
-  { id: "artifacts", label: "Artifacts", detail: "Write scaffold files, manifest, and reports." },
-  { id: "review", label: "Review", detail: "Summarize result and suggest follow-up commands." }
+  ...researchStages.map((stage) => ({
+    id: stage.id,
+    label: stage.label,
+    detail: stage.artifactPaths.length ? `Writes ${stage.artifactPaths[0]}.` : "Runtime research stage."
+  }))
 ];
 
-export function createWorkflowSteps(active: WorkflowStepId = "intake"): TuiWorkflowStep[] {
+export function createWorkflowSteps(active: WorkflowStepId = "idea_intake"): TuiWorkflowStep[] {
   return activateWorkflowStep(
     workflowBase.map((step) => ({ ...step, status: "pending" })),
     active
@@ -73,35 +75,35 @@ export function presentProgressMessage(raw: string): TuiActivity {
     return {
       title: "Structured brief prepared",
       detail: "Packaging the idea, constraints, and JSON schema for Codex.",
-      stage: "analysis"
+      stage: "idea_intake"
     };
   }
   if (/thinking about clarifying questions/i.test(message)) {
     return {
       title: "Missing context checked",
       detail: "Codex is deciding whether the idea needs clarification first.",
-      stage: "analysis"
+      stage: "clarification_dialogue"
     };
   }
   if (/thinking about project name/i.test(message)) {
     return {
       title: "Project name proposal",
       detail: "Codex is deriving a short repository name from the idea.",
-      stage: "plan"
+      stage: "search_planning"
     };
   }
   if (/receiving structured analysis/i.test(message)) {
     return {
       title: "Structured analysis streaming",
       detail: "Reading scores, risks, evidence needs, and revision guidance.",
-      stage: "analysis"
+      stage: "ccf_a_strict_scoring"
     };
   }
   if (/offline deterministic fallback/i.test(message)) {
     return {
       title: "Offline analysis route",
       detail: "Using deterministic scoring and scaffold planning without network calls.",
-      stage: "analysis",
+      stage: "ccf_a_strict_scoring",
       tone: "warning"
     };
   }
@@ -109,7 +111,7 @@ export function presentProgressMessage(raw: string): TuiActivity {
     return {
       title: "Fallback route selected",
       detail: "Provider analysis was unavailable, so deterministic planning will continue.",
-      stage: "analysis",
+      stage: "ccf_a_strict_scoring",
       tone: "warning"
     };
   }
@@ -117,21 +119,21 @@ export function presentProgressMessage(raw: string): TuiActivity {
     return {
       title: "Writing artifact scaffold",
       detail: "Creating reports, plans, references, experiment folders, and project files.",
-      stage: "artifacts"
+      stage: "artifact_writing"
     };
   }
   if (/manifest and status written/i.test(message)) {
     return {
       title: "Manifest recorded",
       detail: "Status and resume metadata are ready.",
-      stage: "review",
+      stage: "venue_template_packaging",
       tone: "success"
     };
   }
   return {
     title: "Working",
     detail: "Advancing the current generation step.",
-    stage: "analysis"
+    stage: "idea_intake"
   };
 }
 
@@ -143,7 +145,7 @@ export function mergeActivity(current: TuiActivity[], next: TuiActivity, limit =
   return [...current, { ...next, count: next.count ?? 1 }].slice(-limit);
 }
 
-function visibleWorkflowStep(step: WorkflowStepId): Exclude<WorkflowStepId, "route" | "provider"> {
-  if (step === "route" || step === "provider") return "plan";
+function visibleWorkflowStep(step: WorkflowStepId): ResearchStageId {
+  if (step === "route" || step === "provider") return "search_planning";
   return step;
 }

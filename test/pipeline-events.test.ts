@@ -27,6 +27,8 @@ test("research pipeline emits run and stage events to a sink", async () => {
     assert.ok(events.some((event) => event.type === "stage.completed" && event.stage_id === "ccf_a_strict_scoring"));
     assert.ok(events.some((event) => event.type === "stage.completed" && event.stage_id === "clarification_dialogue"));
     assert.ok(events.some((event) => event.type === "stage.skipped" && event.stage_id === "pdf_reading"));
+    assert.ok(events.some((event) => event.type === "idea.optimized" && /LLM agent benchmark/.test(event.summary)));
+    assert.ok(events.some((event) => event.type === "solution.generated" && event.artifacts.includes("docs/proposal/solution_design.md")));
     assert.ok(events.some((event) => event.type === "score.updated" && event.score === 39));
     const question = events.find((event) => event.type === "question.asked") as Extract<(typeof events)[number], { type: "question.asked" }> | undefined;
     assert.ok(question);

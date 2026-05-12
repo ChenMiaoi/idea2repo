@@ -59,7 +59,7 @@ describe("api helpers", () => {
       }
     );
     const source = sources[0]!;
-    expect(runtimeEventTypes).toEqual(expect.arrayContaining(["stage.blocked", "paper.found", "pdf.downloaded", "evidence.extracted", "question.asked", "score.updated"]));
+    expect(runtimeEventTypes).toEqual(expect.arrayContaining(["stage.blocked", "idea.optimized", "paper.found", "pdf.downloaded", "evidence.extracted", "paper.note.written", "survey.updated", "question.asked", "score.updated", "reviewer.reported", "rebuttal.task.created", "solution.generated"]));
 
     source.emit("score.updated", {
       type: "score.updated",

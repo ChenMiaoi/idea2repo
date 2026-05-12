@@ -47,6 +47,24 @@ export type Idea2RepoEvent =
   | { type: "artifact.written"; run_id: string; path: string; sha256: string; bytes: number; timestamp: string }
   | { type: "artifact.snapshot"; run_id: string; snapshot_id: string; path: string; timestamp: string }
   | { type: "artifact.restored"; run_id: string; snapshot_id: string; path: string; timestamp: string }
+  | {
+      type: "idea.optimized";
+      run_id: string;
+      stage_id?: string;
+      summary: string;
+      target_domain?: string;
+      target_venues?: string[];
+      path?: string;
+      timestamp: string;
+    }
+  | {
+      type: "solution.generated";
+      run_id: string;
+      stage_id?: string;
+      summary: string;
+      artifacts: string[];
+      timestamp: string;
+    }
   | { type: "tool.started"; run_id: string; tool_call_id: string; tool_name: string; timestamp: string }
   | { type: "tool.completed"; run_id: string; tool_call_id: string; success: boolean; summary: string; timestamp: string }
   | { type: "approval.requested"; run_id: string; approval_id: string; stage_id?: string; action: string; risk: string; timestamp: string }

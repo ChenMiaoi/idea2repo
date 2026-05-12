@@ -331,6 +331,16 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     });
     await setStage("idea_intake", "completed");
   }
+  await emitRuntimeEvent({
+    type: "idea.optimized",
+    run_id: runId,
+    stage_id: "idea_intake",
+    summary: ideaBrief.idea_summary,
+    target_domain: ideaBrief.target_domain,
+    target_venues: ideaBrief.target_venues,
+    path: "docs/idea/idea_brief.md",
+    timestamp: runtimeTimestamp()
+  });
 
   let searchPlan: SearchPlan;
   const resumedSearchPlan = await readJsonArtifact<SearchPlan>(readArtifact, "docs/relative_work/search_plan.json");
@@ -977,6 +987,16 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     }),
     ...preservedNonPaperNoteArtifacts(preservedOutputArtifacts)
   };
+  await emitRuntimeEvent({
+    type: "solution.generated",
+    run_id: runId,
+    stage_id: "better_idea_synthesis",
+    summary: agentStrategy?.central_hypothesis ?? novelty.defensible_gap,
+    artifacts: ["docs/proposal/revised_idea.md", "docs/proposal/strict_execution_plan.md", "docs/proposal/solution_design.md"].filter((path) =>
+      Object.hasOwn(artifacts, path)
+    ),
+    timestamp: runtimeTimestamp()
+  });
   if (!(await canResumeStage("artifact_writing"))) {
     await setStage("artifact_writing", "running");
     await setStage("artifact_writing", "completed");

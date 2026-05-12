@@ -984,11 +984,18 @@ function runtimeEventLabel(event: RuntimeEvent): string | null {
   if (event.type === "stage.started") return `Stage started: ${event.label}`;
   if (event.type === "stage.completed") return `Stage completed: ${event.stage_id}`;
   if (event.type === "stage.blocked") return `Stage blocked: ${event.stage_id}`;
+  if (event.type === "idea.optimized") return `Idea optimized: ${event.summary}`;
   if (event.type === "paper.found") return `Paper found: ${event.title}`;
   if (event.type === "pdf.downloaded") return `PDF downloaded: ${event.paper_id}`;
   if (event.type === "evidence.extracted") return `Evidence: ${event.paper_id} p.${event.page}`;
+  if (event.type === "paper.note.written") return `Paper note: ${event.paper_id}`;
+  if (event.type === "survey.updated") return `Survey updated: ${event.verified_papers} papers`;
   if (event.type === "question.asked") return `Question: ${event.question}`;
   if (event.type === "score.updated") return `Score updated: ${event.score}/${event.max_score}`;
+  if (event.type === "reviewer.reported") return `${event.reviewer_id}: ${event.verdict}`;
+  if (event.type === "rebuttal.task.created") return `Task: ${event.task_id}`;
+  if (event.type === "rebuttal.task.resolved") return `Task resolved: ${event.task_id}`;
+  if (event.type === "solution.generated") return `Solution generated: ${event.artifacts.length} files`;
   if (event.type === "decision.recorded") return `Decision: ${event.title}`;
   if (event.type === "artifact.written") return `Artifact: ${event.path}`;
   if (event.type === "approval.requested") return `Approval requested: ${event.action}`;

@@ -17,7 +17,7 @@ import { formatDecisions, readDecisionRecords } from "../runtime/decisions.js";
 import { readJsonlEvents, runtimeTimestamp, type EventSink, type Idea2RepoEvent } from "../runtime/events.js";
 import { formatPlan, readPlanState } from "../runtime/plan.js";
 import { retryRuntimeStage, skipRuntimeStage } from "../runtime/runs.js";
-import type { ResearchStageId } from "../pipeline/stages.js";
+import { researchStages, type ResearchStageId } from "../pipeline/stages.js";
 import {
   activateWorkflowStep,
   completeWorkflowSteps,
@@ -181,7 +181,7 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
       text: "Type an idea, run /research, or use /help. Commands with choices open selectable menus."
     }
   ]);
-  const [workflowSteps, setWorkflowSteps] = useState<TuiWorkflowStep[]>(() => createWorkflowSteps("intake"));
+  const [workflowSteps, setWorkflowSteps] = useState<TuiWorkflowStep[]>(() => createWorkflowSteps("idea_intake"));
   const [activities, setActivities] = useState<TuiActivity[]>([]);
   const [provider, setProvider] = useState<string>(OPENAI_CODEX_PROVIDER_ID);
   const [model, setModel] = useState(initialModel);
@@ -197,7 +197,7 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
   const [activeDirectoryPicker, setActiveDirectoryPicker] = useState<ActiveDirectoryPicker | null>(null);
   const [activeApprovalDialog, setActiveApprovalDialog] = useState<ActiveApprovalDialog | null>(null);
   const [runtimeSnapshot, setRuntimeSnapshot] = useState<TuiRuntimeSnapshot | null>(null);
-  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("overview");
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("idea_score");
   const activeAbortController = useRef<AbortController | null>(null);
   const busyDepth = useRef(0);
 
@@ -706,7 +706,7 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
     const outputRoot = resolve(outputOverride);
     const policy = approvalPolicyForMode(runtimeMode);
     setRuntimeSnapshot(createTuiRuntimeSnapshot(runId, outputRoot));
-    setInspectorTab("overview");
+    setInspectorTab("idea_score");
     let terminalRuntimeEvent = false;
     const runtimeEvents: EventSink = {
       emit: (event) => {
@@ -765,7 +765,7 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
         mergeActivity(current, {
           title: "Generation complete",
           detail: `${result.files.length} files prepared in ${result.project_name}.`,
-          stage: "review",
+          stage: "venue_template_packaging",
           tone: "success"
         })
       );
@@ -1415,7 +1415,7 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
 
   async function openCockpitSelection(snapshot: TuiRuntimeSnapshot): Promise<void> {
     const pending = snapshot.approvals.find((approval) => !approval.decision);
-    if (pending && (inspectorTab === "overview" || inspectorTab === "plan")) {
+    if (pending && (inspectorTab === "idea_score" || inspectorTab === "plan")) {
       const records = await pendingApprovalRecords(output);
       const record = records.find((candidate) => candidate.id === pending.id) ?? records[0];
       if (record) {
@@ -1423,19 +1423,19 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
         return;
       }
     }
-    if (inspectorTab === "artifacts") {
-      const artifact = snapshot.artifacts.at(-1);
-      if (!artifact) {
+    if (inspectorTab === "files" || inspectorTab === "solution") {
+      const artifactPath = cockpitOpenArtifactPath(snapshot, inspectorTab);
+      if (!artifactPath) {
         append({ role: "assistant", title: "No artifact selected", text: "No live artifacts have been written yet." });
         return;
       }
       await runBusy(async () => {
-        const content = await readFile(ensureChild(snapshot.outputRoot, artifact.path), "utf8");
-        append({ role: "assistant", title: artifact.path, text: compactText(content, 160), details: content.split(/\r?\n/).filter(Boolean).slice(0, 8) });
+        const content = await readFile(ensureChild(snapshot.outputRoot, artifactPath), "utf8");
+        append({ role: "assistant", title: artifactPath, text: compactText(content, 160), details: content.split(/\r?\n/).filter(Boolean).slice(0, 8) });
       });
       return;
     }
-    if (inspectorTab === "score") {
+    if (inspectorTab === "idea_score") {
       const score = latestRuntimeEvent(snapshot, "score.updated");
       append({
         role: "assistant",
@@ -1456,12 +1456,13 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
       });
       return;
     }
-    if (inspectorTab === "paper") {
+    if (inspectorTab === "paper_notes") {
+      const note = latestRuntimeEvent(snapshot, "paper.note.written");
       const evidence = latestRuntimeEvent(snapshot, "evidence.extracted");
       append({
         role: "assistant",
-        title: "Evidence card",
-        text: evidence ? `${evidence.paper_id} p.${evidence.page}: ${evidence.claim}` : "No extracted evidence yet.",
+        title: "Paper note card",
+        text: note ? `${note.paper_id} ${note.status}: ${note.path}` : evidence ? `${evidence.paper_id} p.${evidence.page}: ${evidence.claim}` : "No paper note or extracted evidence yet.",
         details: evidence ? [`Quote: ${evidence.quote}`, `Chunk: ${evidence.chunk_id}`, `Confidence: ${evidence.confidence}`] : undefined
       });
       return;
@@ -1521,7 +1522,7 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
     setRuntimeSnapshot((current) => applyTuiRuntimeEvent(current?.runId === runId ? current : createTuiRuntimeSnapshot(runId, outputRoot), event));
     const approvalRecord = approvalRecordFromRequestedEvent(event, runtimeMode);
     if (approvalRecord) {
-      setInspectorTab("overview");
+      setInspectorTab("idea_score");
       openApprovalDialog(approvalRecord, outputRoot);
     }
     const activity = runtimeActivityForEvent(event);
@@ -1580,12 +1581,12 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
   }
 
   function captureIdea(idea: string): void {
-    setWorkflowSteps(activateWorkflowStep(createWorkflowSteps("intake"), "route"));
+    setWorkflowSteps(activateWorkflowStep(createWorkflowSteps("idea_intake"), "route"));
     setActivities((current) =>
       mergeActivity(current, {
         title: "Idea intake complete",
         detail: compactText(idea, 90),
-        stage: "intake"
+        stage: "idea_intake"
       })
     );
   }
@@ -1601,7 +1602,7 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
       {
         title: "Research target",
         detail: compactText(idea, 90),
-        stage: "intake",
+        stage: "idea_intake",
         tone: "success"
       }
     ]);
@@ -2652,16 +2653,25 @@ function thinkingFocus(step: TuiWorkflowStep | undefined, recent?: TuiActivity):
   if (recent?.detail) return recent.detail;
   if (!step) return "Waiting for an idea or slash command.";
   switch (step.id) {
-    case "intake":
+    case "idea_intake":
       return "Reading the idea and looking for missing research context.";
-    case "plan":
-      return "Choosing provider, model, permissions, and the next safe command.";
-    case "analysis":
+    case "search_planning":
+      return "Choosing literature, venue, baseline, dataset, and collision searches.";
+    case "literature_search":
+      return "Collecting and filtering CCF-A-aware paper candidates.";
+    case "candidate_triage":
+    case "pdf_acquisition":
+    case "pdf_reading":
+    case "related_work_analysis":
+    case "novelty_analysis":
+    case "ccf_a_strict_scoring":
+    case "clarification_dialogue":
+    case "feasibility_review":
       return "Preparing structured scores, risks, evidence needs, and revision guidance.";
-    case "artifacts":
+    case "better_idea_synthesis":
+    case "artifact_writing":
+    case "venue_template_packaging":
       return "Mapping analysis into reports, manifests, plans, and project files.";
-    case "review":
-      return "Checking what changed and deciding the next validation or publish action.";
     default:
       return "Preparing the next visible operation.";
   }
@@ -2698,7 +2708,7 @@ function executionPlaceholder(step: TuiWorkflowStep | undefined, busy: boolean):
   return {
     title: `${label} ${suffix}`,
     detail: placeholderDetail(step, busy),
-    stage: (step?.id ?? "plan") as WorkflowStepId
+    stage: step?.id ?? "search_planning"
   };
 }
 
@@ -2716,27 +2726,27 @@ function runtimeActivityForEvent(event: Idea2RepoEvent): TuiActivity | null {
       return {
         title: "Runtime run started",
         detail: compactText(event.output_root, 90),
-        stage: "plan"
+        stage: "idea_intake"
       };
     case "run.completed":
       return {
         title: "Runtime run completed",
         detail: "Trace, plan, decisions, tools, and artifacts were recorded.",
-        stage: "review",
+        stage: "venue_template_packaging",
         tone: "success"
       };
     case "run.failed":
       return {
         title: "Runtime run failed",
         detail: compactText(event.error, 90),
-        stage: "review",
+        stage: "venue_template_packaging",
         tone: "warning"
       };
     case "run.cancelled":
       return {
         title: "Runtime run cancelled",
         detail: compactText(event.reason ?? "cancel requested", 90),
-        stage: "review",
+        stage: "venue_template_packaging",
         tone: "warning"
       };
     case "stage.started":
@@ -2777,68 +2787,68 @@ function runtimeActivityForEvent(event: Idea2RepoEvent): TuiActivity | null {
       return {
         title: "Paper candidate found",
         detail: compactText(`${event.title}${event.venue ? ` (${event.venue})` : ""}`, 90),
-        stage: "analysis"
+        stage: "literature_search"
       };
     case "pdf.downloaded":
       return {
         title: "PDF downloaded",
         detail: compactText(`${event.paper_id} -> ${event.path}`, 90),
-        stage: "analysis",
+        stage: "pdf_acquisition",
         tone: "success"
       };
     case "evidence.extracted":
       return {
         title: "Evidence extracted",
         detail: compactText(`${event.paper_id} p.${event.page}: ${event.claim}`, 90),
-        stage: "analysis",
+        stage: "pdf_reading",
         tone: "success"
       };
     case "paper.note.written":
       return {
         title: "Paper note written",
         detail: compactText(`${event.paper_id} ${event.status} -> ${event.path}`, 90),
-        stage: "analysis",
+        stage: "pdf_reading",
         tone: event.status === "verified" ? "success" : "warning"
       };
     case "survey.updated":
       return {
         title: "Related work survey updated",
         detail: compactText(`${event.verified_papers} papers, ${event.clusters} clusters, ${event.baselines}/${event.datasets}/${event.metrics} baseline/dataset/metric signals`, 90),
-        stage: "analysis",
+        stage: "related_work_analysis",
         tone: event.verified_papers ? "success" : "warning"
       };
     case "question.asked":
       return {
         title: "Clarification question",
         detail: compactText(`${event.question} Why: ${event.why_it_matters}`, 90),
-        stage: "analysis",
+        stage: "clarification_dialogue",
         tone: "warning"
       };
     case "score.updated":
       return {
         title: "Score updated",
         detail: `${event.score}/${event.max_score} confidence ${event.confidence}`,
-        stage: "analysis"
+        stage: "ccf_a_strict_scoring"
       };
     case "reviewer.reported":
       return {
         title: `${event.reviewer_id} ${event.verdict}`,
         detail: compactText(`${event.role} -> ${event.artifact}`, 90),
-        stage: "review",
+        stage: "better_idea_synthesis",
         tone: event.verdict === "Weak accept" ? "success" : "warning"
       };
     case "rebuttal.task.created":
       return {
         title: `Rebuttal task ${event.task_id}`,
         detail: compactText(`${event.title} -> ${event.binding_type}:${event.binding_ref}`, 90),
-        stage: "review",
+        stage: "better_idea_synthesis",
         tone: "warning"
       };
     case "rebuttal.task.resolved":
       return {
         title: `Rebuttal task ${event.task_id} resolved`,
         detail: `Score snapshot ${event.score_snapshot_id}`,
-        stage: "review",
+        stage: "better_idea_synthesis",
         tone: "success"
       };
     case "decision.recorded":
@@ -2851,21 +2861,35 @@ function runtimeActivityForEvent(event: Idea2RepoEvent): TuiActivity | null {
       return {
         title: "Artifact written",
         detail: compactText(`${event.path} (${event.bytes} bytes)`, 90),
-        stage: "artifacts",
+        stage: artifactStageForPath(event.path),
+        tone: "success"
+      };
+    case "idea.optimized":
+      return {
+        title: "Idea optimized",
+        detail: compactText(event.summary, 90),
+        stage: "idea_intake",
+        tone: "success"
+      };
+    case "solution.generated":
+      return {
+        title: "Solution generated",
+        detail: compactText(`${event.artifacts.length} proposal artifacts: ${event.summary}`, 90),
+        stage: "better_idea_synthesis",
         tone: "success"
       };
     case "approval.requested":
       return {
         title: "Approval requested",
         detail: compactText(`${event.action} [${event.risk}]`, 90),
-        stage: "review",
+        stage: "pdf_acquisition",
         tone: "warning"
       };
     case "approval.resolved":
       return {
         title: "Approval resolved",
         detail: `${event.approval_id} -> ${event.decision}`,
-        stage: "review",
+        stage: "pdf_acquisition",
         tone: event.decision === "approved" ? "success" : "warning"
       };
     case "tool.started":
@@ -2879,10 +2903,30 @@ function runtimeActivityForEvent(event: Idea2RepoEvent): TuiActivity | null {
 }
 
 function workflowStepForRuntimeStage(stageId?: string): WorkflowStepId {
-  if (stageId === "idea_intake") return "intake";
-  if (stageId === "search_planning") return "plan";
-  if (stageId === "artifact_writing" || stageId === "venue_template_packaging" || stageId === "better_idea_synthesis") return "artifacts";
-  return "analysis";
+  if (isResearchStageId(stageId)) return stageId;
+  return "idea_intake";
+}
+
+function isResearchStageId(value: string | undefined): value is ResearchStageId {
+  return Boolean(value && researchStages.some((stage) => stage.id === value));
+}
+
+function artifactStageForPath(path: string): WorkflowStepId {
+  const normalized = path.replace(/\\/g, "/");
+  if (/^docs\/idea\//i.test(normalized)) return "idea_intake";
+  if (/^docs\/relative_work\/search_plan/i.test(normalized)) return "search_planning";
+  if (/^docs\/relative_work\/candidates/i.test(normalized) || /^docs\/relative_work\/search_report/i.test(normalized)) return "literature_search";
+  if (/^docs\/relative_work\/triage/i.test(normalized)) return "candidate_triage";
+  if (/^docs\/reference\/pdf_manifest/i.test(normalized) || /^docs\/reference\/pdfs\//i.test(normalized)) return "pdf_acquisition";
+  if (/^docs\/reference\/paper_notes\//i.test(normalized) || /^docs\/reference\/pdf_chunks/i.test(normalized)) return "pdf_reading";
+  if (/^docs\/relative_work\/(?:survey|related_work_matrix|topic_clusters|baseline_recommendations)/i.test(normalized)) return "related_work_analysis";
+  if (/^docs\/relative_work\/(?:idea_vs_prior_work|novelty_gap_matrix|collision_risk)/i.test(normalized)) return "novelty_analysis";
+  if (/ccf_a_strict_scorecard|ccf_a_readiness_report/i.test(normalized)) return "ccf_a_strict_scoring";
+  if (/^docs\/diagnosis\/clarification/i.test(normalized)) return "clarification_dialogue";
+  if (/^docs\/diagnosis\/feasibility/i.test(normalized)) return "feasibility_review";
+  if (/^docs\/proposal\//i.test(normalized) || /^docs\/diagnosis\/(?:reviewer_|rebuttal_tasks)/i.test(normalized)) return "better_idea_synthesis";
+  if (/^docs\/submission\//i.test(normalized) || /^paper\//i.test(normalized)) return "venue_template_packaging";
+  return "artifact_writing";
 }
 
 function humanRuntimeStage(stageId: string): string {
@@ -2892,8 +2936,8 @@ function humanRuntimeStage(stageId: string): string {
     .join(" ");
 }
 
-function visibleStageId(stage: WorkflowStepId): Exclude<WorkflowStepId, "route" | "provider"> {
-  if (stage === "route" || stage === "provider") return "plan";
+function visibleStageId(stage: WorkflowStepId): ResearchStageId {
+  if (stage === "route" || stage === "provider") return "search_planning";
   return stage;
 }
 
@@ -3112,7 +3156,10 @@ export function cockpitShortcutForInput(input: string, options: { ctrl?: boolean
   const normalized = input.toLowerCase();
   if (normalized === "[") return { type: "previous_tab" };
   if (normalized === "]") return { type: "next_tab" };
-  if (/^[1-9]$/.test(normalized)) return { type: "tab", tab: INSPECTOR_TABS[Number(normalized) - 1] ?? "overview" };
+  if (/^[1-9]$/.test(normalized)) {
+    const tab = INSPECTOR_TABS[Number(normalized) - 1];
+    return tab ? { type: "tab", tab } : null;
+  }
   if (!options.ctrl) return null;
   if (normalized === "o") return { type: "open" };
   if (normalized === "a") return { type: "approve" };
@@ -3145,6 +3192,18 @@ export function cockpitOpenFallbackMessage(snapshot: TuiRuntimeSnapshot, tab: In
     title: "No card selected",
     text: `No ${tab} card is available to open yet.`
   };
+}
+
+export function cockpitOpenArtifactPath(snapshot: TuiRuntimeSnapshot, tab: InspectorTab): string | null {
+  if (tab === "solution") {
+    return (
+      snapshot.researchSummary.solutionStats.artifacts.find((path) => /docs\/proposal\/solution_design\.md$/i.test(path.replace(/\\/g, "/"))) ??
+      snapshot.researchSummary.solutionStats.artifacts.at(-1) ??
+      null
+    );
+  }
+  if (tab === "files") return snapshot.artifacts.at(-1)?.path ?? null;
+  return null;
 }
 
 export function cockpitStageTarget(snapshot: TuiRuntimeSnapshot): ResearchStageId | null {

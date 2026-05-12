@@ -125,6 +125,7 @@ test("research-native runtime events round-trip through JSONL", async () => {
   try {
     const sink = new JsonlEventSink(path);
     const events: Idea2RepoEvent[] = [
+      { type: "idea.optimized", run_id: "run-1", stage_id: "idea_intake", summary: "Optimized idea", target_domain: "AI", target_venues: ["NeurIPS"], path: "docs/idea/idea_brief.md", timestamp: "2026-05-11T00:00:00Z" },
       { type: "paper.found", run_id: "run-1", stage_id: "literature_search", paper_id: "p1", title: "Paper", venue: "ACL", year: 2025, relevance_score: 0.9, novelty_risk: "unknown", pdf_status: "available", timestamp: "2026-05-11T00:00:00Z" },
       {
         type: "pdf.downloaded",
@@ -146,6 +147,7 @@ test("research-native runtime events round-trip through JSONL", async () => {
       { type: "reviewer.reported", run_id: "run-1", reviewer_id: "R1", role: "Novelty / Related Work", verdict: "Weak reject", artifact: "docs/diagnosis/reviewer_1.md", open_tasks: 1, timestamp: "2026-05-11T00:00:04Z" },
       { type: "rebuttal.task.created", run_id: "run-1", task_id: "R1-M1", reviewer_id: "R1", title: "Add related work.", binding_type: "score_dimension", binding_ref: "related_work", score_dimension: "related_work", evidence_refs: ["e1"], timestamp: "2026-05-11T00:00:05Z" },
       { type: "rebuttal.task.resolved", run_id: "run-1", task_id: "R1-M1", reviewer_id: "R1", score_snapshot_id: "s1", timestamp: "2026-05-11T00:00:06Z" },
+      { type: "solution.generated", run_id: "run-1", stage_id: "better_idea_synthesis", summary: "Strict proposal ready", artifacts: ["docs/proposal/revised_idea.md", "docs/proposal/strict_execution_plan.md", "docs/proposal/solution_design.md"], timestamp: "2026-05-11T00:00:06Z" },
       { type: "stage.blocked", run_id: "run-1", stage_id: "pdf_acquisition", reason: "Waiting for PDF approval", timestamp: "2026-05-11T00:00:07Z" }
     ];
     for (const event of events) await sink.emit(event);

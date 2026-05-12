@@ -3,7 +3,7 @@ import { test } from "node:test";
 import React from "react";
 import { ApprovalDialog } from "../src/tui/ApprovalDialog.js";
 import { ArtifactPanel } from "../src/tui/ArtifactPanel.js";
-import { approvalRecordFromRequestedEvent, cockpitMutationBlocker, cockpitOpenFallbackMessage, cockpitShortcutForInput, cockpitStageTarget, isBusySubmissionAllowed } from "../src/tui/App.js";
+import { approvalRecordFromRequestedEvent, cockpitMutationBlocker, cockpitOpenArtifactPath, cockpitOpenFallbackMessage, cockpitShortcutForInput, cockpitStageTarget, isBusySubmissionAllowed } from "../src/tui/App.js";
 import { PlanPanel } from "../src/tui/PlanPanel.js";
 import { cockpitActionLine, nextInspectorTab, ResearchCockpit } from "../src/tui/ResearchCockpit.js";
 import { TracePanel } from "../src/tui/TracePanel.js";
@@ -74,6 +74,16 @@ test("TUI runtime snapshot follows live runtime events", () => {
       timestamp: "2026-01-01T00:00:03Z"
     },
     {
+      type: "idea.optimized",
+      run_id: "run-1",
+      stage_id: "idea_intake",
+      summary: "Evidence-first benchmark direction",
+      target_domain: "AI / LLM Agent",
+      target_venues: ["NeurIPS"],
+      path: "docs/idea/idea_brief.md",
+      timestamp: "2026-01-01T00:00:03Z"
+    },
+    {
       type: "decision.recorded",
       run_id: "run-1",
       decision_id: "decision-1",
@@ -103,6 +113,7 @@ test("TUI runtime snapshot follows live runtime events", () => {
   assert.deepEqual(snapshot.artifacts.map((artifact) => artifact.path), ["docs/idea/idea_brief.md"]);
   assert.match(liveDecisionDetails(snapshot).join("\n"), /Accepted initial idea/);
   assert.match(liveApprovalDetails(snapshot).join("\n"), /tool:github.publish/);
+  assert.equal(snapshot.researchSummary.ideaSummary, "Evidence-first benchmark direction");
   assert.equal(snapshot.researchSummary.paperStats.found, 0);
   assert.match(snapshot.researchSummary.nextUserAction, /Approve or deny|Review generated reports/);
   assert.equal(snapshot.status, "completed");
@@ -149,34 +160,55 @@ test("research cockpit hides raw trace outside Debug inspector tab", () => {
       confidence: 0.7,
       hard_blockers: ["No reproduction yet"],
       timestamp: "2026-01-01T00:00:04Z"
+    },
+    {
+      type: "artifact.written",
+      run_id: "run-1",
+      path: "docs/idea/optimized_research_direction.md",
+      sha256: "optimized",
+      bytes: 90,
+      timestamp: "2026-01-01T00:00:05Z"
+    },
+    {
+      type: "paper.note.written",
+      run_id: "run-1",
+      paper_id: "paper-1",
+      path: "docs/reference/paper_notes/paper-1.md",
+      status: "verified",
+      evidence_rows: 1,
+      title: "Evidence First Agents",
+      timestamp: "2026-01-01T00:00:06Z"
     }
   ];
   for (const event of events) snapshot = applyTuiRuntimeEvent(snapshot, event);
 
-  const defaultText = textContent(ResearchCockpit({ snapshot, height: 18, width: 120, activeInspectorTab: "paper" }));
-  assert.match(defaultText, /PLAN/);
-  assert.match(defaultText, /OVERVIEW/);
-  assert.match(defaultText, /INSPECTOR/);
-  assert.match(defaultText, /Overview/);
+  const defaultText = textContent(ResearchCockpit({ snapshot, height: 18, width: 120, activeInspectorTab: "paper_notes" }));
+  assert.match(defaultText, /Research Cockpit/);
+  assert.match(defaultText, /Now/);
+  assert.match(defaultText, /Needs/);
+  assert.match(defaultText, /Stages/);
+  assert.match(defaultText, /Composer/);
+  assert.match(defaultText, /Idea & Score/);
   assert.match(defaultText, /Literature/);
-  assert.match(defaultText, /Paper/);
-  assert.match(defaultText, /Idea Lab/);
-  assert.match(defaultText, /Score/);
+  assert.match(defaultText, /Paper Notes/);
   assert.match(defaultText, /Reviewers/);
   assert.match(defaultText, /Plan/);
-  assert.match(defaultText, /Artifacts/);
+  assert.match(defaultText, /Solution/);
+  assert.match(defaultText, /Files/);
   assert.match(defaultText, /Debug/);
   assert.match(defaultText, /Uses page-level evidence/);
-  assert.match(defaultText, /Strict score: 62\/100/);
+  assert.match(defaultText, /score 62\/100/);
   assert.match(defaultText, /Next: Work the top blocker/);
   assert.doesNotMatch(defaultText, /run\.started/);
-  assert.doesNotMatch(defaultText, /Trace/);
+  assert.doesNotMatch(defaultText, /Runtime trace/);
+  assert.doesNotMatch(defaultText, /docs\/idea\/optimized_research_direction\.md/);
 
   const debugText = textContent(ResearchCockpit({ snapshot, height: 18, width: 120, activeInspectorTab: "debug" }));
   assert.match(debugText, /Debug/);
+  assert.match(debugText, /Runtime trace/);
   assert.match(debugText, /run\.started/);
-  assert.equal(nextInspectorTab("overview", 1), "literature");
-  assert.equal(nextInspectorTab("overview", -1), "debug");
+  assert.equal(nextInspectorTab("idea_score", 1), "literature");
+  assert.equal(nextInspectorTab("idea_score", -1), "debug");
 });
 
 test("TUI runtime snapshot surfaces blocked stage state", () => {
@@ -304,14 +336,15 @@ test("research cockpit exposes direct actions for inspector cards and stages", (
     snapshot = applyTuiRuntimeEvent(snapshot, event);
   }
 
-  const text = textContent(ResearchCockpit({ snapshot, height: 18, width: 120, activeInspectorTab: "overview" }));
+  const text = textContent(ResearchCockpit({ snapshot, height: 18, width: 120, activeInspectorTab: "idea_score" }));
   assert.match(text, /Action: approve\/deny/);
   assert.match(text, /0\/14 done/);
   assert.match(text, /blocked/);
-  assert.equal(cockpitActionLine(snapshot, "overview"), "Action: approve/deny tool:pdf.acquire at pdf_acquisition");
+  assert.equal(cockpitActionLine(snapshot, "idea_score"), "Action: approve/deny tool:pdf.acquire at pdf_acquisition");
   assert.equal(cockpitStageTarget(snapshot), "pdf_acquisition");
-  assert.deepEqual(cockpitShortcutForInput("1"), { type: "tab", tab: "overview" });
-  assert.deepEqual(cockpitShortcutForInput("9"), { type: "tab", tab: "debug" });
+  assert.deepEqual(cockpitShortcutForInput("1"), { type: "tab", tab: "idea_score" });
+  assert.deepEqual(cockpitShortcutForInput("8"), { type: "tab", tab: "debug" });
+  assert.equal(cockpitShortcutForInput("9"), null);
   assert.deepEqual(cockpitShortcutForInput("o", { ctrl: true }), { type: "open" });
   assert.deepEqual(cockpitShortcutForInput("a", { ctrl: true }), { type: "approve" });
   assert.deepEqual(cockpitShortcutForInput("d", { ctrl: true }), { type: "deny" });
@@ -323,7 +356,7 @@ test("research cockpit exposes direct actions for inspector cards and stages", (
   assert.match(cockpitMutationBlocker(snapshot, "skip") ?? "", /before skipping the stage/);
   assert.match(cockpitMutationBlocker(snapshot, "edit") ?? "", /before editing the idea/);
   assert.equal(cockpitMutationBlocker(snapshot, "approve"), null);
-  const overviewFallback = cockpitOpenFallbackMessage(snapshot, "overview");
+  const overviewFallback = cockpitOpenFallbackMessage(snapshot, "idea_score");
   assert.equal(overviewFallback.title, "No card selected");
   const overviewFallbackDetails = overviewFallback.details?.join("\n") ?? "";
   assert.equal(overviewFallbackDetails, "");
@@ -331,6 +364,33 @@ test("research cockpit exposes direct actions for inspector cards and stages", (
   const debugFallback = cockpitOpenFallbackMessage(snapshot, "debug");
   assert.equal(debugFallback.title, "Runtime trace");
   assert.match(debugFallback.details?.join("\n") ?? "", /artifact\.written/);
+});
+
+test("research cockpit opens solution artifacts from the Solution tab", () => {
+  let snapshot = createTuiRuntimeSnapshot("run-1", "generated_repos/demo", "2026-01-01T00:00:00Z");
+  for (const event of [
+    {
+      type: "artifact.written",
+      run_id: "run-1",
+      path: "reports/ccf_a_readiness_report.md",
+      sha256: "abc",
+      bytes: 120,
+      timestamp: "2026-01-01T00:00:01Z"
+    },
+    {
+      type: "solution.generated",
+      run_id: "run-1",
+      stage_id: "better_idea_synthesis",
+      summary: "Strict proposal ready",
+      artifacts: ["docs/proposal/revised_idea.md", "docs/proposal/strict_execution_plan.md", "docs/proposal/solution_design.md"],
+      timestamp: "2026-01-01T00:00:02Z"
+    }
+  ] satisfies Idea2RepoEvent[]) {
+    snapshot = applyTuiRuntimeEvent(snapshot, event);
+  }
+
+  assert.equal(cockpitOpenArtifactPath(snapshot, "solution"), "docs/proposal/solution_design.md");
+  assert.equal(cockpitOpenArtifactPath(snapshot, "files"), "reports/ccf_a_readiness_report.md");
 });
 
 function textContent(value: unknown): string {

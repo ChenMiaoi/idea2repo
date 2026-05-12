@@ -19,7 +19,7 @@ export type TuiRuntimeApproval = {
 };
 
 export type TuiRuntimeResearchSummary = {
-  optimizedIdea?: string;
+  ideaSummary?: string;
   currentScore?: {
     score: number;
     maxScore: number;
@@ -37,6 +37,23 @@ export type TuiRuntimeResearchSummary = {
     reviewers: number;
     openTasks: number;
     resolvedTasks: number;
+  };
+  noteStats: {
+    total: number;
+    verified: number;
+    metadataOnly: number;
+  };
+  surveyStats?: {
+    verifiedPapers: number;
+    clusters: number;
+    baselines: number;
+    datasets: number;
+    metrics: number;
+  };
+  solutionStats: {
+    generated: number;
+    artifacts: string[];
+    latestSummary?: string;
   };
   nextUserAction: string;
 };
@@ -175,9 +192,13 @@ function statusForRuntimeEvent(current: TuiRuntimeSnapshot["status"], event: Ide
 
 function researchSummaryFor(snapshot: TuiRuntimeSnapshot): TuiRuntimeResearchSummary {
   const score = [...snapshot.events].reverse().find((event): event is Extract<Idea2RepoEvent, { type: "score.updated" }> => event.type === "score.updated");
+  const idea = [...snapshot.events].reverse().find((event): event is Extract<Idea2RepoEvent, { type: "idea.optimized" }> => event.type === "idea.optimized");
+  const survey = [...snapshot.events].reverse().find((event): event is Extract<Idea2RepoEvent, { type: "survey.updated" }> => event.type === "survey.updated");
+  const solutions = snapshot.events.filter((event): event is Extract<Idea2RepoEvent, { type: "solution.generated" }> => event.type === "solution.generated");
   const paperEvents = snapshot.events.filter((event): event is Extract<Idea2RepoEvent, { type: "paper.found" }> => event.type === "paper.found");
   const downloaded = new Set(snapshot.events.filter((event) => event.type === "pdf.downloaded").map((event) => event.paper_id));
   const evidencePapers = new Set(snapshot.events.filter((event) => event.type === "evidence.extracted").map((event) => event.paper_id));
+  const notes = snapshot.events.filter((event): event is Extract<Idea2RepoEvent, { type: "paper.note.written" }> => event.type === "paper.note.written");
   const papersById = new Map<string, Extract<Idea2RepoEvent, { type: "paper.found" }>>();
   for (const event of paperEvents) papersById.set(event.paper_id, event);
   const papers = [...papersById.values()];
@@ -199,9 +220,13 @@ function researchSummaryFor(snapshot: TuiRuntimeSnapshot): TuiRuntimeResearchSum
   }
   const openRebuttalTasks = [...rebuttalTasks.values()].filter((status) => status === "open").length;
   const resolvedRebuttalTasks = [...rebuttalTasks.values()].filter((status) => status === "resolved").length;
-  const optimizedPath = snapshot.artifacts.find((artifact) => /docs\/idea\/optimized_research_direction\.md$/i.test(artifact.path.replace(/\\/g, "/")))?.path;
+  const proposalArtifacts = snapshot.artifacts
+    .map((artifact) => artifact.path.replace(/\\/g, "/"))
+    .filter((path) => /^docs\/proposal\/(?:revised_idea|strict_execution_plan|solution_design)\.md$/i.test(path));
+  const solutionArtifacts = [...new Set([...proposalArtifacts, ...solutions.flatMap((event) => event.artifacts.map((path) => path.replace(/\\/g, "/")))])];
+  const latestSolution = solutions.at(-1);
   return {
-    optimizedIdea: optimizedPath ? `Artifact: ${optimizedPath}` : undefined,
+    ideaSummary: idea?.summary ?? (snapshot.artifacts.some((artifact) => /docs\/idea\/idea_brief\.md$/i.test(artifact.path.replace(/\\/g, "/"))) ? "Idea brief written." : undefined),
     currentScore: score ? { score: score.score, maxScore: score.max_score, confidence: score.confidence } : undefined,
     fatalBlockers: score?.hard_blockers ?? [],
     paperStats: {
@@ -216,6 +241,25 @@ function researchSummaryFor(snapshot: TuiRuntimeSnapshot): TuiRuntimeResearchSum
       openTasks: rebuttalTasks.size ? openRebuttalTasks : rebuttalArtifactPresent ? 1 : 0,
       resolvedTasks: resolvedRebuttalTasks
     },
+    noteStats: {
+      total: notes.length,
+      verified: notes.filter((note) => note.status === "verified").length,
+      metadataOnly: notes.filter((note) => note.status === "metadata_only").length
+    },
+    surveyStats: survey
+      ? {
+          verifiedPapers: survey.verified_papers,
+          clusters: survey.clusters,
+          baselines: survey.baselines,
+          datasets: survey.datasets,
+          metrics: survey.metrics
+        }
+      : undefined,
+    solutionStats: {
+      generated: solutions.length,
+      artifacts: solutionArtifacts,
+      latestSummary: latestSolution?.summary
+    },
     nextUserAction: nextUserActionFor({ snapshot, pendingApproval, blockedStage, activeStage, latestQuestion, score })
   };
 }
@@ -225,6 +269,8 @@ function emptyResearchSummary(): TuiRuntimeResearchSummary {
     fatalBlockers: [],
     paperStats: { found: 0, ccfA: 0, mainTrack: 0, downloaded: 0, verifiedEvidence: 0 },
     reviewerStats: { reviewers: 0, openTasks: 0, resolvedTasks: 0 },
+    noteStats: { total: 0, verified: 0, metadataOnly: 0 },
+    solutionStats: { generated: 0, artifacts: [] },
     nextUserAction: "Submit an idea or wait for the next research event."
   };
 }
