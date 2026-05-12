@@ -93,10 +93,10 @@ test("clarification answers update idea profile and append refreshed score snaps
 
     assert.equal(result.question.status, "answered");
     assert.equal(result.score_input.hasDatasetOrBenchmark, true);
-    assert.equal(result.score.caps.some((cap) => cap.reason === "No dataset/benchmark"), false);
+    assert.equal(result.score.caps.some((cap) => cap.reason === "No baseline/dataset/metric"), false);
     assert.equal(result.score_snapshot.confidence, result.score.confidence);
     assert.equal(emitted.find((event) => event.type === "score.updated")?.confidence, result.score.confidence);
-    assert.ok(result.question.answer_effect?.resolved_blockers.includes("No dataset/benchmark"));
+    assert.ok(result.question.answer_effect?.resolved_blockers.includes("No baseline/dataset/metric"));
     assert.match(result.question.answer_effect?.profile_patch.updated_idea ?? "", /Clarification \(dataset or benchmark\)/);
     assert.match(result.profile.updated_idea, /AgentBench/);
     assert.equal((await activeClarificationQuestions(root, "run-1")).length, 0);

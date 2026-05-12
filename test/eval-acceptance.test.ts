@@ -75,7 +75,7 @@ test("eval: known idea with known papers yields evidence-backed matrices", () =>
     hasScientificHypothesis: true
   });
   assert.ok(score.score_dimensions.every((dimension) => dimension.positiveEvidence.every((ref) => /^eval-e\d+$/.test(ref))));
-  assert.equal(score.hard_blockers.includes("No dataset/benchmark"), false);
+  assert.equal(score.hard_blockers.includes("No baseline/dataset/metric"), false);
 });
 
 test("eval: plausible fake papers without PDF evidence are not promoted", async () => {

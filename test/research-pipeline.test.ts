@@ -122,7 +122,7 @@ test("research pipeline respects evidence gates for staged agents", async () => 
     },
     scoreCcfA: async () => {
       calls.push("scoreCcfA");
-      return withAgentMeta({ scorecard: { total: 45, dimensions: {}, cap_reasons: ["No PDF read"], evidence_warnings: [], recommendations: ["read PDFs"] } });
+      return withAgentMeta({ scorecard: { total: 45, dimensions: sampleStrictCcfADimensions(), cap_reasons: ["No PDF read"], evidence_warnings: [], recommendations: ["read PDFs"] } });
     },
     reviewFeasibility: async () => {
       calls.push("reviewFeasibility");
@@ -1045,7 +1045,7 @@ test("research pipeline persists new staged PDF reader notes", async () => {
             evidence_warnings: []
           }
         }),
-      scoreCcfA: async () => withAgentMeta({ scorecard: { total: 65, dimensions: {}, cap_reasons: [], evidence_warnings: [], recommendations: [] } }),
+      scoreCcfA: async () => withAgentMeta({ scorecard: { total: 65, dimensions: sampleStrictCcfADimensions(), cap_reasons: [], evidence_warnings: [], recommendations: [] } }),
       refineIdea: async () =>
         withAgentMeta({
           strategy: {
@@ -1139,6 +1139,19 @@ function noEvidenceAgent(calls: string[]) {
       calls.push("refineIdea");
       throw new Error("strategy should be evidence-gated");
     }
+  };
+}
+
+function sampleStrictCcfADimensions() {
+  return {
+    problem_significance: 6,
+    novelty: 8,
+    technical_depth: 7,
+    method_clarity: 5,
+    experimental_rigor: 8,
+    related_work: 4,
+    feasibility_reproducibility: 4,
+    venue_story: 3
   };
 }
 

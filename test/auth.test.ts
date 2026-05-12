@@ -3,6 +3,8 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { loadAgentPrompt } from "../src/agents/agent-runner.js";
+import { validateStrictCcfAReview } from "../src/agents/schemas.js";
 import { AuthStorage, CodexOAuthClient, authPath, parseUsageSnapshot } from "../src/auth/codex-oauth.js";
 
 test("AuthStorage stores Codex OAuth credentials outside generated repos with restricted permissions", async () => {
@@ -141,6 +143,59 @@ test("CodexOAuthClient runs split staged agent prompts", async () => {
     else process.env.IDEA2REPO_HOME = previous;
     await rm(home, { recursive: true, force: true });
   }
+});
+
+test("strict CCF-A reviewer prompt and schema use the canonical rubric", async () => {
+  const prompt = await loadAgentPrompt("06_ccf_a_reviewer.md");
+  for (const expected of [
+    "problem_significance / Problem Significance: 10",
+    "novelty / Novelty: 20",
+    "technical_depth / Technical Depth: 15",
+    "method_clarity / Method Clarity: 10",
+    "experimental_rigor / Experimental Rigor: 20",
+    "related_work / Related Work: 10",
+    "feasibility_reproducibility / Feasibility / Reproducibility: 10",
+    "venue_story / Venue / Story: 5",
+    "No verified related work: total score cannot exceed 45",
+    "No CCF-A core papers: total score cannot exceed 55",
+    "No baseline/dataset/metric: total score cannot exceed 60",
+    "Engineering artifact without research question: total score cannot exceed 50",
+    "High prior-work collision: total score cannot exceed 40",
+    "No executable experiment plan: total score cannot exceed 65"
+  ]) {
+    assert.match(prompt, new RegExp(escapeRegExp(expected)));
+  }
+  assert.doesNotMatch(prompt, /Problem importance|Experimental design: 15|Venue fit: 10|Paper story: 5|Fewer than 5 core related papers/);
+
+  const valid = validateStrictCcfAReview({
+    total: 65,
+    dimensions: {
+      problem_significance: 8,
+      novelty: 12,
+      technical_depth: 10,
+      method_clarity: 7,
+      experimental_rigor: 13,
+      related_work: 6,
+      feasibility_reproducibility: 6,
+      venue_story: 3
+    },
+    cap_reasons: [],
+    evidence_warnings: [],
+    recommendations: []
+  });
+  assert.equal(valid.dimensions.experimental_rigor, 13);
+
+  assert.throws(
+    () =>
+      validateStrictCcfAReview({
+        total: 50,
+        dimensions: { novelty_after_related_work: 10 },
+        cap_reasons: [],
+        evidence_warnings: [],
+        recommendations: []
+      }),
+    /StrictCcfAReview/
+  );
 });
 
 test("CodexOAuthClient rethrows cancellation during JSON body reads", async () => {
@@ -380,4 +435,8 @@ function sampleSearchPlan() {
     collision_queries: [query("agent benchmark prior work")],
     stop_condition: "enough candidates"
   };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

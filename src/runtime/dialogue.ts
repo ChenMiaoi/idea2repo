@@ -348,11 +348,11 @@ function candidateQuestions(
     });
   };
 
-  if (caps.has("No verified related work") || caps.has("Fewer than 5 core related papers")) {
+  if (caps.has("No verified related work") || caps.has("No CCF-A core papers")) {
     add("related_work", {
       question: "Which five papers should anchor the closest related-work comparison?",
       whyItMatters: "The CCF-A score is capped until the claim is compared against enough verified core papers.",
-      relatedScoreDimensions: ["novelty_after_related_work", "paper_story"],
+      relatedScoreDimensions: ["novelty", "related_work"],
       evidenceRefs,
       options: ["Use current top candidates", "Prioritize target-venue papers", "Add missing direct baselines"],
       required: true
@@ -362,7 +362,7 @@ function candidateQuestions(
     add("pdf_evidence", {
       question: "Which public PDFs should be read first for page-level evidence?",
       whyItMatters: "Novelty and score rationale cannot move past the PDF evidence cap without page, quote, and chunk references.",
-      relatedScoreDimensions: ["novelty_after_related_work", "reproducibility_open_source_value"],
+      relatedScoreDimensions: ["novelty", "feasibility_reproducibility"],
       evidenceRefs,
       options: ["Read all available PDFs", "Read top CCF-A candidates", "Read baseline/dataset papers first"],
       required: true
@@ -372,37 +372,33 @@ function candidateQuestions(
     add("novelty", {
       question: `Which novelty axis should be defended most tightly: ${weakNoveltyDimensions(input.novelty).join(", ") || "problem, method, data, metric, evaluation, or contribution"}?`,
       whyItMatters: "The related-work score stays capped until the paper claims a narrow delta against the closest prior work.",
-      relatedScoreDimensions: ["novelty_after_related_work", "technical_depth", "paper_story"],
+      relatedScoreDimensions: ["novelty", "technical_depth", "venue_story"],
       evidenceRefs: noveltyEvidenceRefs(input.novelty, evidenceRefs),
       options: ["New method", "New benchmark/data", "New evaluation or measurement finding"],
       required: true
     });
   }
-  if (caps.has("No strong baseline")) {
+  if (caps.has("No baseline/dataset/metric")) {
     add("baseline", {
       question: "What is the strongest reviewer-expected baseline for the first experiment?",
       whyItMatters: "The rubric caps the score when the evaluation lacks a credible baseline comparison.",
-      relatedScoreDimensions: ["baseline_dataset_metric", "experimental_design"],
+      relatedScoreDimensions: ["experimental_rigor"],
       evidenceRefs,
       options: ["Published SOTA baseline", "Ablated version of our method", "Strong open-source system baseline"],
       required: true
     });
-  }
-  if (caps.has("No dataset/benchmark")) {
     add("dataset", {
       question: "Which dataset or benchmark is the primary evaluation target?",
       whyItMatters: "The CCF-A readiness score is capped until the evaluation target is concrete enough to reproduce.",
-      relatedScoreDimensions: ["baseline_dataset_metric", "experimental_design"],
+      relatedScoreDimensions: ["experimental_rigor"],
       evidenceRefs,
       options: ["Existing public benchmark", "New curated dataset", "Synthetic/workload benchmark"],
       required: true
     });
-  }
-  if (caps.has("No metric")) {
     add("metric", {
       question: "Which primary metric should decide whether the idea succeeds?",
       whyItMatters: "The score cannot clear the metric cap until the paper names a reviewer-legible success measure.",
-      relatedScoreDimensions: ["baseline_dataset_metric", "experimental_design"],
+      relatedScoreDimensions: ["experimental_rigor"],
       evidenceRefs,
       options: ["Quality/accuracy", "Latency/cost", "Robustness/failure rate"],
       required: true
@@ -412,17 +408,17 @@ function candidateQuestions(
     add("experiment", {
       question: "What is the smallest executable experiment that tests the main claim?",
       whyItMatters: "The plan must tie hypothesis, baseline, dataset, and metric together before feasibility can be trusted.",
-      relatedScoreDimensions: ["experimental_design", "feasibility", "paper_story"],
+      relatedScoreDimensions: ["experimental_rigor", "feasibility_reproducibility", "venue_story"],
       evidenceRefs,
       options: ["Offline benchmark run", "Ablation study", "User or system evaluation"],
       required: true
     });
   }
-  if (caps.has("Pure engineering integration without scientific hypothesis")) {
+  if (caps.has("Engineering artifact without research question")) {
     add("hypothesis", {
       question: "What scientific hypothesis distinguishes this from an engineering integration?",
       whyItMatters: "The rubric caps integration-only ideas unless the paper states a testable research claim.",
-      relatedScoreDimensions: ["technical_depth", "paper_story"],
+      relatedScoreDimensions: ["technical_depth", "method_clarity"],
       evidenceRefs,
       options: ["Mechanism claim", "Measurement claim", "Generalization claim"],
       required: true
@@ -432,7 +428,7 @@ function candidateQuestions(
     add("threat_model", {
       question: "What threat model or attacker capability should the paper assume?",
       whyItMatters: "Security venues expect an explicit threat model before judging evaluation soundness.",
-      relatedScoreDimensions: ["venue_fit", "experimental_design"],
+      relatedScoreDimensions: ["venue_story", "experimental_rigor"],
       evidenceRefs,
       options: ["Black-box attacker", "White-box attacker", "Operational misuse/failure model"],
       required: true
@@ -442,7 +438,7 @@ function candidateQuestions(
     add("system_evaluation", {
       question: "What prototype or system slice can be evaluated within the run?",
       whyItMatters: "Systems venues cap readiness when claims lack a concrete implementation target.",
-      relatedScoreDimensions: ["venue_fit", "feasibility", "reproducibility_open_source_value"],
+      relatedScoreDimensions: ["venue_story", "feasibility_reproducibility"],
       evidenceRefs,
       options: ["Minimal prototype", "Trace-driven simulator", "Open-source extension"],
       required: true
@@ -452,7 +448,7 @@ function candidateQuestions(
     add("ml_baseline", {
       question: "Which strong ML baselines should be included for the target venue?",
       whyItMatters: "ML venues expect comparisons against current strong baselines, not only simple ablations.",
-      relatedScoreDimensions: ["venue_fit", "baseline_dataset_metric"],
+      relatedScoreDimensions: ["venue_story", "experimental_rigor"],
       evidenceRefs,
       options: ["Published SOTA model", "Strong open-source model", "Task-specific supervised baseline"],
       required: true
@@ -503,13 +499,13 @@ function scoreInputFromScoreCaps(score: StrictScoreResult): StrictScoreInput {
   return {
     verifiedRelatedWorkCount: caps.has("No verified related work") ? 0 : 5,
     pdfReadCount: caps.has("No PDF read") ? 0 : 5,
-    corePaperCount: caps.has("Fewer than 5 core related papers") ? 0 : 5,
-    hasStrongBaseline: !caps.has("No strong baseline"),
-    hasDatasetOrBenchmark: !caps.has("No dataset/benchmark"),
-    hasMetric: !caps.has("No metric"),
+    corePaperCount: caps.has("No CCF-A core papers") ? 0 : 5,
+    hasStrongBaseline: !caps.has("No baseline/dataset/metric"),
+    hasDatasetOrBenchmark: !caps.has("No baseline/dataset/metric"),
+    hasMetric: !caps.has("No baseline/dataset/metric"),
     highPriorWorkCollision: caps.has("High prior-work collision"),
-    pureEngineeringIntegration: caps.has("Pure engineering integration without scientific hypothesis"),
-    hasScientificHypothesis: !caps.has("Pure engineering integration without scientific hypothesis"),
+    pureEngineeringIntegration: caps.has("Engineering artifact without research question"),
+    hasScientificHypothesis: !caps.has("Engineering artifact without research question"),
     hasExecutableExperimentPlan: !caps.has("No executable experiment plan"),
     singlePersonTwelveWeekInfeasible: caps.has("Single-person/12-week plan is clearly infeasible"),
     venueRequiresThreatModel: caps.has("Target venue requires threat model but none exists"),

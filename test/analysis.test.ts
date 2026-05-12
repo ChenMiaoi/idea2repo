@@ -120,14 +120,12 @@ test("paper notes and related-work signals are derived from evidence text", () =
 
 test("strict CCF-A score applies all evidence cap rules", () => {
   const cases: Array<[string, Parameters<typeof strictCcfAScore>[0], number, string]> = [
-    ["No verified related work", { pdfReadCount: 1, corePaperCount: 5, hasStrongBaseline: true, hasDatasetOrBenchmark: true, hasMetric: true, hasExecutableExperimentPlan: true }, 50, "No verified related work"],
+    ["No verified related work", { pdfReadCount: 1, corePaperCount: 5, hasStrongBaseline: true, hasDatasetOrBenchmark: true, hasMetric: true, hasExecutableExperimentPlan: true }, 45, "No verified related work"],
     ["No PDF read", { verifiedRelatedWorkCount: 5, corePaperCount: 5, hasStrongBaseline: true, hasDatasetOrBenchmark: true, hasMetric: true, hasExecutableExperimentPlan: true }, 45, "No PDF read"],
-    ["Fewer than 5 core related papers", { verifiedRelatedWorkCount: 4, pdfReadCount: 4, corePaperCount: 4, hasStrongBaseline: true, hasDatasetOrBenchmark: true, hasMetric: true, hasExecutableExperimentPlan: true }, 60, "Fewer than 5 core related papers"],
-    ["No strong baseline", { verifiedRelatedWorkCount: 5, pdfReadCount: 5, corePaperCount: 5, hasDatasetOrBenchmark: true, hasMetric: true, hasExecutableExperimentPlan: true }, 65, "No strong baseline"],
-    ["No dataset/benchmark", { verifiedRelatedWorkCount: 5, pdfReadCount: 5, corePaperCount: 5, hasStrongBaseline: true, hasMetric: true, hasExecutableExperimentPlan: true }, 60, "No dataset/benchmark"],
-    ["No metric", { verifiedRelatedWorkCount: 5, pdfReadCount: 5, corePaperCount: 5, hasStrongBaseline: true, hasDatasetOrBenchmark: true, hasExecutableExperimentPlan: true }, 60, "No metric"],
-    ["High prior-work collision", { verifiedRelatedWorkCount: 5, pdfReadCount: 5, corePaperCount: 5, hasStrongBaseline: true, hasDatasetOrBenchmark: true, hasMetric: true, hasExecutableExperimentPlan: true, highPriorWorkCollision: true }, 55, "High prior-work collision"],
-    ["Pure engineering integration without scientific hypothesis", { verifiedRelatedWorkCount: 5, pdfReadCount: 5, corePaperCount: 5, hasStrongBaseline: true, hasDatasetOrBenchmark: true, hasMetric: true, hasExecutableExperimentPlan: true, pureEngineeringIntegration: true }, 55, "Pure engineering integration without scientific hypothesis"],
+    ["No CCF-A core papers", { verifiedRelatedWorkCount: 5, pdfReadCount: 5, corePaperCount: 0, hasStrongBaseline: true, hasDatasetOrBenchmark: true, hasMetric: true, hasExecutableExperimentPlan: true }, 55, "No CCF-A core papers"],
+    ["No baseline/dataset/metric", { verifiedRelatedWorkCount: 5, pdfReadCount: 5, corePaperCount: 5, hasExecutableExperimentPlan: true }, 60, "No baseline/dataset/metric"],
+    ["High prior-work collision", { verifiedRelatedWorkCount: 5, pdfReadCount: 5, corePaperCount: 5, hasStrongBaseline: true, hasDatasetOrBenchmark: true, hasMetric: true, hasExecutableExperimentPlan: true, highPriorWorkCollision: true }, 40, "High prior-work collision"],
+    ["Engineering artifact without research question", { verifiedRelatedWorkCount: 5, pdfReadCount: 5, corePaperCount: 5, hasStrongBaseline: true, hasDatasetOrBenchmark: true, hasMetric: true, hasExecutableExperimentPlan: true, pureEngineeringIntegration: true }, 50, "Engineering artifact without research question"],
     ["No executable experiment plan", { verifiedRelatedWorkCount: 5, pdfReadCount: 5, corePaperCount: 5, hasStrongBaseline: true, hasDatasetOrBenchmark: true, hasMetric: true }, 65, "No executable experiment plan"],
     ["Single-person/12-week plan is clearly infeasible", { verifiedRelatedWorkCount: 5, pdfReadCount: 5, corePaperCount: 5, hasStrongBaseline: true, hasDatasetOrBenchmark: true, hasMetric: true, hasExecutableExperimentPlan: true, singlePersonTwelveWeekInfeasible: true }, 70, "Single-person/12-week plan is clearly infeasible"],
     ["Target venue requires threat model but none exists", { verifiedRelatedWorkCount: 5, pdfReadCount: 5, corePaperCount: 5, hasStrongBaseline: true, hasDatasetOrBenchmark: true, hasMetric: true, hasExecutableExperimentPlan: true, venueRequiresThreatModel: true }, 65, "Target venue requires threat model but none exists"],
@@ -160,15 +158,25 @@ test("strict CCF-A score reports evidence-backed dimensions and target paths", (
 
   assert.equal(score.score_dimensions.length, 8);
   assert.equal(score.score_dimensions.reduce((sum, dimension) => sum + dimension.maxScore, 0), 100);
-  assert.ok(Object.hasOwn(score.dimensions, "novelty_after_related_work"));
-  assert.ok(Object.hasOwn(score.dimensions, "baseline_dataset_metric"));
-  assert.ok(Object.hasOwn(score.dimensions, "paper_story"));
+  assert.deepEqual(score.score_dimensions.map((dimension) => `${dimension.name}:${dimension.maxScore}`), [
+    "Problem Significance:10",
+    "Novelty:20",
+    "Technical Depth:15",
+    "Method Clarity:10",
+    "Experimental Rigor:20",
+    "Related Work:10",
+    "Feasibility / Reproducibility:10",
+    "Venue / Story:5"
+  ]);
+  assert.ok(Object.hasOwn(score.dimensions, "problem_significance"));
+  assert.ok(Object.hasOwn(score.dimensions, "experimental_rigor"));
+  assert.ok(Object.hasOwn(score.dimensions, "venue_story"));
   assert.ok(score.confidence > 0 && score.confidence <= 0.9);
-  assert.ok(score.hard_blockers.includes("No dataset/benchmark"));
+  assert.ok(score.hard_blockers.includes("No baseline/dataset/metric"));
   assert.ok(score.soft_weaknesses.length > 0);
   assert.ok(score.path_to_70.some((action) => /dataset|benchmark|experiment|related/i.test(action)));
   assert.ok(score.path_to_80.some((action) => /ablations|provenance|related|dataset|experiment/i.test(action)));
-  const evaluation = score.score_dimensions.find((dimension) => dimension.name === "Evaluation Feasibility");
+  const evaluation = score.score_dimensions.find((dimension) => dimension.name === "Experimental Rigor");
   assert.ok(evaluation);
   assert.deepEqual(evaluation.positiveEvidence, ["e1", "e2"]);
   assert.ok(evaluation.missingEvidence.includes("Concrete dataset or benchmark"));
@@ -176,7 +184,7 @@ test("strict CCF-A score reports evidence-backed dimensions and target paths", (
   assert.equal(score.score_dimensions.flatMap((dimension) => dimension.positiveEvidence).every((ref) => /^e\d+$/.test(ref)), true);
   assert.equal(score.score_dimensions.flatMap((dimension) => dimension.negativeEvidence).length, 0);
   const markdown = strictScoreMarkdown(score);
-  assert.match(markdown, /Evidence-Backed Dimensions/);
+  assert.match(markdown, /Strict Rubric/);
   assert.match(markdown, /Possible Path To 70\+/);
   assert.match(markdown, /Possible Path To 80\+/);
 });
@@ -194,7 +202,7 @@ test("papers analyze score and refine CLI write analysis artifacts", async () =>
     assert.equal(await main(["refine", "--output", output, "--resource", "single researcher"]), 0);
     const scorecard = await readFile(join(output, "docs/diagnosis/ccf_a_strict_scorecard.md"), "utf8");
     assert.match(scorecard, /CCF-A Strict Scorecard/);
-    assert.match(scorecard, /Evidence-Backed Dimensions/);
+    assert.match(scorecard, /Strict Rubric/);
     assert.match(scorecard, /Possible Path To 70\+/);
     assert.match(scorecard, /No verified related work/);
     assert.match(await readFile(join(output, "docs/proposal/revised_idea.md"), "utf8"), /Revised Idea/);

@@ -90,7 +90,7 @@ test("runtime API starts runs and streams shared runtime events over SSE", async
     assert.ok(Array.isArray(evidence.evidence));
     assert.ok(Array.isArray(evidence.current));
     const scores = await getJson(`${server.url}/runs/${started.run_id}/scores`);
-    assert.ok(scores.score_snapshots.some((snapshot: { score: number; hard_blockers: string[] }) => snapshot.score === 45 && snapshot.hard_blockers.includes("No PDF read")));
+    assert.ok(scores.score_snapshots.some((snapshot: { score: number; hard_blockers: string[] }) => snapshot.score === 39 && snapshot.hard_blockers.includes("No PDF read")));
     const questions = await getJson(`${server.url}/runs/${started.run_id}/questions`);
     assert.ok(Array.isArray(questions.questions));
     assert.ok(Array.isArray(questions.active));

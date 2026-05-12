@@ -4,10 +4,10 @@ import { assessSecurityScope, safeSecurityReframe, type SecurityAssessment } fro
 import { loadVenueDatabase, routeIdea, type DomainRoute, type VenueDatabase } from "./venues.js";
 
 export const capLimits = {
-  unclear_related_work_difference: 60,
+  unclear_related_work_difference: 45,
   missing_verifiable_experiment_plan: 65,
-  engineering_only: 55,
-  missing_strong_baseline: 70,
+  engineering_only: 50,
+  missing_strong_baseline: 60,
   missing_threat_model: 60,
   missing_system_metrics: 65,
   missing_ai_ablation_or_generalization: 70,
@@ -123,15 +123,17 @@ export function diagnoseIdea(
 function score(parsed: ParsedIdea, route: DomainRoute): ScoreBreakdown {
   const idea = parsed.raw_text.toLocaleLowerCase();
   const dimensions: Record<string, number> = {
-    problem_importance: bounded(4 + Math.floor(route.score / 15) + hasAny(idea, "real", "important", "bottleneck"), 10),
+    problem_significance: bounded(4 + Math.floor(route.score / 15) + hasAny(idea, "real", "important", "bottleneck"), 10),
     novelty: bounded(5 + hasAny(idea, "novel", "new", "gap", "different") * 4 + Math.floor(route.score / 20), 20),
     technical_depth: bounded(4 + hasAny(idea, "algorithm", "system", "theory", "prototype", "method") * 4, 15),
-    venue_fit: bounded(3 + Math.min(Math.floor(route.score / 10), 7), 10),
-    experimental_verifiability: bounded(3 + hasAny(idea, "experiment", "evaluation", "benchmark", "metric") * 4, 15),
-    baseline_dataset_metric: bounded(2 + hasAny(idea, "baseline", "dataset", "metric") * 3, 10),
-    feasibility: bounded(5 + hasAny(idea, "12 week", "resource", "gpu", "prototype") * 2, 10),
-    engineering_open_source_value: bounded(2 + hasAny(idea, "repo", "open source", "benchmark", "tool") * 2, 5),
-    paper_story: bounded(3 + hasAny(idea, "claim", "contribution", "story") * 2, 5)
+    method_clarity: bounded(3 + hasAny(idea, "method", "approach", "framework", "claim", "hypothesis") * 3, 10),
+    experimental_rigor: bounded(
+      4 + hasAny(idea, "experiment", "evaluation", "benchmark", "metric") * 4 + hasAny(idea, "baseline", "dataset") * 4 + hasAny(idea, "ablation", "failure case") * 2,
+      20
+    ),
+    related_work: bounded(2 + hasAny(idea, "related work", "prior work", "different", "gap") * 4 + hasAny(idea, "baseline", "sota", "compare", "comparison") * 3, 10),
+    feasibility_reproducibility: bounded(4 + hasAny(idea, "12 week", "resource", "gpu", "prototype") * 2 + hasAny(idea, "repo", "open source", "reproduce", "seed") * 2, 10),
+    venue_story: bounded(2 + Math.min(Math.floor(route.score / 25), 2) + hasAny(idea, "claim", "contribution", "story"), 5)
   };
   const triggers = capTriggers(idea, route.domain.key);
   const uncapped = Object.values(dimensions).reduce((sum, value) => sum + value, 0);

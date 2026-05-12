@@ -363,25 +363,22 @@ function isEvidenceClaimType(value: string): value is EvidenceClaimType {
 
 function strictDimensionMax(name: string, fallback: number): number {
   const max: Record<string, number> = {
-    problem_importance: 15,
-    novelty_after_related_work: 20,
+    problem_significance: 10,
+    novelty: 20,
     technical_depth: 15,
-    experimental_design: 15,
-    baseline_dataset_metric: 10,
-    venue_fit: 10,
-    feasibility: 10,
-    reproducibility_open_source_value: 5,
-    paper_story: 5
+    method_clarity: 10,
+    experimental_rigor: 20,
+    related_work: 10,
+    feasibility_reproducibility: 10,
+    venue_story: 5
   };
   return max[name] ?? Math.max(fallback, 1);
 }
 
 function actionForMissingEvidence(reason: string): string {
-  if (/related work|core related papers/i.test(reason)) return "Read and cite enough core related papers with page-level evidence.";
+  if (/related work|core related papers|core papers/i.test(reason)) return "Read and cite enough core related papers with page-level evidence.";
   if (/pdf/i.test(reason)) return "Acquire public PDFs and extract page, quote, and chunk evidence.";
-  if (/baseline/i.test(reason)) return "Identify reviewer-expected baselines and link them to evidence.";
-  if (/dataset|benchmark/i.test(reason)) return "Define the dataset or benchmark and cite supporting evidence.";
-  if (/metric/i.test(reason)) return "Specify primary and secondary metrics with evidence.";
+  if (/baseline|dataset|benchmark|metric/i.test(reason)) return "Define baseline, dataset or benchmark, and primary metric together.";
   if (/experiment plan/i.test(reason)) return "Write an executable experiment plan tied to baselines and metrics.";
   if (/threat model/i.test(reason)) return "Write a venue-appropriate threat model.";
   if (/system evaluation|prototype/i.test(reason)) return "Build or scope a prototype with system evaluation metrics.";

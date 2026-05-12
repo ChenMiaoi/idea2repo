@@ -44,19 +44,28 @@ export type StrictScoreResult = {
   path_to_80: string[];
 };
 
+const RUBRIC = [
+  { key: "problem_significance", name: "Problem Significance", maxScore: 10 },
+  { key: "novelty", name: "Novelty", maxScore: 20 },
+  { key: "technical_depth", name: "Technical Depth", maxScore: 15 },
+  { key: "method_clarity", name: "Method Clarity", maxScore: 10 },
+  { key: "experimental_rigor", name: "Experimental Rigor", maxScore: 20 },
+  { key: "related_work", name: "Related Work", maxScore: 10 },
+  { key: "feasibility_reproducibility", name: "Feasibility / Reproducibility", maxScore: 10 },
+  { key: "venue_story", name: "Venue / Story", maxScore: 5 }
+] as const;
+
 export function strictCcfAScore(input: StrictScoreInput): StrictScoreResult {
-  const scoreDimensions = evidenceBackedDimensions(input);
-  const dimensions = legacyDimensions(input);
+  const scoreDimensions = strictRubricDimensions(input);
+  const dimensions = Object.fromEntries(scoreDimensions.map((dimension, index) => [RUBRIC[index]!.key, dimension.score]));
   const caps: StrictScoreResult["caps"] = [];
-  addCap(caps, !input.verifiedRelatedWorkCount, "No verified related work", 50);
-  addCap(caps, !input.pdfReadCount, "No PDF read", 45);
-  addCap(caps, (input.corePaperCount ?? 0) < 5, "Fewer than 5 core related papers", 60);
-  addCap(caps, !input.hasStrongBaseline, "No strong baseline", 65);
-  addCap(caps, !input.hasDatasetOrBenchmark, "No dataset/benchmark", 60);
-  addCap(caps, !input.hasMetric, "No metric", 60);
-  addCap(caps, Boolean(input.highPriorWorkCollision), "High prior-work collision", 55);
-  addCap(caps, Boolean(input.pureEngineeringIntegration && !input.hasScientificHypothesis), "Pure engineering integration without scientific hypothesis", 55);
+  addCap(caps, !input.verifiedRelatedWorkCount, "No verified related work", 45);
+  addCap(caps, (input.corePaperCount ?? 0) <= 0, "No CCF-A core papers", 55);
+  addCap(caps, !input.hasStrongBaseline || !input.hasDatasetOrBenchmark || !input.hasMetric, "No baseline/dataset/metric", 60);
+  addCap(caps, Boolean(input.pureEngineeringIntegration && !input.hasScientificHypothesis), "Engineering artifact without research question", 50);
+  addCap(caps, Boolean(input.highPriorWorkCollision), "High prior-work collision", 40);
   addCap(caps, !input.hasExecutableExperimentPlan, "No executable experiment plan", 65);
+  addCap(caps, !input.pdfReadCount, "No PDF read", 45);
   addCap(caps, Boolean(input.singlePersonTwelveWeekInfeasible), "Single-person/12-week plan is clearly infeasible", 70);
   addCap(caps, Boolean(input.venueRequiresThreatModel && !input.hasThreatModel), "Target venue requires threat model but none exists", 65);
   addCap(caps, Boolean(input.venueRequiresSystemEvaluation && !input.hasPrototype), "Target venue requires system evaluation but prototype absent", 60);
@@ -90,7 +99,7 @@ export function strictScoreMarkdown(result: StrictScoreResult): string {
 - Confidence: ${result.confidence}
 - Active cap: ${result.caps.length ? Math.min(...result.caps.map((cap) => cap.cap)) : "none"}
 
-## Evidence-Backed Dimensions
+## Strict Rubric
 
 | Dimension | Score | Confidence | Rationale |
 | --- | ---: | ---: | --- |
@@ -127,68 +136,60 @@ ${result.caps.map((cap) => `- ${cap.reason}: total cap ${cap.cap}`).join("\n") |
 `;
 }
 
-function addCap(caps: StrictScoreResult["caps"], active: boolean, reason: string, cap: number): void {
-  if (active) caps.push({ reason, cap });
-}
-
-function evidenceBackedDimensions(input: StrictScoreInput): ScoreDimension[] {
+function strictRubricDimensions(input: StrictScoreInput): ScoreDimension[] {
   const evidenceRefs = input.evidenceRefs ?? [];
   const verifiedRelatedWork = input.verifiedRelatedWorkCount ?? 0;
   const pdfRead = input.pdfReadCount ?? 0;
   const corePapers = input.corePaperCount ?? 0;
   return [
     dimension({
-      name: "Novelty / Originality",
+      name: "Problem Significance",
+      maxScore: 10,
+      score: input.pureEngineeringIntegration && !input.hasScientificHypothesis ? 5 : evidenceRefs.length ? 8 : 6,
+      confidence: evidenceRefs.length ? 0.65 : 0.45,
+      positiveEvidence: evidenceRefs.slice(0, 3),
+      negativeEvidence: [],
+      missingEvidence: evidenceRefs.length ? [] : ["Venue-grounded evidence that the problem matters"],
+      recommendedActions: ["Tie the problem to recent CCF-A papers, benchmarks, or documented failure modes."]
+    }),
+    dimension({
+      name: "Novelty",
       maxScore: 20,
-      score: input.highPriorWorkCollision ? 6 : verifiedRelatedWork >= 5 && pdfRead >= 5 ? 14 : verifiedRelatedWork > 0 ? 10 : 8,
+      score: input.highPriorWorkCollision ? 4 : verifiedRelatedWork >= 5 && corePapers >= 5 ? 15 : verifiedRelatedWork > 0 ? 10 : 6,
       confidence: confidenceForEvidence(verifiedRelatedWork, pdfRead, evidenceRefs.length),
       positiveEvidence: verifiedRelatedWork && !input.highPriorWorkCollision ? evidenceRefs.slice(0, 5) : [],
-      negativeEvidence: [],
+      negativeEvidence: input.highPriorWorkCollision ? evidenceRefs.slice(0, 3) : [],
       missingEvidence: [
-        ...missingWhen(verifiedRelatedWork < 5, "At least 5 verified core related papers"),
-        ...missingWhen(pdfRead < 5, "PDF-backed novelty evidence"),
+        ...missingWhen(verifiedRelatedWork < 5, "Verified related-work comparisons"),
+        ...missingWhen(corePapers < 5, "Enough CCF-A core papers"),
         ...missingWhen(Boolean(input.highPriorWorkCollision), "Narrow novelty delta against closest prior work")
       ],
-      recommendedActions: ["Use page-level evidence to state the exact idea-vs-prior-work delta.", "Remove or narrow any high-collision claim."]
+      recommendedActions: ["State the exact idea-vs-prior-work delta with page-level evidence."]
     }),
     dimension({
       name: "Technical Depth",
       maxScore: 15,
-      score: input.pureEngineeringIntegration && !input.hasScientificHypothesis ? 6 : input.hasScientificHypothesis ? 12 : 10,
+      score: input.pureEngineeringIntegration && !input.hasScientificHypothesis ? 5 : input.hasScientificHypothesis ? 12 : 9,
       confidence: input.hasScientificHypothesis ? 0.65 : 0.45,
-      positiveEvidence: [],
+      positiveEvidence: input.hasScientificHypothesis ? evidenceRefs.slice(0, 2) : [],
       negativeEvidence: [],
-      missingEvidence: missingWhen(!input.hasScientificHypothesis, "Testable scientific hypothesis"),
-      recommendedActions: ["State the mechanism, measurement, or generalization hypothesis that reviewers can falsify."]
+      missingEvidence: missingWhen(!input.hasScientificHypothesis, "Testable scientific hypothesis or research question"),
+      recommendedActions: ["State the mechanism, measurement, or generalization hypothesis reviewers can falsify."]
     }),
     dimension({
-      name: "Problem Significance",
-      maxScore: 15,
-      score: input.pureEngineeringIntegration ? 9 : 12,
-      confidence: evidenceRefs.length ? 0.6 : 0.45,
-      positiveEvidence: evidenceRefs.length ? evidenceRefs.slice(0, 3) : [],
+      name: "Method Clarity",
+      maxScore: 10,
+      score: input.hasScientificHypothesis ? 8 : 5,
+      confidence: input.hasScientificHypothesis ? 0.6 : 0.4,
+      positiveEvidence: input.hasScientificHypothesis ? evidenceRefs.slice(0, 2) : [],
       negativeEvidence: [],
-      missingEvidence: evidenceRefs.length ? [] : ["Evidence that the target problem matters to the venue community"],
-      recommendedActions: ["Tie the problem to recent venue papers, benchmarks, or documented failure modes."]
+      missingEvidence: missingWhen(!input.hasScientificHypothesis, "Clear method claim tied to the research question"),
+      recommendedActions: ["Rewrite the method as inputs, intervention, expected behavior, and failure modes."]
     }),
     dimension({
-      name: "Related Work Differentiation",
-      maxScore: 15,
-      score: verifiedRelatedWork >= 5 && corePapers >= 5 && pdfRead >= 5 ? 12 : verifiedRelatedWork > 0 || pdfRead > 0 ? 8 : 5,
-      confidence: confidenceForEvidence(verifiedRelatedWork, pdfRead, evidenceRefs.length),
-      positiveEvidence: verifiedRelatedWork ? evidenceRefs.slice(0, 5) : [],
-      negativeEvidence: [],
-      missingEvidence: [
-        ...missingWhen(verifiedRelatedWork < 5, "Five verified related-work comparisons"),
-        ...missingWhen(corePapers < 5, "Core paper set large enough for reviewer expectations"),
-        ...missingWhen(pdfRead < 5, "PDF-read evidence for related-work claims")
-      ],
-      recommendedActions: ["Build a side-by-side related-work matrix with paper, page, quote, and chunk ids."]
-    }),
-    dimension({
-      name: "Evaluation Feasibility",
-      maxScore: 15,
-      score: 3 + (input.hasStrongBaseline ? 3 : 0) + (input.hasDatasetOrBenchmark ? 3 : 0) + (input.hasMetric ? 3 : 0) + (input.hasExecutableExperimentPlan ? 3 : 0),
+      name: "Experimental Rigor",
+      maxScore: 20,
+      score: 4 + (input.hasStrongBaseline ? 4 : 0) + (input.hasDatasetOrBenchmark ? 4 : 0) + (input.hasMetric ? 4 : 0) + (input.hasExecutableExperimentPlan ? 4 : 0),
       confidence: [input.hasStrongBaseline, input.hasDatasetOrBenchmark, input.hasMetric, input.hasExecutableExperimentPlan].filter(Boolean).length / 5 + 0.2,
       positiveEvidence: evidenceRefs.slice(0, 5),
       negativeEvidence: [],
@@ -198,46 +199,59 @@ function evidenceBackedDimensions(input: StrictScoreInput): ScoreDimension[] {
         ...missingWhen(!input.hasMetric, "Primary success metric"),
         ...missingWhen(!input.hasExecutableExperimentPlan, "Executable experiment plan")
       ],
-      recommendedActions: ["Lock the first experiment around one baseline, one dataset, and one primary metric."]
+      recommendedActions: ["Lock one baseline, one dataset, one primary metric, and a runnable protocol."]
     }),
     dimension({
-      name: "Empirical Strength / Reproducibility",
+      name: "Related Work",
       maxScore: 10,
-      score: [input.hasStrongBaseline, input.hasDatasetOrBenchmark, input.hasMetric, Boolean(pdfRead), input.hasExecutableExperimentPlan].filter(Boolean).length * 2,
-      confidence: evidenceRefs.length ? 0.65 : 0.35,
-      positiveEvidence: evidenceRefs.slice(0, 5),
+      score: verifiedRelatedWork >= 5 && corePapers >= 5 && pdfRead >= 5 ? 8 : verifiedRelatedWork > 0 ? 5 : 2,
+      confidence: confidenceForEvidence(verifiedRelatedWork, pdfRead, evidenceRefs.length),
+      positiveEvidence: verifiedRelatedWork ? evidenceRefs.slice(0, 5) : [],
       negativeEvidence: [],
       missingEvidence: [
-        ...missingWhen(!pdfRead, "PDF-backed empirical prior work"),
-        ...missingWhen(!input.hasExecutableExperimentPlan, "Reproducible experiment commands or protocol"),
-        ...missingWhen(!input.hasStrongBaseline, "Baseline reproduction plan")
+        ...missingWhen(verifiedRelatedWork < 5, "Five verified related-work comparisons"),
+        ...missingWhen(corePapers < 5, "CCF-A core paper coverage"),
+        ...missingWhen(pdfRead < 5, "PDF-read evidence for related-work claims")
       ],
-      recommendedActions: ["Add ablations, failure cases, seeds, and artifact paths for reproduction."]
+      recommendedActions: ["Build a side-by-side matrix using paper, page, quote, and chunk ids."]
     }),
     dimension({
-      name: "Clarity of Claim",
-      maxScore: 5,
-      score: input.hasScientificHypothesis ? 4 : 3,
-      confidence: input.hasScientificHypothesis ? 0.65 : 0.45,
-      positiveEvidence: [],
-      negativeEvidence: [],
-      missingEvidence: missingWhen(!input.hasScientificHypothesis, "Explicit claim tied to method and metric"),
-      recommendedActions: ["Rewrite the paper story as a falsifiable claim with one primary contribution."]
+      name: "Feasibility / Reproducibility",
+      maxScore: 10,
+      score: 2 + (input.hasExecutableExperimentPlan ? 3 : 0) + (input.hasStrongBaseline ? 2 : 0) + (input.hasDatasetOrBenchmark ? 2 : 0) + (input.singlePersonTwelveWeekInfeasible ? 0 : 1),
+      confidence: evidenceRefs.length ? 0.65 : 0.35,
+      positiveEvidence: evidenceRefs.slice(0, 4),
+      negativeEvidence: input.singlePersonTwelveWeekInfeasible ? ["single-person/12-week feasibility risk"] : [],
+      missingEvidence: [
+        ...missingWhen(!input.hasExecutableExperimentPlan, "Reproducible experiment commands or protocol"),
+        ...missingWhen(!input.hasStrongBaseline, "Baseline reproduction plan"),
+        ...missingWhen(Boolean(input.singlePersonTwelveWeekInfeasible), "Feasible resource and timeline scope")
+      ],
+      recommendedActions: ["Add commands, seeds, artifact paths, and a scoped compute plan."]
     }),
     dimension({
-      name: "Ethics / Security / Risk",
+      name: "Venue / Story",
       maxScore: 5,
-      score: input.venueRequiresThreatModel && !input.hasThreatModel ? 1 : input.venueRequiresSystemEvaluation && !input.hasPrototype ? 2 : 4,
-      confidence: input.venueRequiresThreatModel || input.venueRequiresSystemEvaluation ? 0.55 : 0.45,
+      score: venueStoryScore(input),
+      confidence: input.venueRequiresThreatModel || input.venueRequiresSystemEvaluation || input.venueExpectsStrongMlBaselines ? 0.55 : 0.45,
       positiveEvidence: [],
       negativeEvidence: [],
       missingEvidence: [
         ...missingWhen(Boolean(input.venueRequiresThreatModel && !input.hasThreatModel), "Venue-appropriate threat model"),
-        ...missingWhen(Boolean(input.venueRequiresSystemEvaluation && !input.hasPrototype), "System evaluation artifact")
+        ...missingWhen(Boolean(input.venueRequiresSystemEvaluation && !input.hasPrototype), "System evaluation artifact"),
+        ...missingWhen(Boolean(input.venueExpectsStrongMlBaselines && !input.hasStrongMlBaselines), "Venue-expected ML baselines")
       ],
-      recommendedActions: ["Document venue-specific risk, ethics, threat-model, or system-evaluation expectations."]
+      recommendedActions: ["Align the paper story with the target venue's evidence expectations."]
     })
   ];
+}
+
+function venueStoryScore(input: StrictScoreInput): number {
+  let score = 4;
+  if (input.venueRequiresThreatModel && !input.hasThreatModel) score -= 2;
+  if (input.venueRequiresSystemEvaluation && !input.hasPrototype) score -= 2;
+  if (input.venueExpectsStrongMlBaselines && !input.hasStrongMlBaselines) score -= 2;
+  return Math.max(1, score);
 }
 
 function dimension(input: Omit<ScoreDimension, "rationale"> & { rationale?: string }): ScoreDimension {
@@ -253,18 +267,8 @@ function dimension(input: Omit<ScoreDimension, "rationale"> & { rationale?: stri
   };
 }
 
-function legacyDimensions(input: StrictScoreInput): Record<string, number> {
-  return {
-    problem_importance: 7,
-    novelty_after_related_work: input.highPriorWorkCollision ? 6 : input.verifiedRelatedWorkCount ? 12 : 8,
-    technical_depth: input.pureEngineeringIntegration ? 6 : 10,
-    experimental_design: input.hasExecutableExperimentPlan ? 10 : 6,
-    baseline_dataset_metric: [input.hasStrongBaseline, input.hasDatasetOrBenchmark, input.hasMetric].filter(Boolean).length * 3,
-    venue_fit: 7,
-    feasibility: input.singlePersonTwelveWeekInfeasible ? 5 : 8,
-    reproducibility_open_source_value: 4,
-    paper_story: 4
-  };
+function addCap(caps: StrictScoreResult["caps"], active: boolean, reason: string, cap: number): void {
+  if (active) caps.push({ reason, cap });
 }
 
 function rationaleForDimension(name: string, score: number, maxScore: number): string {
@@ -311,13 +315,11 @@ function escapeCell(value: string): string {
 }
 
 function actionForMissingEvidence(reason: string): string {
-  if (/related work|core related papers/i.test(reason)) return "Read and cite enough core related papers with page-level evidence.";
+  if (/related work|core papers/i.test(reason)) return "Read and cite enough CCF-A core related papers with page-level evidence.";
   if (/pdf/i.test(reason)) return "Acquire public PDFs and extract page, quote, and chunk evidence.";
-  if (/baseline/i.test(reason)) return "Identify reviewer-expected baselines and link them to evidence.";
-  if (/dataset|benchmark/i.test(reason)) return "Define the dataset or benchmark and cite supporting evidence.";
-  if (/metric/i.test(reason)) return "Specify primary and secondary metrics with evidence.";
+  if (/baseline|dataset|metric/i.test(reason)) return "Define baseline, dataset or benchmark, and primary metric together.";
   if (/collision/i.test(reason)) return "Narrow the novelty claim against the closest overlapping papers.";
-  if (/hypothesis/i.test(reason)) return "State a falsifiable scientific hypothesis.";
+  if (/research question|hypothesis|engineering/i.test(reason)) return "State a falsifiable research question beyond implementation value.";
   if (/experiment plan/i.test(reason)) return "Write an executable experiment plan tied to baselines and metrics.";
   if (/threat model/i.test(reason)) return "Write a venue-appropriate threat model.";
   if (/system evaluation|prototype/i.test(reason)) return "Build or scope a prototype with system evaluation metrics.";

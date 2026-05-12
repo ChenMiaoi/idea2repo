@@ -124,10 +124,24 @@ export const NoveltyGapAnalysisSchema = Type.Object(
   { additionalProperties: false }
 );
 
+const StrictCcfADimensionsSchema = Type.Object(
+  {
+    problem_significance: Type.Number({ minimum: 0, maximum: 10 }),
+    novelty: Type.Number({ minimum: 0, maximum: 20 }),
+    technical_depth: Type.Number({ minimum: 0, maximum: 15 }),
+    method_clarity: Type.Number({ minimum: 0, maximum: 10 }),
+    experimental_rigor: Type.Number({ minimum: 0, maximum: 20 }),
+    related_work: Type.Number({ minimum: 0, maximum: 10 }),
+    feasibility_reproducibility: Type.Number({ minimum: 0, maximum: 10 }),
+    venue_story: Type.Number({ minimum: 0, maximum: 5 })
+  },
+  { additionalProperties: false }
+);
+
 export const StrictCcfAReviewSchema = Type.Object(
   {
     total: Type.Integer({ minimum: 0, maximum: 100 }),
-    dimensions: Type.Record(Type.String(), Type.Number()),
+    dimensions: StrictCcfADimensionsSchema,
     cap_reasons: Type.Array(Type.String()),
     evidence_warnings: Type.Array(Type.String()),
     recommendations: Type.Array(Type.String())
