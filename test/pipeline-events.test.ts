@@ -29,7 +29,12 @@ test("research pipeline emits run and stage events to a sink", async () => {
     assert.ok(events.some((event) => event.type === "stage.skipped" && event.stage_id === "pdf_reading"));
     assert.ok(events.some((event) => event.type === "idea.optimized" && /LLM agent benchmark/.test(event.summary)));
     assert.ok(events.some((event) => event.type === "solution.generated" && event.artifacts.includes("docs/proposal/solution_design.md")));
-    assert.ok(events.some((event) => event.type === "score.updated" && event.score === 39));
+    const scoreEvent = events.find((event): event is Extract<(typeof events)[number], { type: "score.updated" }> => event.type === "score.updated");
+    assert.ok(scoreEvent);
+    assert.equal(scoreEvent.score, 39);
+    assert.equal(scoreEvent.score_type, "Preliminary");
+    assert.ok(scoreEvent.active_caps?.some((cap) => cap.reason === "No verified related work" && cap.cap === 45));
+    assert.match(scoreEvent.top_action ?? "", /No verified related work|No PDF read/);
     const question = events.find((event) => event.type === "question.asked") as Extract<(typeof events)[number], { type: "question.asked" }> | undefined;
     assert.ok(question);
     assert.match(question.why_it_matters, /cap|score|evidence/i);

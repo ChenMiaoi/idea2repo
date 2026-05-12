@@ -675,27 +675,20 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     metrics: survey.reviewerExpectedMetrics.length,
     timestamp: runtimeTimestamp()
   });
-  const evidence = evidenceText(evidenceRows);
-  const scoreInput: StrictScoreInput = {
-    verifiedRelatedWorkCount: verifiedPaperCount,
-    pdfReadCount: new Set(chunks.map((chunk) => chunk.paper_id)).size,
-    corePaperCount: verifiedCcfACorePaperCount,
-    ccfAGateBlocked: ccfVenueGate.preliminary_only,
+  const scoreInput = scoreInputFromArtifacts({
+    ideaBrief,
+    searchPlan,
+    survey,
+    ideaVsPriorWork,
+    evidenceRows,
     evidenceRefs: evidenceItems.map((item) => item.id),
-    hasStrongBaseline: survey.reviewerExpectedBaselines.length > 0,
-    hasDatasetOrBenchmark: survey.reviewerExpectedDatasets.length > 0,
-    hasMetric: survey.reviewerExpectedMetrics.length > 0,
-    highPriorWorkCollision: ideaVsPriorWork.collisionRisk === "high",
-    hasScientificHypothesis: /\bhypothesis\b|\bclaim\b/.test(evidence),
-    hasExecutableExperimentPlan: evidence.includes("experiment") && evidence.includes("baseline") && evidence.includes("metric"),
-    singlePersonTwelveWeekInfeasible: (options.resources ?? []).some((resource) => /single|solo|one/i.test(resource)) && (options.timelineWeeks ?? 12) <= 12,
-    venueRequiresThreatModel: /ccs|security|s&p|ndss/i.test(options.venue ?? ""),
-    hasThreatModel: evidence.includes("threat model"),
-    venueRequiresSystemEvaluation: /osdi|sosp|sigcomm|atc|systems/i.test(options.venue ?? ""),
-    hasPrototype: evidence.includes("prototype"),
-    venueExpectsStrongMlBaselines: /neurips|icml|iclr|acl/i.test(options.venue ?? ""),
-    hasStrongMlBaselines: evidence.includes("baseline")
-  };
+    verifiedPaperCount,
+    verifiedCcfACorePaperCount,
+    ccfGateBlocked: ccfVenueGate.preliminary_only,
+    venue: options.venue,
+    resources: options.resources,
+    timelineWeeks: options.timelineWeeks
+  });
   const score = await toolRegistry.execute<StrictScoreInput, StrictScoreResult>("ccf_a.score", scoreInput, toolContext);
   if (options.outputRoot) {
     await appendScoreSnapshot(outputRoot, scoreSnapshotFromStrictScore({
@@ -712,6 +705,9 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     score: score.total,
     max_score: 100,
     confidence: score.confidence,
+    score_type: score.score_type,
+    active_caps: score.caps,
+    top_action: topScoreAction(score),
     hard_blockers: score.caps.map((cap) => cap.reason),
     timestamp: runtimeTimestamp()
   });
@@ -732,7 +728,7 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
       stage_id: "ccf_a_strict_scoring",
       title: "Strict CCF-A score capped by evidence",
       rationale_summary: `${ccfVenueGate.preliminary_only ? "Preliminary score" : "Strict score"} is ${score.total}/100 with caps: ${score.caps.map((cap) => cap.reason).join("; ") || "none"}.`,
-      inputs_considered: [`verified_papers=${verifiedPaperCount}`, `verified_ccf_a_core_papers=${verifiedCcfACorePaperCount}`, `ccf_a_core_candidates=${ccfVenueGate.eligible_core_count}`, `pdf_chunks=${chunks.length}`, `collision=${novelty.collision_risk}`],
+      inputs_considered: [`verified_paper_notes=${verifiedPaperCount}`, `verified_ccf_a_core_papers=${verifiedCcfACorePaperCount}`, `ccf_a_core_candidates=${ccfVenueGate.eligible_core_count}`, `baseline_signals=${survey.reviewerExpectedBaselines.length}`, `dataset_signals=${survey.reviewerExpectedDatasets.length}`, `metric_signals=${survey.reviewerExpectedMetrics.length}`, `experiment_protocol=${scoreInput.hasExecutableExperimentPlan ? "complete" : "incomplete"}`, `collision=${ideaVsPriorWork.collisionRisk}`],
       evidence_refs: [{ artifact: "docs/diagnosis/ccf_a_strict_scorecard.md" }, { artifact: "docs/reference/claim_evidence_matrix.csv" }],
       alternatives: [{ option: "Score from ambition only", why_not: "The strict rubric caps claims without verified related-work and PDF evidence." }],
       confidence: hasVerifiedPdfEvidence ? "medium" : "high"
@@ -2659,6 +2655,102 @@ function verifiedQualifiedCcfACorePaperCount(candidates: PaperCandidate[], rows:
       .filter((row) => row.status === "verified" && row.page && row.quote && row.chunk_id && qualifiedIds.has(safePaperId(row.paper_id)))
       .map((row) => safePaperId(row.paper_id))
   ).size;
+}
+
+function scoreInputFromArtifacts(input: {
+  ideaBrief: IdeaBrief;
+  searchPlan: SearchPlan;
+  survey: RelatedWorkSurvey;
+  ideaVsPriorWork: IdeaVsPriorWork;
+  evidenceRows: ReturnType<typeof extractEvidenceRows>;
+  evidenceRefs: string[];
+  verifiedPaperCount: number;
+  verifiedCcfACorePaperCount: number;
+  ccfGateBlocked: boolean;
+  venue?: string;
+  resources?: string[];
+  timelineWeeks?: number;
+}): StrictScoreInput {
+  const hasStrongBaseline = input.survey.reviewerExpectedBaselines.length > 0;
+  const hasDatasetOrBenchmark = input.survey.reviewerExpectedDatasets.length > 0;
+  const hasMetric = input.survey.reviewerExpectedMetrics.length > 0;
+  const protocol = extractExperimentProtocolCompleteness({
+    evidenceRows: input.evidenceRows,
+    hasStrongBaseline,
+    hasDatasetOrBenchmark,
+    hasMetric
+  });
+  const evidence = evidenceText(input.evidenceRows);
+  const proposalSignals = [
+    input.ideaBrief.problem,
+    input.ideaBrief.idea_summary,
+    input.ideaBrief.evaluation_keywords.join(" "),
+    input.searchPlan.stop_condition,
+    ...input.searchPlan.baseline_queries.map((query) => `${query.query} ${query.purpose}`),
+    ...input.searchPlan.dataset_metric_queries.map((query) => `${query.query} ${query.purpose}`)
+  ].join(" ").toLowerCase();
+  const venue = input.venue ?? "";
+  return {
+    verifiedRelatedWorkCount: input.verifiedPaperCount,
+    pdfReadCount: input.verifiedPaperCount,
+    corePaperCount: input.verifiedCcfACorePaperCount,
+    ccfAGateBlocked: input.ccfGateBlocked,
+    evidenceRefs: input.evidenceRefs,
+    hasStrongBaseline,
+    hasDatasetOrBenchmark,
+    hasMetric,
+    highPriorWorkCollision: input.ideaVsPriorWork.collisionRisk === "high",
+    hasScientificHypothesis: hasAnyTerm(`${proposalSignals} ${evidence}`, ["hypothesis", "research question", "claim", "testable", "prove"]),
+    hasExecutableExperimentPlan: protocol.complete,
+    singlePersonTwelveWeekInfeasible: (input.resources ?? []).some((resource) => /single|solo|one/i.test(resource)) && (input.timelineWeeks ?? 12) <= 12,
+    venueRequiresThreatModel: /ccs|security|s&p|ndss/i.test(venue),
+    hasThreatModel: hasAnyTerm(evidence, ["threat model", "adversary model", "security threat"]),
+    venueRequiresSystemEvaluation: /osdi|sosp|sigcomm|atc|systems/i.test(venue),
+    hasPrototype: hasAnyTerm(evidence, ["prototype", "implementation", "system evaluation", "artifact"]),
+    venueExpectsStrongMlBaselines: /neurips|icml|iclr|acl/i.test(venue),
+    hasStrongMlBaselines: hasStrongBaseline && hasAnyTerm(evidence, ["baseline", "state-of-the-art", "sota", "comparison"])
+  };
+}
+
+function extractExperimentProtocolCompleteness(input: {
+  evidenceRows: ReturnType<typeof extractEvidenceRows>;
+  hasStrongBaseline: boolean;
+  hasDatasetOrBenchmark: boolean;
+  hasMetric: boolean;
+}): { complete: boolean; protocolRows: ReturnType<typeof extractEvidenceRows> } {
+  const protocolRows = input.evidenceRows.filter((row) =>
+    row.status === "verified" &&
+    Boolean(row.page && row.quote && row.chunk_id) &&
+    hasAnyTerm(`${row.claim_type} ${row.claim} ${row.quote ?? ""}`, [
+      "protocol",
+      "ablation",
+      "reproducibility",
+      "replication",
+      "experimental setup",
+      "evaluation protocol",
+      "implementation details",
+      "benchmark protocol",
+      "controlled study",
+      "seed",
+      "command"
+    ])
+  );
+  return {
+    protocolRows,
+    complete: input.hasStrongBaseline && input.hasDatasetOrBenchmark && input.hasMetric && protocolRows.length > 0
+  };
+}
+
+function topScoreAction(score: StrictScoreResult): string | undefined {
+  const cap = [...score.caps].sort((left, right) => left.cap - right.cap)[0];
+  if (cap) return `Work the top blocker: ${cap.reason}.`;
+  const weakness = score.soft_weaknesses[0];
+  return weakness ? `Address weakest score evidence: ${weakness}.` : undefined;
+}
+
+function hasAnyTerm(text: string, terms: string[]): boolean {
+  const normalized = text.toLowerCase();
+  return terms.some((term) => normalized.includes(term));
 }
 
 function verifiedPaperRecords(candidates: PaperCandidate[], manifest: PdfManifestRecord[], rows: ReturnType<typeof extractEvidenceRows>): PaperRecord[] {

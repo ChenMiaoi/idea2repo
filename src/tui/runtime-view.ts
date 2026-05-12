@@ -24,6 +24,9 @@ export type TuiRuntimeResearchSummary = {
     score: number;
     maxScore: number;
     confidence: number;
+    scoreType?: "Preliminary" | "Evidence-backed" | "Submission-ready";
+    activeCaps: Array<{ reason: string; cap: number }>;
+    topAction?: string;
   };
   fatalBlockers: string[];
   paperStats: {
@@ -227,7 +230,16 @@ function researchSummaryFor(snapshot: TuiRuntimeSnapshot): TuiRuntimeResearchSum
   const latestSolution = solutions.at(-1);
   return {
     ideaSummary: idea?.summary ?? (snapshot.artifacts.some((artifact) => /docs\/idea\/idea_brief\.md$/i.test(artifact.path.replace(/\\/g, "/"))) ? "Idea brief written." : undefined),
-    currentScore: score ? { score: score.score, maxScore: score.max_score, confidence: score.confidence } : undefined,
+    currentScore: score
+      ? {
+          score: score.score,
+          maxScore: score.max_score,
+          confidence: score.confidence,
+          scoreType: score.score_type,
+          activeCaps: score.active_caps ?? [],
+          topAction: score.top_action
+        }
+      : undefined,
     fatalBlockers: score?.hard_blockers ?? [],
     paperStats: {
       found: papers.length,
@@ -286,6 +298,7 @@ function nextUserActionFor(input: {
   if (input.pendingApproval) return `Approve or deny ${input.pendingApproval.action}.`;
   if (input.blockedStage) return `Resolve blocker for ${input.blockedStage.stage_id ?? input.blockedStage.id}.`;
   if (input.latestQuestion) return `Answer: ${input.latestQuestion.question}`;
+  if (input.score?.top_action) return input.score.top_action;
   if (input.score?.hard_blockers.length) return `Work the top blocker: ${input.score.hard_blockers[0]}.`;
   if (input.activeStage) return input.activeStage.next_actions[0] ?? `Wait for ${input.activeStage.stage_id ?? input.activeStage.id}.`;
   if (input.snapshot.status === "completed") return "Review generated reports, score, and reviewer tasks.";

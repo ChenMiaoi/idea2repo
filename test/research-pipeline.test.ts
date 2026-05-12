@@ -662,6 +662,43 @@ test("research pipeline upgrades deterministic PDF notes to required closure sch
   }
 });
 
+test("research pipeline keeps executable experiment cap when evidence has only baseline dataset and metric", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-pipeline-protocol-cap-"));
+  const idea = "Build an LLM agent benchmark.";
+  const quote = "Comparison evidence names a baseline on a dataset with an accuracy metric and limitation.";
+  try {
+    await writeValidPdfProvenance(root, "comparison-paper", quote);
+    const candidates = [pipelineCandidate("comparison-paper", "Comparison Agent Benchmark", "NeurIPS", ["https://arxiv.org/pdf/comparison-paper"])];
+    await writeArtifact(root, "docs/relative_work/candidates.json", JSON.stringify(candidates, null, 2) + "\n");
+    await writeArtifact(root, "docs/relative_work/search_report.md", "# Search Report\n\nOne PDF-backed paper with evaluation nouns but no protocol details.\n");
+    let state = createResearchPipelineState(idea, root);
+    state = markStage(state, "literature_search", "completed");
+    state = markStage(state, "pdf_acquisition", "completed");
+    await writeResearchPipelineState(root, state);
+    const events: Array<{ type: string; [key: string]: unknown }> = [];
+
+    const result = await runResearchPipeline(idea, {
+      outputRoot: root,
+      provider: "offline",
+      strictCcfA: true,
+      events: {
+        emit: (event) => {
+          events.push(event);
+        }
+      }
+    });
+
+    const scorecard = result.artifacts["docs/diagnosis/ccf_a_strict_scorecard.md"] ?? "";
+    assert.doesNotMatch(scorecard, /No baseline\/dataset\/metric/);
+    assert.match(scorecard, /No executable experiment plan/);
+    const scoreEvent = events.find((event) => event.type === "score.updated");
+    assert.equal(scoreEvent?.score_type, "Preliminary");
+    assert.ok((scoreEvent?.active_caps as Array<{ reason: string; cap: number }> | undefined)?.some((cap) => cap.reason === "No executable experiment plan" && cap.cap === 65));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("research pipeline does not write paper notes for all-non-core fallback candidates", async () => {
   const root = await mkdtemp(join(tmpdir(), "idea2repo-pipeline-non-core-notes-"));
   const idea = "Build an LLM agent benchmark.";

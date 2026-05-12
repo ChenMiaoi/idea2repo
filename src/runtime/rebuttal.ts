@@ -174,6 +174,9 @@ export async function resolveRebuttalTask(
     score: score.total,
     max_score: 100,
     confidence: score.confidence,
+    score_type: score.score_type,
+    active_caps: score.caps,
+    top_action: topScoreAction(score),
     hard_blockers: score.caps.map((cap) => cap.reason),
     timestamp: runtimeTimestamp()
   });
@@ -187,6 +190,13 @@ export async function resolveRebuttalTask(
     timestamp: runtimeTimestamp()
   });
   return { task: resolved, tasks: finalTasks, score, score_snapshot: snapshot };
+}
+
+function topScoreAction(score: StrictScoreResult): string | undefined {
+  const cap = [...score.caps].sort((left, right) => left.cap - right.cap)[0];
+  if (cap) return `Work the top blocker: ${cap.reason}.`;
+  const weakness = score.soft_weaknesses[0];
+  return weakness ? `Address weakest score evidence: ${weakness}.` : undefined;
 }
 
 export function reviewerReportMarkdown(report: ReviewerReport, tasks: RebuttalTask[] = []): string {

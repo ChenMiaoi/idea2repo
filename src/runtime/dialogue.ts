@@ -247,10 +247,20 @@ export async function answerClarificationQuestion(
     score: finalResult.score.total,
     max_score: 100,
     confidence: finalResult.score.confidence,
+    score_type: finalResult.score.score_type,
+    active_caps: finalResult.score.caps,
+    top_action: topScoreAction(finalResult.score),
     hard_blockers: finalResult.score.caps.map((cap) => cap.reason),
     timestamp
   });
   return finalResult;
+}
+
+function topScoreAction(score: StrictScoreResult): string | undefined {
+  const cap = [...score.caps].sort((left, right) => left.cap - right.cap)[0];
+  if (cap) return `Work the top blocker: ${cap.reason}.`;
+  const weakness = score.soft_weaknesses[0];
+  return weakness ? `Address weakest score evidence: ${weakness}.` : undefined;
 }
 
 export function applyClarificationAnswerToScoreInput(input: StrictScoreInput, question: ClarificationQuestion, answer: string): StrictScoreInput {

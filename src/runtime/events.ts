@@ -157,6 +157,9 @@ export type Idea2RepoEvent =
       score: number;
       max_score: number;
       confidence: number;
+      score_type?: "Preliminary" | "Evidence-backed" | "Submission-ready";
+      active_caps?: Array<{ reason: string; cap: number }>;
+      top_action?: string;
       hard_blockers: string[];
       timestamp: string;
     }

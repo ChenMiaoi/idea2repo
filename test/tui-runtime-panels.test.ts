@@ -187,6 +187,9 @@ test("research cockpit hides raw trace outside Debug inspector tab", () => {
       score: 62,
       max_score: 100,
       confidence: 0.7,
+      score_type: "Evidence-backed",
+      active_caps: [{ reason: "No reproduction yet", cap: 65 }],
+      top_action: "Work the top blocker: No reproduction yet.",
       hard_blockers: ["No reproduction yet"],
       timestamp: "2026-01-01T00:00:04Z"
     },
@@ -210,6 +213,9 @@ test("research cockpit hides raw trace outside Debug inspector tab", () => {
     }
   ];
   for (const event of events) snapshot = applyTuiRuntimeEvent(snapshot, event);
+  assert.equal(snapshot.researchSummary.currentScore?.scoreType, "Evidence-backed");
+  assert.deepEqual(snapshot.researchSummary.currentScore?.activeCaps, [{ reason: "No reproduction yet", cap: 65 }]);
+  assert.equal(snapshot.researchSummary.currentScore?.topAction, "Work the top blocker: No reproduction yet.");
 
   const defaultText = textContent(ResearchCockpit({ snapshot, height: 18, width: 120, activeInspectorTab: "paper_notes" }));
   assert.match(defaultText, /Research Cockpit/);
