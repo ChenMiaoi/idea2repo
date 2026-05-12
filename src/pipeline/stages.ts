@@ -129,6 +129,8 @@ export const researchStages: ResearchStageDefinition[] = [
     deterministic: false,
     artifactPaths: [
       "docs/proposal/revised_idea.md",
+      "docs/proposal/strict_execution_plan.md",
+      "docs/proposal/solution_design.md",
       "docs/proposal/experiment_plan.md",
       "docs/proposal/first_4_week_plan.md",
       "docs/proposal/paper_story.md"

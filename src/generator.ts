@@ -948,6 +948,9 @@ function buildFiles(options: {
     "docs/execution_plan/experiment_checklist.md": experimentChecklist(route.domain.key),
     "docs/meeting/weekly_update_template.md": weeklyUpdateTemplate(),
     "docs/meeting/advisor_report.md": advisorReport(options.diagnosis),
+    "docs/proposal/revised_idea.md": generatorRevisedIdea(options.diagnosis),
+    "docs/proposal/strict_execution_plan.md": generatorStrictExecutionPlan(options.diagnosis, options.timelineWeeks, options.resources),
+    "docs/proposal/solution_design.md": generatorSolutionDesign(options.diagnosis),
     "docs/proposal/first_4_week_plan.md": firstFourWeekPlan(options.diagnosis),
     "docs/proposal/paper_story.md": paperStory(options.diagnosis),
     "docs/runtime/platform_notes.md": platformNotes(),
@@ -1530,6 +1533,186 @@ ${markdownList(diagnosis.required_evidence)}
 `;
 }
 
+function generatorRevisedIdea(diagnosis: Diagnosis): string {
+  const route = diagnosis.routes[0]!;
+  const claim = generatorOneSentenceClaim(diagnosis);
+  return `# Revised Idea
+
+## One-Sentence Claim
+
+${claim}
+
+## Hypothesis
+
+${generatorHypothesis(diagnosis)}
+
+## Prior-Work Delta
+
+${diagnosis.revised_plan_text}
+
+## Target Venue
+
+${route.domain.primary_venues[0] ?? route.domain.label}
+
+## Contribution Type
+
+${generatorContributionType(diagnosis)}
+
+## Revised Direction
+
+${diagnosis.revised_plan_text}
+
+## Proof Obligations
+
+${markdownList(generatorProofObligations(diagnosis))}
+
+## Baselines
+
+- Identify reviewer-expected baselines from verified paper notes.
+
+## Datasets
+
+- Lock at least one documented dataset or benchmark.
+
+## Metrics
+
+- Define primary and secondary reviewer-facing metrics.
+`;
+}
+
+function generatorStrictExecutionPlan(diagnosis: Diagnosis, weeks: number, resources: string[]): string {
+  const route = diagnosis.routes[0]!;
+  return `# Strict Execution Plan
+
+## One-Sentence Claim
+
+${generatorOneSentenceClaim(diagnosis)}
+
+## Hypothesis
+
+${generatorHypothesis(diagnosis)}
+
+## Prior-Work Delta
+
+${diagnosis.revised_plan_text}
+
+## Target Venue
+
+${route.domain.primary_venues[0] ?? route.domain.label}
+
+## Contribution Type
+
+${generatorContributionType(diagnosis)}
+
+## Proof Obligations
+
+${markdownList(generatorProofObligations(diagnosis))}
+
+## 12-Week Execution Table
+
+| Week | Focus | Exit Evidence |
+| --- | --- | --- |
+${Array.from({ length: 12 }, (_, index) => generatorExecutionWeekRow(index + 1)).join("\n")}
+
+## Baselines
+
+- Identify reviewer-expected baselines from verified paper notes.
+
+## Datasets
+
+- Lock at least one documented dataset or benchmark.
+
+## Metrics
+
+- Define primary and secondary reviewer-facing metrics.
+
+## Ablations
+
+- Remove each claimed method component.
+
+## Failure Cases
+
+- Collect negative examples and boundary conditions.
+
+## Reproducibility Commands / Paths
+
+- Command: npm run typecheck
+- Command: npm test
+- Path: docs/reference/paper_notes/
+- Path: docs/reference/claim_evidence_matrix.csv
+- Path: docs/diagnosis/ccf_a_strict_scorecard.md
+- Timeline: ${weeks} weeks
+- Resources: ${resources.join("; ") || "unspecified"}
+`;
+}
+
+function generatorSolutionDesign(diagnosis: Diagnosis): string {
+  const route = diagnosis.routes[0]!;
+  return `# Solution Design
+
+## One-Sentence Claim
+
+${generatorOneSentenceClaim(diagnosis)}
+
+## Hypothesis
+
+${generatorHypothesis(diagnosis)}
+
+## Prior-Work Delta
+
+${diagnosis.revised_plan_text}
+
+## Target Venue
+
+${route.domain.primary_venues[0] ?? route.domain.label}
+
+## Contribution Type
+
+${generatorContributionType(diagnosis)}
+
+## Proposed Solution
+
+${diagnosis.revised_plan_text}
+
+## Method Components
+
+- Scope: ${generatorContributionType(diagnosis)}
+- Input contract: verified related-work evidence, datasets or benchmarks, and baseline definitions.
+- Output contract: reproducible results, ablations, failure cases, and scorecard updates tied to artifact paths.
+
+## Proof Obligations
+
+${markdownList(generatorProofObligations(diagnosis))}
+
+## Baselines
+
+- Identify reviewer-expected baselines from verified paper notes.
+
+## Datasets
+
+- Lock at least one documented dataset or benchmark.
+
+## Metrics
+
+- Define primary and secondary reviewer-facing metrics.
+
+## Ablations
+
+- Remove each claimed method component.
+
+## Failure Cases
+
+- Collect negative examples and boundary conditions.
+
+## Reproducibility Commands / Paths
+
+- Command: npm run typecheck
+- Command: npm test
+- Path: docs/reference/paper_notes/
+- Path: docs/diagnosis/ccf_a_strict_scorecard.md
+`;
+}
+
 function paperStory(diagnosis: Diagnosis): string {
   const route = diagnosis.routes[0]!;
   return `# Paper Story
@@ -1546,6 +1729,52 @@ ${route.domain.label} reviewer expecting CCF-A-level novelty, evidence, and feas
 4. Present baseline, dataset, metric, ablation, and failure-case evidence.
 5. Discuss limitations before making claims broader than the evidence.
 `;
+}
+
+function generatorOneSentenceClaim(diagnosis: Diagnosis): string {
+  return `This project claims that ${diagnosis.revised_plan_text} can become CCF-A defensible once the required evidence gates are closed.`;
+}
+
+function generatorHypothesis(diagnosis: Diagnosis): string {
+  return diagnosis.parsed_idea.expected_contribution === "TODO: state the expected scientific contribution."
+    ? "A measurable method or benchmark change will improve a reviewer-relevant metric over verified baselines."
+    : diagnosis.parsed_idea.expected_contribution;
+}
+
+function generatorContributionType(diagnosis: Diagnosis): string {
+  const text = `${diagnosis.parsed_idea.raw_text} ${diagnosis.revised_plan_text}`.toLowerCase();
+  if (/\bbenchmark|dataset|evaluation suite\b/.test(text)) return "Benchmark / evaluation contribution";
+  if (/\bsystem|runtime|tool|platform\b/.test(text)) return "System contribution with empirical evaluation";
+  if (/\bmethod|algorithm|model|approach\b/.test(text)) return "Method contribution with controlled experiments";
+  return "Method / benchmark contribution";
+}
+
+function generatorProofObligations(diagnosis: Diagnosis): string[] {
+  return [
+    ...diagnosis.required_evidence,
+    "Verify the prior-work delta with page, quote, and chunk evidence.",
+    "Beat or explain reviewer-expected baselines.",
+    "Report datasets, metrics, ablations, failure cases, seeds, commands, configs, and output paths."
+  ];
+}
+
+function generatorExecutionWeekRow(week: number): string {
+  const rows = [
+    ["Finalize search plan, candidate set, and PDF provenance.", "docs/relative_work/search_plan.md; docs/reference/pdf_manifest.json"],
+    ["Write verified paper notes.", "docs/reference/paper_notes/"],
+    ["Synthesize related work and novelty delta.", "docs/relative_work/survey.md; docs/relative_work/idea_vs_prior_work.md"],
+    ["Lock strict proposal artifacts.", "docs/proposal/revised_idea.md; docs/proposal/strict_execution_plan.md; docs/proposal/solution_design.md"],
+    ["Reproduce strongest baseline.", "src/baselines/; results/baseline/"],
+    ["Implement minimal method or benchmark change.", "src/method/; src/evaluation/"],
+    ["Run main experiments.", "experiments/main/; results/main/"],
+    ["Run ablations.", "experiments/ablations/; results/ablations/"],
+    ["Collect failure cases.", "experiments/failure_cases/; results/failure_cases/"],
+    ["Refresh scorecard and reviewer tasks.", "docs/diagnosis/ccf_a_strict_scorecard.md; docs/diagnosis/rebuttal_tasks.md"],
+    ["Draft paper sections from evidence-backed claims.", "paper/sections/"],
+    ["Run reproducibility and submission packaging checks.", "paper/submission/; docs/submission/"]
+  ];
+  const [focus, evidence] = rows[week - 1] ?? rows.at(-1)!;
+  return `| ${week} | ${focus} | ${evidence} |`;
 }
 
 function milestones(): string {

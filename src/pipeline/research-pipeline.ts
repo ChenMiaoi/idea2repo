@@ -39,7 +39,7 @@ import { diagnoseIdea } from "../scoring.js";
 import { exists } from "../state.js";
 import { evidenceRowsCsv, evidenceText, extractEvidenceRows, trustedEvidenceRows, type ClaimEvidenceRow } from "../skills/analysis/evidence-extract.js";
 import { strictScoreMarkdown, type StrictScoreInput, type StrictScoreResult } from "../skills/analysis/ccf-a-score.js";
-import { experimentPlanMarkdown, feasibilityMarkdown, revisedIdeaMarkdown } from "../skills/analysis/idea-refine.js";
+import { experimentPlanMarkdown, feasibilityMarkdown, solutionDesignMarkdown, strictExecutionPlanMarkdown, strictRevisedIdeaMarkdown } from "../skills/analysis/idea-refine.js";
 import { buildIdeaVsPriorWork, type IdeaVsPriorWork } from "../skills/analysis/idea-vs-prior.js";
 import { assessNovelty, noveltyMatrixMarkdown } from "../skills/analysis/novelty-matrix.js";
 import { relatedWorkMatrixCsv, topicClustersMarkdown } from "../skills/analysis/related-work-matrix.js";
@@ -906,7 +906,11 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
         ? `Revised the idea around hypothesis "${agentStrategy.central_hypothesis}" with ${agentStrategy.baselines.length} baselines, ${agentStrategy.datasets.length} datasets, and ${agentStrategy.metrics.length} metrics.`
         : "Better-idea synthesis was blocked until verified related work, novelty analysis, and PDF-backed evidence are available.",
       inputs_considered: [`verified_pdf_evidence=${hasVerifiedPdfEvidence}`, `related_work_available=${relatedWorkAvailable}`, `novelty_available=${noveltyAvailable}`],
-      evidence_refs: [{ artifact: "docs/proposal/revised_idea.md" }, { artifact: "docs/proposal/experiment_plan.md" }],
+      evidence_refs: [
+        { artifact: "docs/proposal/revised_idea.md" },
+        { artifact: "docs/proposal/strict_execution_plan.md" },
+        { artifact: "docs/proposal/solution_design.md" }
+      ],
       alternatives: [{ option: "Keep the initial idea unchanged", why_not: "The runtime plan requires evidence-driven idea revision when enough related-work and novelty context exists." }],
       confidence: agentStrategy ? "medium" : "high"
     });
@@ -1085,8 +1089,25 @@ function pipelineArtifacts(input: {
   const relatedWorkReport = input.agentRelatedWork && verifiedPapers.length ? agentRelatedWorkMarkdown(input.agentRelatedWork) : topicClustersMarkdown(evidenceBackedCandidates);
   const noveltyReport = input.agentNovelty ? `${noveltyMatrixMarkdown(input.novelty)}\n## Agent Novelty Review\n\n${agentNoveltyMarkdown(input.agentNovelty)}` : noveltyMatrixMarkdown(input.novelty);
   const feasibilityReport = input.agentFeasibility ? agentFeasibilityMarkdown(input.agentFeasibility) : feasibilityMarkdown(input.ideaBrief.resource_constraints, 12);
+  const proposalInput = {
+    idea: input.idea,
+    novelty: input.novelty,
+    score: input.score,
+    targetVenue: input.ideaBrief.target_venues[0],
+    contributionType: inferPipelineContributionType(input.ideaBrief),
+    baselines: input.baselineRecommendations,
+    datasets: input.datasetRecommendations,
+    metrics: input.metricRecommendations,
+    ablations: input.agentStrategy?.ablations,
+    failureCases: input.agentStrategy?.failure_cases,
+    resources: input.ideaBrief.resource_constraints,
+    timelineWeeks: 12,
+    strategy: input.agentStrategy
+  };
   const experimentPlan = `${experimentPlanMarkdown()}\n## Evidence Status\n\n- Baselines evidence-backed: ${input.baselineRecommendations.length ? "yes" : "no"}\n- Datasets evidence-backed: ${input.datasetRecommendations.length ? "yes" : "no"}\n- Metrics evidence-backed: ${input.metricRecommendations.length ? "yes" : "no"}\n`;
-  const revisedIdea = input.agentStrategy ? agentStrategyRevisedIdeaMarkdown(input.agentStrategy) : revisedIdeaMarkdown(input.idea, input.novelty, input.score);
+  const revisedIdea = strictRevisedIdeaMarkdown(proposalInput);
+  const strictExecutionPlan = strictExecutionPlanMarkdown(proposalInput);
+  const solutionDesign = solutionDesignMarkdown(proposalInput);
   const firstFourWeekPlan = input.agentStrategy ? agentFirstFourWeekPlanMarkdown(input.agentStrategy) : "# First 4 Week Plan\n\n1. Plan search and triage candidates.\n2. Acquire and read PDFs.\n3. Build evidence matrices.\n4. Lock experiments and paper story.\n";
   const paperStory = input.agentStrategy ? `# Paper Story\n\n${input.agentStrategy.paper_story}\n` : "# Paper Story\n\nPaper story is blocked until related work, novelty, and experiment evidence are verified.\n";
   const scorecard = `${strictScoreMarkdown(input.score)}${input.agentScore ? `\n## Agent Review\n\n${agentScoreMarkdown(input.agentScore)}` : ""}\n## CCF-A Venue Gate\n\n- Qualified CCF-A main/full core papers: ${input.ccfVenueGate.eligible_core_count} / ${input.ccfVenueGate.required_core_count}\n- Scoring mode: ${input.ccfVenueGate.preliminary_only ? "preliminary only" : "verified strict CCF-A"}\n\nStrict mode: ${input.strict && !input.ccfVenueGate.preliminary_only ? "enabled" : input.strict ? "preliminary-only (CCF-A venue gate blocked)" : "disabled"}\n`;
@@ -1137,6 +1158,8 @@ function pipelineArtifacts(input: {
     "docs/proposal/experiment_plan.md": experimentPlan,
     "docs/execution_plan/12_week_plan.md": executionPlan,
     "docs/proposal/revised_idea.md": revisedIdea,
+    "docs/proposal/strict_execution_plan.md": strictExecutionPlan,
+    "docs/proposal/solution_design.md": solutionDesign,
     "docs/proposal/first_4_week_plan.md": firstFourWeekPlan,
     "docs/proposal/paper_story.md": paperStory,
     "docs/diagnosis/ccf_a_strict_scorecard.md": scorecard,
@@ -1298,6 +1321,9 @@ ${numberedMarkdown(input.score.path_to_80)}
 - \`reports/evidence_ledger.md\`
 - \`plans/12_week_execution_plan.md\`
 - \`plans/experiment_plan.md\`
+- \`docs/proposal/revised_idea.md\`
+- \`docs/proposal/strict_execution_plan.md\`
+- \`docs/proposal/solution_design.md\`
 - \`paper/main.tex\`
 - \`paper/abstract.md\`
 - \`paper/related_work.md\`
@@ -1406,6 +1432,14 @@ ${numberedMarkdown(strategySteps)}
 
 ${markdownList(input.score.hard_blockers)}
 `;
+}
+
+function inferPipelineContributionType(brief: IdeaBrief): string {
+  const keywords = [...brief.method_keywords, ...brief.task_keywords, brief.idea_summary].join(" ").toLowerCase();
+  if (/\bbenchmark|dataset|evaluation suite\b/.test(keywords)) return "Benchmark / evaluation contribution";
+  if (/\bsystem|runtime|tool|platform\b/.test(keywords)) return "System contribution with empirical evaluation";
+  if (/\bmethod|algorithm|model|approach\b/.test(keywords)) return "Method contribution with controlled experiments";
+  return "Method / benchmark contribution";
 }
 
 function paperAbstractMarkdown(input: PipelineArtifactInput): string {

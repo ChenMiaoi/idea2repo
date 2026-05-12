@@ -40,7 +40,7 @@ import { buildRelatedWorkSurvey, type RelatedWorkSurvey } from "./skills/analysi
 import { assessNovelty, noveltyMatrixMarkdown } from "./skills/analysis/novelty-matrix.js";
 import { buildIdeaVsPriorWork, type IdeaVsPriorWork } from "./skills/analysis/idea-vs-prior.js";
 import { strictCcfAScore, strictScoreMarkdown } from "./skills/analysis/ccf-a-score.js";
-import { experimentPlanMarkdown, feasibilityMarkdown, revisedIdeaMarkdown } from "./skills/analysis/idea-refine.js";
+import { experimentPlanMarkdown, feasibilityMarkdown, solutionDesignMarkdown, strictExecutionPlanMarkdown, strictRevisedIdeaMarkdown } from "./skills/analysis/idea-refine.js";
 import { loadTemplateProfiles, validateTemplateProfiles } from "./skills/templates/catalog.js";
 import { resolveTemplateProfile, templateDecisionMarkdown } from "./skills/templates/resolve.js";
 import { renderPaper } from "./skills/templates/render.js";
@@ -316,7 +316,20 @@ async function commandRefine(argv: string[]): Promise<number> {
   if (warnings.length) console.log(`Warnings: ${warnings.length}`);
   for (const [relativePath, content] of Object.entries(noteArtifacts)) await writeText(ensureChild(root, relativePath), content);
   await writeCliRelatedWorkArtifacts(root, relatedWorkArtifacts);
-  await writeText(ensureChild(root, "docs/proposal/revised_idea.md"), revisedIdeaMarkdown(idea, novelty, score));
+  const proposalInput = {
+    idea,
+    novelty,
+    score,
+    targetVenue: stringFlag(parsed, "venue") ?? undefined,
+    baselines: relatedWorkArtifacts.survey.reviewerExpectedBaselines,
+    datasets: relatedWorkArtifacts.survey.reviewerExpectedDatasets,
+    metrics: relatedWorkArtifacts.survey.reviewerExpectedMetrics,
+    resources: valuesFlag(parsed, "resource"),
+    timelineWeeks: numberFlag(parsed, "weeks", 12)
+  };
+  await writeText(ensureChild(root, "docs/proposal/revised_idea.md"), strictRevisedIdeaMarkdown(proposalInput));
+  await writeText(ensureChild(root, "docs/proposal/strict_execution_plan.md"), strictExecutionPlanMarkdown(proposalInput));
+  await writeText(ensureChild(root, "docs/proposal/solution_design.md"), solutionDesignMarkdown(proposalInput));
   await writeText(ensureChild(root, "docs/proposal/experiment_plan.md"), experimentPlanMarkdown());
   await writeText(ensureChild(root, "docs/diagnosis/feasibility_report.md"), feasibilityMarkdown(valuesFlag(parsed, "resource"), numberFlag(parsed, "weeks", 12)));
   console.log(`Revised idea written: ${ensureChild(root, "docs/proposal/revised_idea.md")}`);

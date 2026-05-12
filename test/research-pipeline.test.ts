@@ -60,6 +60,12 @@ test("offline research pipeline returns resumable stage state and core artifacts
   assert.ok(result.artifacts["docs/diagnosis/clarification_questions.md"]?.includes("Why it matters"));
   assert.ok(result.artifacts["docs/diagnosis/feasibility_report.md"]);
   assert.ok(result.artifacts["docs/proposal/revised_idea.md"]);
+  assert.match(result.artifacts["docs/proposal/revised_idea.md"] ?? "", /One-Sentence Claim/);
+  assert.match(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /12-Week Execution Table/);
+  assert.match(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /Reproducibility Commands \/ Paths/);
+  assert.match(result.artifacts["docs/proposal/solution_design.md"] ?? "", /Solution Design/);
+  assert.match(result.artifacts["docs/proposal/solution_design.md"] ?? "", /Proof Obligations/);
+  assert.doesNotMatch(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /^\s*\{/m);
   assert.ok(result.artifacts["docs/submission/template_compliance_report.md"]?.includes("Status: passed"));
   assert.notEqual(result.artifacts["docs/submission/venue_template_profile.json"], "{}\n");
   assert.ok(result.artifacts["paper/main.tex"]);
@@ -1239,6 +1245,8 @@ test("research pipeline rejects old strategy snapshots missing current artifacts
     });
     assert.doesNotMatch(result.artifacts["docs/proposal/revised_idea.md"] ?? "", /STALE_OLD_STRATEGY/);
     assert.doesNotMatch(result.artifacts["docs/proposal/experiment_plan.md"] ?? "", /STALE_OLD_EXPERIMENT/);
+    assert.match(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /Strict Execution Plan/);
+    assert.match(result.artifacts["docs/proposal/solution_design.md"] ?? "", /Solution Design/);
     assert.equal(result.state.stages.find((stage) => stage.id === "better_idea_synthesis")?.status, "skipped");
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -1265,6 +1273,8 @@ test("research pipeline preserves trusted resumed analysis artifacts", async () 
     await writeArtifact(root, "docs/relative_work/novelty_gap_matrix.md", "# UNIQUE_NOVELTY\n");
     await writeArtifact(root, "docs/relative_work/collision_risk.md", "# UNIQUE_COLLISION\n");
     await writeArtifact(root, "docs/proposal/revised_idea.md", "# UNIQUE_STRATEGY\n");
+    await writeArtifact(root, "docs/proposal/strict_execution_plan.md", "# UNIQUE_STRICT_PLAN\n");
+    await writeArtifact(root, "docs/proposal/solution_design.md", "# UNIQUE_SOLUTION\n");
     await writeArtifact(root, "docs/proposal/experiment_plan.md", "# UNIQUE_EXPERIMENT\n");
     await writeArtifact(root, "docs/proposal/first_4_week_plan.md", "# UNIQUE_FIRST_FOUR_WEEKS\n");
     await writeArtifact(root, "docs/proposal/paper_story.md", "# UNIQUE_PAPER_STORY\n");
@@ -1285,6 +1295,8 @@ test("research pipeline preserves trusted resumed analysis artifacts", async () 
     assert.match(result.artifacts["docs/relative_work/topic_clusters.md"] ?? "", /UNIQUE_TOPIC/);
     assert.match(result.artifacts["docs/relative_work/novelty_gap_matrix.md"] ?? "", /UNIQUE_NOVELTY/);
     assert.match(result.artifacts["docs/proposal/revised_idea.md"] ?? "", /UNIQUE_STRATEGY/);
+    assert.match(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /UNIQUE_STRICT_PLAN/);
+    assert.match(result.artifacts["docs/proposal/solution_design.md"] ?? "", /UNIQUE_SOLUTION/);
     assert.match(result.artifacts["docs/proposal/first_4_week_plan.md"] ?? "", /UNIQUE_FIRST_FOUR_WEEKS/);
     assert.match(result.artifacts["docs/proposal/paper_story.md"] ?? "", /UNIQUE_PAPER_STORY/);
   } finally {
@@ -1415,6 +1427,12 @@ test("research pipeline persists new staged PDF reader notes", async () => {
     assert.match(result.artifacts["docs/diagnosis/reviewer_1.md"] ?? "", /R1-M/);
     assert.match(result.artifacts["docs/diagnosis/reviewer_2.md"] ?? "", /UNIQUE_R2_AGENT_REVIEW/);
     assert.match(result.artifacts["docs/diagnosis/reviewer_3.md"] ?? "", /UNIQUE_R3_AGENT_REVIEW/);
+    assert.match(result.artifacts["docs/proposal/revised_idea.md"] ?? "", /One-Sentence Claim/);
+    assert.match(result.artifacts["docs/proposal/revised_idea.md"] ?? "", /Hypothesis/);
+    assert.match(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /12-Week Execution Table/);
+    assert.match(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /baseline/);
+    assert.match(result.artifacts["docs/proposal/solution_design.md"] ?? "", /ablation/);
+    assert.match(result.artifacts["docs/proposal/solution_design.md"] ?? "", /failure/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

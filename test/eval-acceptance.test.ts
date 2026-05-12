@@ -299,6 +299,9 @@ test("eval: offline deterministic pipeline produces stable acceptance artifacts"
       "paper/related_work.md",
       "papers/papers.bib",
       "docs/diagnosis/ccf_a_strict_scorecard.md",
+      "docs/proposal/revised_idea.md",
+      "docs/proposal/strict_execution_plan.md",
+      "docs/proposal/solution_design.md",
       "docs/relative_work/search_plan.json"
     ]) {
       assert.equal(left.artifacts[path], right.artifacts[path], path);
