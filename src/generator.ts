@@ -970,6 +970,8 @@ function buildFiles(options: {
     "docs/reference/pdfs/README.md": "# PDFs\n\nDo not commit publisher PDFs unless the license explicitly permits it. Record citation metadata in `docs/reference/related_work_matrix.csv`.\n",
     "docs/idea/raw_idea.md": rawIdeaMarkdown(options.rawIdea ?? options.idea),
     "docs/idea/optimized_research_direction.md": generatorOptimizedDirectionMarkdown(options.diagnosis),
+    "docs/idea/optimized_idea.md": generatorOptimizedDirectionMarkdown(options.diagnosis),
+    "docs/idea/research_question.md": generatorResearchQuestionMarkdown(options.diagnosis),
     [`docs/execution_plan/${options.timelineWeeks}_week_plan.md`]: timelinePlan(options.diagnosis, options.timelineWeeks, options.resources, options.analysis),
     "docs/execution_plan/milestones.md": milestones(),
     "docs/execution_plan/todo.md": todo(options.diagnosis, options.analysis),
@@ -1166,6 +1168,28 @@ ${diagnosis.revised_plan_text}
 ## Target Domain
 
 ${route?.label ?? "Unknown"}
+
+## Target Venues
+
+${route ? markdownList(route.primary_venues.slice(0, 4)) : "- unknown"}
+`;
+}
+
+function generatorResearchQuestionMarkdown(diagnosis: Diagnosis): string {
+  const route = diagnosis.routes[0]?.domain;
+  return `# Research Question
+
+## Primary Question
+
+${diagnosis.parsed_idea.problem}
+
+## Proposed Direction
+
+${diagnosis.revised_plan_text}
+
+## Evidence Requirements
+
+${markdownList(diagnosis.required_evidence)}
 
 ## Target Venues
 
@@ -1819,12 +1843,28 @@ function platformNotes(): string {
 }
 
 function workspaceSnapshot(workspace: Record<string, unknown>): string {
+  const status = Array.isArray(workspace.git_status_short) && workspace.git_status_short.length
+    ? workspace.git_status_short.map((item) => `- ${String(item)}`).join("\n")
+    : "- clean or unavailable";
   return `# Workspace Snapshot
 
-\`\`\`json
-${JSON.stringify(workspace, null, 2)}
-\`\`\`
+This is a human-readable summary of the local workspace captured during generation. Machine-readable run state is stored under \`.idea2repo/\`.
+
+| Field | Value |
+| --- | --- |
+| Current directory | ${escapeTableValue(String(workspace.cwd ?? "unknown"))} |
+| Git root | ${escapeTableValue(String(workspace.git_root ?? "none"))} |
+| Git branch | ${escapeTableValue(String(workspace.git_branch ?? "none"))} |
+| Tracked files | ${escapeTableValue(String(workspace.tracked_files ?? "unknown"))} |
+
+## Git Status
+
+${status}
 `;
+}
+
+function escapeTableValue(value: string): string {
+  return value.replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim();
 }
 
 function mainTex(projectName: string): string {

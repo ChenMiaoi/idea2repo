@@ -272,6 +272,47 @@ test("eval: offline pipeline artifacts and ledgers do not leak raw chain-of-thou
   }
 });
 
+test("eval: final repo exposes complete readable markdown artifacts and keeps ledgers internal", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-eval-final-artifacts-"));
+  try {
+    const result = await runResearchPipeline("Build an agent benchmark with literature evidence, metrics, and baselines.", {
+      outputRoot: root,
+      provider: "offline",
+      runId: "eval-final-artifacts",
+      strictCcfA: true,
+      events: new JsonlEventSink(join(root, ".idea2repo", "trace.jsonl"))
+    });
+    const requiredMarkdown = [
+      "docs/reference/paper_notes/README.md",
+      "docs/relative_work/survey.md",
+      "docs/relative_work/idea_vs_prior_work.md",
+      "docs/diagnosis/ccf_a_strict_scorecard.md",
+      "docs/diagnosis/reviewer_1.md",
+      "docs/diagnosis/reviewer_2.md",
+      "docs/diagnosis/reviewer_3.md",
+      "docs/proposal/revised_idea.md",
+      "docs/proposal/strict_execution_plan.md",
+      "docs/proposal/solution_design.md",
+      "reports/final_ccf_a_report.md",
+      "reports/evidence_ledger.md"
+    ];
+    for (const path of requiredMarkdown) assert.ok(Object.hasOwn(result.artifacts, path), `missing final markdown artifact ${path}`);
+    assert.equal(Object.keys(result.artifacts).some((path) => path.startsWith(".idea2repo/")), false);
+    await readFile(join(root, ".idea2repo", "evidence.jsonl"), "utf8");
+    await readFile(join(root, ".idea2repo", "score_snapshots.jsonl"), "utf8");
+    await readFile(join(root, ".idea2repo", "trace.jsonl"), "utf8");
+
+    const finalReport = result.artifacts["reports/final_ccf_a_report.md"] ?? "";
+    assert.match(finalReport, /Final Artifact Completeness/);
+    for (const path of requiredMarkdown) assert.ok(finalReport.includes(path), `final report does not list ${path}`);
+
+    const userFacingMarkdown = Object.entries(result.artifacts).filter(([path]) => path.endsWith(".md"));
+    for (const [path, content] of userFacingMarkdown) assertNoRawJsonDump(content, path);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("eval: offline deterministic pipeline produces stable acceptance artifacts", async () => {
   const idea = "Build a deterministic literature-grounded research reviewer with evidence ledgers and score snapshots.";
   const originalFetch = globalThis.fetch;
@@ -393,4 +434,10 @@ function assertNoRawThoughtMarkers(value: string): void {
   for (const marker of [/chain-of-thought/i, /raw thought/i, /hidden reasoning/i, /private reasoning/i, /scratchpad/i]) {
     assert.doesNotMatch(value, marker);
   }
+}
+
+function assertNoRawJsonDump(value: string, path: string): void {
+  assert.doesNotMatch(value, /```json/i, path);
+  assert.doesNotMatch(value, /^\s*\{\s*"[^"]+"\s*:/m, path);
+  assert.doesNotMatch(value, /^\s*\[\s*\{\s*"[^"]+"\s*:/m, path);
 }

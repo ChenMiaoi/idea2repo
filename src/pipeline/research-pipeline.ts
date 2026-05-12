@@ -1133,6 +1133,7 @@ function pipelineArtifacts(input: {
   const scorecard = `${strictScoreMarkdown(input.score)}${input.agentScore ? `\n## Agent Review\n\n${agentScoreMarkdown(input.agentScore)}` : ""}\n## CCF-A Venue Gate\n\n- Qualified CCF-A main/full core papers: ${input.ccfVenueGate.eligible_core_count} / ${input.ccfVenueGate.required_core_count}\n- Scoring mode: ${input.ccfVenueGate.preliminary_only ? "preliminary only" : "verified strict CCF-A"}\n\nStrict mode: ${input.strict && !input.ccfVenueGate.preliminary_only ? "enabled" : input.strict ? "preliminary-only (CCF-A venue gate blocked)" : "disabled"}\n`;
   const readinessReport = canonicalReadinessReportMarkdown(input);
   const executionPlan = canonicalExecutionPlanMarkdown(input);
+  const optimizedResearchDirection = pipelineOptimizedDirectionMarkdown(input.ideaBrief, input.agentStrategy);
   return {
     "reports/ccf_a_readiness_report.md": readinessReport,
     "reports/final_ccf_a_report.md": readinessReport,
@@ -1148,7 +1149,9 @@ function pipelineArtifacts(input: {
     "docs/idea/raw_idea.md": `# Raw Idea\n\n${input.idea.trim() || "No raw idea was provided."}\n`,
     "docs/idea/idea_brief.md": ideaBriefMarkdown(input.idea, input.ideaBrief),
     "docs/idea/idea_brief.json": JSON.stringify(input.ideaBrief, null, 2) + "\n",
-    "docs/idea/optimized_research_direction.md": pipelineOptimizedDirectionMarkdown(input.ideaBrief, input.agentStrategy),
+    "docs/idea/optimized_research_direction.md": optimizedResearchDirection,
+    "docs/idea/optimized_idea.md": optimizedResearchDirection,
+    "docs/idea/research_question.md": pipelineResearchQuestionMarkdown(input.ideaBrief, input.agentStrategy),
     "docs/idea/assumptions.md": `# Assumptions\n\n${input.ideaBrief.assumptions.map((item) => `- ${item}`).join("\n")}\n`,
     "docs/relative_work/search_plan.md": searchPlanMarkdown(input.searchPlan),
     "docs/relative_work/search_plan.json": JSON.stringify(input.searchPlan, null, 2) + "\n",
@@ -1188,6 +1191,22 @@ function pipelineArtifacts(input: {
 }
 
 type PipelineArtifactInput = Parameters<typeof pipelineArtifacts>[0];
+
+const finalMarkdownArtifacts = [
+  "docs/reference/paper_notes/README.md",
+  "docs/reference/paper_notes/*.md",
+  "docs/relative_work/survey.md",
+  "docs/relative_work/idea_vs_prior_work.md",
+  "docs/diagnosis/ccf_a_strict_scorecard.md",
+  "docs/diagnosis/reviewer_1.md",
+  "docs/diagnosis/reviewer_2.md",
+  "docs/diagnosis/reviewer_3.md",
+  "docs/proposal/revised_idea.md",
+  "docs/proposal/strict_execution_plan.md",
+  "docs/proposal/solution_design.md",
+  "reports/final_ccf_a_report.md",
+  "reports/evidence_ledger.md"
+] as const;
 
 function ideaBriefMarkdown(idea: string, brief: IdeaBrief): string {
   return `# Idea Brief
@@ -1334,8 +1353,22 @@ ${numberedMarkdown(input.score.path_to_80)}
 - Metrics evidence-backed: ${input.metricRecommendations.length ? "yes" : "no"}
 - CCF-A venue gate: ${input.ccfVenueGate.preliminary_only ? "blocked; collect at least 8 qualified CCF-A main/full core papers" : "passed"}
 
+${finalArtifactCompletenessMarkdown(input)}
+
 ## Canonical Artifact Bundle
 
+- \`docs/reference/paper_notes/README.md\`
+- \`docs/reference/paper_notes/*.md\`
+- \`docs/relative_work/survey.md\`
+- \`docs/relative_work/idea_vs_prior_work.md\`
+- \`docs/diagnosis/ccf_a_strict_scorecard.md\`
+- \`docs/diagnosis/reviewer_1.md\`
+- \`docs/diagnosis/reviewer_2.md\`
+- \`docs/diagnosis/reviewer_3.md\`
+- \`docs/proposal/revised_idea.md\`
+- \`docs/proposal/strict_execution_plan.md\`
+- \`docs/proposal/solution_design.md\`
+- \`reports/final_ccf_a_report.md\`
 - \`reports/novelty_matrix.md\`
 - \`reports/related_work.md\`
 - \`reports/evidence_ledger.md\`
@@ -1360,6 +1393,28 @@ ${runtimeDecisionTraceMarkdown(input.decisionSummaries)}
 function runtimeDecisionTraceMarkdown(summaries: string[]): string {
   if (!summaries.length) return "## Runtime Decision Trace\n\nNo runtime decisions were recorded for this report.\n";
   return `## Runtime Decision Trace\n\n${summaries.slice(0, 10).map((summary) => `- ${summary}`).join("\n")}\n`;
+}
+
+function finalArtifactCompletenessMarkdown(input: PipelineArtifactInput): string {
+  const notePaths = Object.keys(input.noteArtifacts).filter((path) => /^docs\/reference\/paper_notes\/.+\.md$/.test(path)).sort();
+  const verifiedNoteCount = notePaths.filter((path) => /evidence_status\s*=\s*verified/i.test(input.noteArtifacts[path] ?? "")).length;
+  const metadataOnlyNoteCount = notePaths.filter((path) => /evidence_status\s*=\s*unverified/i.test(input.noteArtifacts[path] ?? "")).length;
+  const rows = finalMarkdownArtifacts.map((artifact) => {
+    if (artifact === "docs/reference/paper_notes/*.md") {
+      const status = notePaths.length
+        ? `${notePaths.length} paper note(s): ${verifiedNoteCount} verified, ${metadataOnlyNoteCount} metadata-only`
+        : "No paper-specific notes yet; README states the strict evidence contract";
+      return `| \`${artifact}\` | ${escapeCell(status)} | Paper-level evidence notes with page, quote, and chunk ids. |`;
+    }
+    return `| \`${artifact}\` | present | Required end-state Markdown artifact. |`;
+  });
+  return `## Final Artifact Completeness
+
+| Artifact | Status | Purpose |
+| --- | --- | --- |
+${rows.join("\n")}
+
+User-facing Markdown is written as prose and tables. Machine recovery ledgers stay under \`.idea2repo/\`; JSON mirrors are retained only for schema consumers and are not embedded as raw dumps in these reports.`;
 }
 
 function canonicalRelatedWorkReportMarkdown(input: PipelineArtifactInput, relatedWorkReport: string): string {
@@ -1395,13 +1450,17 @@ function canonicalEvidenceLedgerMarkdown(input: PipelineArtifactInput): string {
 
 ## Evidence Rows
 
-${rows.length ? rows.map((row) => `- ${row.paper_id} p.${row.page} [${row.claim_type}] ${row.claim}\n  - Quote: ${row.quote}\n  - Chunk: ${row.chunk_id}\n  - Confidence: ${row.confidence}`).join("\n") : "- No verified page-level evidence yet. Use `.idea2repo/evidence.jsonl` for structured rows once PDFs are read."}
+${rows.length ? rows.map((row) => `- ${row.paper_id} p.${row.page} [${row.claim_type}] ${row.claim}\n  - Quote: ${row.quote}\n  - Chunk: ${row.chunk_id}\n  - Confidence: ${row.confidence}`).join("\n") : "- No verified page-level evidence yet. Strict evidence remains blocked until PDF-backed paper notes cite page, quote, and chunk ids."}
 
-## Compatibility Mirrors
+## Paper Note Sources
 
-- Structured ledger: \`.idea2repo/evidence.jsonl\`
-- CSV mirror: \`docs/reference/claim_evidence_matrix.csv\`
-- Paper notes: \`docs/reference/paper_notes/\`
+- Paper notes directory: \`docs/reference/paper_notes/\`
+- Verified notes are eligible for strict evidence only when they include page, quote, and chunk_id.
+- Metadata-only notes remain provenance records and are not valid for strict CCF-A evidence.
+
+## Machine Ledger Boundary
+
+Machine recovery ledgers are retained under \`.idea2repo/\`. The user-facing ledger above is a readable summary; the CSV mirror remains at \`docs/reference/claim_evidence_matrix.csv\` for spreadsheet workflows.
 `;
 }
 
@@ -2618,6 +2677,27 @@ ${markdownList(brief.target_venues)}
 ## Evaluation Focus
 
 ${markdownList(brief.evaluation_keywords)}
+`;
+}
+
+function pipelineResearchQuestionMarkdown(brief: IdeaBrief, strategy: ResearchStrategy | null): string {
+  return `# Research Question
+
+## Primary Question
+
+${strategy?.central_hypothesis ?? brief.problem}
+
+## Proposed Direction
+
+${strategy?.revised_idea ?? brief.idea_summary}
+
+## Evaluation Focus
+
+${markdownList(strategy ? [...strategy.baselines, ...strategy.datasets, ...strategy.metrics] : brief.evaluation_keywords)}
+
+## Evidence Boundary
+
+This question must remain preliminary until the survey, idea-vs-prior comparison, paper notes, and strict scorecard are backed by verified page, quote, and chunk evidence.
 `;
 }
 

@@ -38,11 +38,17 @@ test("offline research pipeline returns resumable stage state and core artifacts
   assert.match(result.artifacts["docs/idea/raw_idea.md"] ?? "", /LLM agent benchmark/);
   assert.match(result.artifacts["docs/idea/idea_brief.md"] ?? "", /Interpreted Research Direction/);
   assert.match(result.artifacts["docs/idea/optimized_research_direction.md"] ?? "", /Optimized Research Direction/);
+  assert.equal(result.artifacts["docs/idea/optimized_idea.md"], result.artifacts["docs/idea/optimized_research_direction.md"]);
+  assert.match(result.artifacts["docs/idea/research_question.md"] ?? "", /Research Question/);
   assert.match(result.artifacts["reports/ccf_a_readiness_report.md"] ?? "", /CCF-A Readiness Report/);
   assert.equal(result.artifacts["reports/final_ccf_a_report.md"], result.artifacts["reports/ccf_a_readiness_report.md"]);
+  assert.match(result.artifacts["reports/final_ccf_a_report.md"] ?? "", /Final Artifact Completeness/);
+  assert.match(result.artifacts["reports/final_ccf_a_report.md"] ?? "", /docs\/relative_work\/survey\.md/);
+  assert.match(result.artifacts["reports/final_ccf_a_report.md"] ?? "", /docs\/diagnosis\/reviewer_3\.md/);
   assert.match(result.artifacts["reports/novelty_matrix.md"] ?? "", /Novelty Gap Matrix/);
   assert.match(result.artifacts["reports/related_work.md"] ?? "", /Related Work Report/);
   assert.match(result.artifacts["reports/evidence_ledger.md"] ?? "", /Evidence Ledger/);
+  assert.doesNotMatch(result.artifacts["reports/evidence_ledger.md"] ?? "", /Use `\.idea2repo\/evidence\.jsonl`/);
   assert.match(result.artifacts["plans/12_week_execution_plan.md"] ?? "", /12 Week Execution Plan/);
   assert.match(result.artifacts["plans/experiment_plan.md"] ?? "", /Experiment Plan/);
   assert.equal(result.artifacts["docs/diagnosis/ccf_a_readiness_report.md"], result.artifacts["reports/ccf_a_readiness_report.md"]);
