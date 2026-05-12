@@ -82,7 +82,7 @@ export const researchStages: ResearchStageDefinition[] = [
     label: "Related work analysis",
     prompt: "04_related_work_analyst.md",
     deterministic: false,
-    artifactPaths: ["docs/relative_work/related_work_matrix.csv", "docs/relative_work/topic_clusters.md"]
+    artifactPaths: ["docs/relative_work/related_work_matrix.csv", "docs/relative_work/topic_clusters.md", "docs/relative_work/survey.md"]
   },
   {
     id: "novelty_analysis",
@@ -90,7 +90,7 @@ export const researchStages: ResearchStageDefinition[] = [
     label: "Novelty analysis",
     prompt: "05_novelty_gap_analyst.md",
     deterministic: false,
-    artifactPaths: ["docs/relative_work/novelty_gap_matrix.md", "docs/relative_work/collision_risk.md"]
+    artifactPaths: ["docs/relative_work/novelty_gap_matrix.md", "docs/relative_work/collision_risk.md", "docs/relative_work/idea_vs_prior_work.md"]
   },
   {
     id: "ccf_a_strict_scoring",

@@ -16,6 +16,7 @@ import { AuthStorage, openaiCodexOAuthProvider } from "./auth/codex-oauth.js";
 import { runTui } from "./tui/App.js";
 import { loadCodexModelCatalog } from "./models.js";
 import { proxyEnvForChild } from "./proxy.js";
+import type { IdeaBrief, SearchPlan } from "./agents/schemas.js";
 import { candidatesMarkdown, runResearchPipeline, searchPlanMarkdown } from "./pipeline/research-pipeline.js";
 import { formatDecisions, readDecisionRecords } from "./runtime/decisions.js";
 import { JsonlEventSink, readJsonlEvents } from "./runtime/events.js";
@@ -35,7 +36,9 @@ import { rebuildTrustedPdfChunks } from "./skills/pdf/trust.js";
 import type { PaperCandidate } from "./skills/literature/types.js";
 import { evidenceRowsMarkdown, evidenceText, extractEvidenceRows, evidenceRowsCsv, trustedEvidenceRows } from "./skills/analysis/evidence-extract.js";
 import { relatedWorkMatrixCsv, topicClustersMarkdown } from "./skills/analysis/related-work-matrix.js";
+import { buildRelatedWorkSurvey, type RelatedWorkSurvey } from "./skills/analysis/survey.js";
 import { assessNovelty, noveltyMatrixMarkdown } from "./skills/analysis/novelty-matrix.js";
+import { buildIdeaVsPriorWork, type IdeaVsPriorWork } from "./skills/analysis/idea-vs-prior.js";
 import { strictCcfAScore, strictScoreMarkdown } from "./skills/analysis/ccf-a-score.js";
 import { experimentPlanMarkdown, feasibilityMarkdown, revisedIdeaMarkdown } from "./skills/analysis/idea-refine.js";
 import { loadTemplateProfiles, validateTemplateProfiles } from "./skills/templates/catalog.js";
@@ -224,7 +227,10 @@ async function commandPapers(argv: string[]): Promise<number> {
   await writeText(ensureChild(root, "docs/relative_work/related_work_matrix.csv"), relatedWorkMatrixCsv(candidates, manifest, evidenceRows, chunks, { verifiedOnly: true }));
   const backedCandidates = evidenceBackedCandidates(candidates, evidenceRows, chunks);
   await writeText(ensureChild(root, "docs/relative_work/topic_clusters.md"), topicClustersMarkdown(backedCandidates));
-  const novelty = assessNovelty(await ideaFromArgsOrManifest(parsed, root), backedCandidates, evidenceRows, chunks);
+  const idea = await ideaFromArgsOrManifest(parsed, root);
+  const novelty = assessNovelty(idea, backedCandidates, evidenceRows, chunks);
+  const relatedWorkArtifacts = await cliRelatedWorkArtifacts(root, idea, parsed, candidates, evidenceRows, chunks, noteArtifacts, novelty);
+  await writeCliRelatedWorkArtifacts(root, relatedWorkArtifacts);
   await writeText(ensureChild(root, "docs/relative_work/novelty_gap_matrix.md"), noveltyMatrixMarkdown(novelty));
   await writeText(ensureChild(root, "docs/relative_work/collision_risk.md"), `# Collision Risk\n\n${novelty.collision_risk}\n\n${novelty.reasons.map((reason) => `- ${reason}`).join("\n")}\n`);
   console.log(`Paper analysis written under ${ensureChild(root, "docs/relative_work")}`);
@@ -246,16 +252,17 @@ async function commandScore(argv: string[]): Promise<number> {
   const evidenceItems = evidenceItemsFromRows({ runId, stageId: "pdf_reading", rows: evidenceRows, candidates, manifest, chunks });
   const text = evidenceText(evidenceRows);
   const novelty = assessNovelty(idea, candidates, evidenceRows, chunks);
+  const relatedWorkArtifacts = await cliRelatedWorkArtifacts(root, idea, parsed, candidates, evidenceRows, chunks, noteArtifacts, novelty);
   const verifiedPaperCount = verifiedEvidencePaperCount(evidenceRows);
   const score = strictCcfAScore({
     verifiedRelatedWorkCount: verifiedPaperCount,
     pdfReadCount: new Set(chunks.map((chunk) => chunk.paper_id)).size,
     corePaperCount: verifiedPaperCount,
     evidenceRefs: evidenceItems.map((item) => item.id),
-    hasStrongBaseline: text.includes("baseline"),
-    hasDatasetOrBenchmark: text.includes("dataset") || text.includes("benchmark"),
-    hasMetric: text.includes("metric") || text.includes("accuracy") || text.includes("latency"),
-    highPriorWorkCollision: novelty.collision_risk === "high",
+    hasStrongBaseline: relatedWorkArtifacts.survey.reviewerExpectedBaselines.length > 0,
+    hasDatasetOrBenchmark: relatedWorkArtifacts.survey.reviewerExpectedDatasets.length > 0,
+    hasMetric: relatedWorkArtifacts.survey.reviewerExpectedMetrics.length > 0,
+    highPriorWorkCollision: relatedWorkArtifacts.ideaVsPriorWork.collisionRisk === "high",
     pureEngineeringIntegration: /tool|platform|dashboard|repo/.test(text),
     hasScientificHypothesis: text.includes("hypothesis") || text.includes("claim"),
     hasExecutableExperimentPlan: text.includes("experiment") && text.includes("baseline") && text.includes("metric"),
@@ -269,6 +276,7 @@ async function commandScore(argv: string[]): Promise<number> {
   });
   await ensureRuntimeLedgers(root);
   for (const [relativePath, content] of Object.entries(noteArtifacts)) await writeText(ensureChild(root, relativePath), content);
+  await writeCliRelatedWorkArtifacts(root, relatedWorkArtifacts);
   await replaceEvidenceItems(root, { runId, stageId: "pdf_reading" }, evidenceItems);
   await appendScoreSnapshot(root, scoreSnapshotFromStrictScore({
     runId,
@@ -293,20 +301,21 @@ async function commandRefine(argv: string[]): Promise<number> {
   const noteArtifacts = mandatoryCliPaperNoteArtifacts(candidates, [], extractedEvidenceRows, chunks);
   const evidenceRows = paperNoteBackedEvidenceRows(extractedEvidenceRows, chunks, noteArtifacts);
   const novelty = assessNovelty(idea, candidates, evidenceRows, chunks);
+  const relatedWorkArtifacts = await cliRelatedWorkArtifacts(root, idea, parsed, candidates, evidenceRows, chunks, noteArtifacts, novelty);
   const verifiedPaperCount = verifiedEvidencePaperCount(evidenceRows);
-  const text = evidenceText(evidenceRows);
   const score = strictCcfAScore({
     verifiedRelatedWorkCount: verifiedPaperCount,
     pdfReadCount: new Set(chunks.map((chunk) => chunk.paper_id)).size,
     corePaperCount: verifiedPaperCount,
-    hasStrongBaseline: text.includes("baseline"),
-    hasDatasetOrBenchmark: text.includes("dataset") || text.includes("benchmark"),
-    hasMetric: text.includes("metric") || text.includes("accuracy") || text.includes("latency"),
-    highPriorWorkCollision: novelty.collision_risk === "high",
+    hasStrongBaseline: relatedWorkArtifacts.survey.reviewerExpectedBaselines.length > 0,
+    hasDatasetOrBenchmark: relatedWorkArtifacts.survey.reviewerExpectedDatasets.length > 0,
+    hasMetric: relatedWorkArtifacts.survey.reviewerExpectedMetrics.length > 0,
+    highPriorWorkCollision: relatedWorkArtifacts.ideaVsPriorWork.collisionRisk === "high",
     hasExecutableExperimentPlan: false
   });
   if (warnings.length) console.log(`Warnings: ${warnings.length}`);
   for (const [relativePath, content] of Object.entries(noteArtifacts)) await writeText(ensureChild(root, relativePath), content);
+  await writeCliRelatedWorkArtifacts(root, relatedWorkArtifacts);
   await writeText(ensureChild(root, "docs/proposal/revised_idea.md"), revisedIdeaMarkdown(idea, novelty, score));
   await writeText(ensureChild(root, "docs/proposal/experiment_plan.md"), experimentPlanMarkdown());
   await writeText(ensureChild(root, "docs/diagnosis/feasibility_report.md"), feasibilityMarkdown(valuesFlag(parsed, "resource"), numberFlag(parsed, "weeks", 12)));
@@ -783,6 +792,135 @@ async function ideaFromArgsOrManifest(parsed: ParsedArgs, root: string): Promise
   } catch {
     return "local research idea";
   }
+}
+
+type CliRelatedWorkArtifacts = {
+  survey: RelatedWorkSurvey;
+  ideaVsPriorWork: IdeaVsPriorWork;
+};
+
+async function cliRelatedWorkArtifacts(
+  root: string,
+  idea: string,
+  parsed: ParsedArgs,
+  candidates: PaperCandidate[],
+  evidenceRows: ReturnType<typeof extractEvidenceRows>,
+  chunks: PdfChunkIndexEntry[],
+  noteArtifacts: Record<string, string>,
+  novelty: ReturnType<typeof assessNovelty>
+): Promise<CliRelatedWorkArtifacts> {
+  const ideaBrief = await cliIdeaBrief(root, idea, parsed);
+  const searchPlan = await cliSearchPlan(root, ideaBrief, numberFlag(parsed, "max-papers", 20));
+  return {
+    survey: buildRelatedWorkSurvey({
+      ideaBrief,
+      searchPlan,
+      candidates,
+      evidenceRows,
+      chunks,
+      noteArtifacts
+    }),
+    ideaVsPriorWork: buildIdeaVsPriorWork({
+      idea,
+      candidates,
+      evidenceRows,
+      chunks,
+      novelty,
+      noteArtifacts
+    })
+  };
+}
+
+async function writeCliRelatedWorkArtifacts(root: string, artifacts: CliRelatedWorkArtifacts): Promise<void> {
+  await writeText(ensureChild(root, "docs/relative_work/survey.md"), artifacts.survey.markdown);
+  await writeText(ensureChild(root, "docs/relative_work/idea_vs_prior_work.md"), artifacts.ideaVsPriorWork.markdown);
+}
+
+async function cliIdeaBrief(root: string, idea: string, parsed: ParsedArgs): Promise<IdeaBrief> {
+  return (
+    (await readJsonFile<IdeaBrief | null>(root, "docs/idea/idea_brief.json", null)) ??
+    (await readMarkdownEmbeddedJsonFile<IdeaBrief>(root, "docs/idea/idea_brief.md")) ??
+    fallbackCliIdeaBrief(idea, parsed)
+  );
+}
+
+async function cliSearchPlan(root: string, brief: IdeaBrief, maxPapers: number): Promise<SearchPlan> {
+  return (
+    (await readJsonFile<SearchPlan | null>(root, "docs/relative_work/search_plan.json", null)) ??
+    (await readMarkdownEmbeddedJsonFile<SearchPlan>(root, "docs/relative_work/search_plan.md")) ??
+    fallbackCliSearchPlan(brief, maxPapers)
+  );
+}
+
+async function readMarkdownEmbeddedJsonFile<T>(root: string, relativePath: string): Promise<T | null> {
+  const path = ensureChild(root, relativePath);
+  if (!(await exists(path))) return null;
+  const markdown = await readFile(path, "utf8");
+  const start = markdown.indexOf("{");
+  const end = markdown.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try {
+    return JSON.parse(markdown.slice(start, end + 1)) as T;
+  } catch {
+    return null;
+  }
+}
+
+function fallbackCliIdeaBrief(idea: string, parsed: ParsedArgs): IdeaBrief {
+  const terms = keywordTerms(`${idea} ${valuesFlag(parsed, "domain").join(" ")}`);
+  const venues = valuesFlag(parsed, "venue");
+  return {
+    idea_summary: idea || "local research idea",
+    problem: idea || "A local research direction needs evidence-backed related-work analysis.",
+    target_domain: stringFlag(parsed, "domain") ?? terms[0] ?? "research",
+    target_venues: venues.length ? venues : [],
+    method_keywords: terms.slice(0, 5),
+    task_keywords: terms.slice(0, 5),
+    evaluation_keywords: uniqueStrings(["baseline", "dataset", "metric", "benchmark", ...terms.filter((term) => /eval|metric|bench|data/.test(term))]).slice(0, 8),
+    resource_constraints: valuesFlag(parsed, "resource"),
+    missing_information: ["Verified PDF evidence may be incomplete in CLI fallback mode."],
+    assumptions: ["CLI analysis uses deterministic fallback brief fields when staged intake artifacts are absent."],
+    search_seed_terms: terms.length ? terms : ["research", "baseline", "dataset", "metric"]
+  };
+}
+
+function fallbackCliSearchPlan(brief: IdeaBrief, maxPapers: number): SearchPlan {
+  const base = (brief.search_seed_terms.length ? brief.search_seed_terms : [...brief.method_keywords, ...brief.task_keywords]).slice(0, 5);
+  const phrase = base.join(" ") || brief.idea_summary || "research idea";
+  const query = (suffix: string, purpose: string) => ({ query: `${phrase} ${suffix}`.trim(), source_hints: ["openalex", "semantic-scholar", "dblp"], purpose });
+  return {
+    core_concepts: base,
+    synonyms: uniqueStrings([...base, "baseline", "dataset", "metric", "benchmark"]),
+    precision_queries: [
+      query("benchmark baseline", "find direct prior work"),
+      query(brief.target_domain, "find domain-specific related work"),
+      query("evaluation metric", "find evaluation conventions")
+    ],
+    recall_queries: [
+      query("survey", "broaden related-work coverage"),
+      query("related work", "find adjacent methods")
+    ],
+    baseline_queries: [query("baseline comparison", "find reviewer-expected baselines")],
+    dataset_metric_queries: [query("dataset metric benchmark", "find datasets and metrics")],
+    venue_queries: brief.target_venues.map((venue) => ({ query: `${venue} ${phrase}`, source_hints: ["dblp", "venue"], purpose: "find venue-specific work" })),
+    collision_queries: [query("novelty gap", "find novelty collisions")],
+    stop_condition: `Stop when ${Math.min(maxPapers, 20)} candidates cover core prior work, baselines, datasets, and metrics.`
+  };
+}
+
+function keywordTerms(value: string): string[] {
+  const stop = new Set(["with", "from", "that", "this", "into", "using", "based", "local", "research", "idea"]);
+  return uniqueStrings(
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, " ")
+      .split(/\s+/)
+      .filter((term) => term.length > 2 && !stop.has(term))
+  ).slice(0, 10);
+}
+
+function uniqueStrings(items: string[]): string[] {
+  return [...new Set(items.map((item) => item.trim()).filter(Boolean))];
 }
 
 async function queriesFromArgsOrPlan(parsed: ParsedArgs, root: string): Promise<string[]> {

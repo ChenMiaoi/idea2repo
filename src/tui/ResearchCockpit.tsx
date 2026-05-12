@@ -381,6 +381,9 @@ function researchThreadEntries(events: Idea2RepoEvent[]): ResearchThreadEntry[] 
       case "paper.note.written":
         entries.push({ kind: "Note", text: `${event.paper_id} ${event.status} (${event.evidence_rows} evidence rows)`, color: event.status === "verified" ? colors.success : colors.warning });
         break;
+      case "survey.updated":
+        entries.push({ kind: "Survey", text: `${event.verified_papers} papers, ${event.clusters} clusters, ${event.baselines}/${event.datasets}/${event.metrics} B/D/M signals`, color: event.verified_papers ? colors.success : colors.warning });
+        break;
       case "question.asked":
         entries.push({ kind: "Question", text: `${event.question} Why: ${event.why_it_matters}`, color: colors.warning });
         break;

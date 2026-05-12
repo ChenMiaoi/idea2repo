@@ -589,7 +589,7 @@ test("research pipeline upgrades deterministic PDF notes to required closure sch
     state = markStage(state, "literature_search", "completed");
     state = markStage(state, "pdf_acquisition", "completed");
     await writeResearchPipelineState(root, state);
-    const events: Array<{ type: string; paper_id?: string; status?: string; evidence_rows?: number; path?: string }> = [];
+    const events: Array<{ type: string; [key: string]: unknown }> = [];
 
     const result = await runResearchPipeline(idea, {
       outputRoot: root,
@@ -628,7 +628,15 @@ test("research pipeline upgrades deterministic PDF notes to required closure sch
     assert.match(note, /Chunk: p1-c1/);
     assert.match(note, /chunk_id: p1-c1/);
     assert.equal(result.artifacts["docs/reference/paper_notes/non-core-paper.md"], undefined);
+    assert.match(result.artifacts["docs/relative_work/survey.md"] ?? "", /Related Work Survey/);
+    assert.match(result.artifacts["docs/relative_work/survey.md"] ?? "", /Deterministic Agent Benchmark/);
+    assert.doesNotMatch(result.artifacts["docs/relative_work/survey.md"] ?? "", /Metadata Only Agent Benchmark/);
+    assert.match(result.artifacts["docs/relative_work/idea_vs_prior_work.md"] ?? "", /Idea vs Prior Work/);
+    assert.match(result.artifacts["docs/relative_work/idea_vs_prior_work.md"] ?? "", /Deterministic Agent Benchmark/);
+    assert.doesNotMatch(result.artifacts["docs/relative_work/idea_vs_prior_work.md"] ?? "", /\{/);
+    assert.doesNotMatch(result.artifacts["docs/relative_work/idea_vs_prior_work.md"] ?? "", /Metadata Only Agent Benchmark/);
     assert.doesNotMatch(result.artifacts["docs/relative_work/related_work_matrix.csv"] ?? "", /Metadata Only Agent Benchmark/);
+    assert.doesNotMatch(result.artifacts["docs/diagnosis/ccf_a_strict_scorecard.md"] ?? "", /No baseline\/dataset\/metric/);
 
     const noteEvents = events.filter((event) => event.type === "paper.note.written");
     assert.equal(noteEvents.filter((event) => event.paper_id === "deterministic-paper").length, 1);
@@ -637,6 +645,12 @@ test("research pipeline upgrades deterministic PDF notes to required closure sch
     assert.equal(noteEvents.filter((event) => event.paper_id === "metadata-paper").length, 1);
     assert.equal(noteEvents.find((event) => event.paper_id === "metadata-paper")?.status, "metadata_only");
     assert.equal(noteEvents.some((event) => event.paper_id === "non-core-paper"), false);
+    const surveyEvents = events.filter((event) => event.type === "survey.updated");
+    assert.equal(surveyEvents.length, 1);
+    assert.equal(surveyEvents[0]?.verified_papers, 1);
+    assert.equal(surveyEvents[0]?.baselines, 1);
+    assert.equal(surveyEvents[0]?.datasets, 1);
+    assert.equal(surveyEvents[0]?.metrics, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

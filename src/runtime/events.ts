@@ -110,6 +110,17 @@ export type Idea2RepoEvent =
       timestamp: string;
     }
   | {
+      type: "survey.updated";
+      run_id: string;
+      path: string;
+      verified_papers: number;
+      clusters: number;
+      baselines: number;
+      datasets: number;
+      metrics: number;
+      timestamp: string;
+    }
+  | {
       type: "question.asked";
       run_id: string;
       question_id: string;

@@ -6,7 +6,9 @@ import { test } from "node:test";
 import { main } from "../src/cli.js";
 import { evidenceRowsMarkdown, extractEvidenceRows } from "../src/skills/analysis/evidence-extract.js";
 import { relatedWorkMatrixCsv } from "../src/skills/analysis/related-work-matrix.js";
+import { buildRelatedWorkSurvey } from "../src/skills/analysis/survey.js";
 import { assessNovelty, noveltyMatrixMarkdown } from "../src/skills/analysis/novelty-matrix.js";
+import { buildIdeaVsPriorWork } from "../src/skills/analysis/idea-vs-prior.js";
 import { strictCcfAScore, strictScoreMarkdown } from "../src/skills/analysis/ccf-a-score.js";
 import { sha256 } from "../src/skills/pdf/provenance.js";
 
@@ -118,6 +120,107 @@ test("paper notes and related-work signals are derived from evidence text", () =
   assert.match(matrix, /paper2,.*no,no,no/);
 });
 
+test("survey and idea-vs-prior use only verified note-backed evidence", () => {
+  const rows = [
+    evidence("paper1", "Agent benchmark method uses a baseline on a dataset with an accuracy metric."),
+    {
+      ...evidence("paper2", "Metadata-only baseline dataset metric should be ignored."),
+      paper_id: "paper2"
+    }
+  ];
+  const candidates = [
+    {
+      candidate_id: "paper1",
+      title: "Verified Agent Benchmark",
+      authors: [],
+      year: 2026,
+      source_urls: [],
+      pdf_urls: [],
+      retrieval_sources: [],
+      retrieval_queries: [],
+      confidence: "high" as const
+    },
+    {
+      candidate_id: "paper2",
+      title: "Metadata Only Benchmark",
+      authors: [],
+      year: 2026,
+      source_urls: [],
+      pdf_urls: [],
+      retrieval_sources: [],
+      retrieval_queries: [],
+      confidence: "high" as const
+    }
+  ];
+  const noteArtifacts = {
+    "docs/reference/paper_notes/paper1.md": "evidence_status = verified\n",
+    "docs/reference/paper_notes/paper2.md": "evidence_status = unverified\n"
+  };
+  const survey = buildRelatedWorkSurvey({
+    ideaBrief: sampleIdeaBrief(),
+    searchPlan: sampleSearchPlan(),
+    candidates,
+    evidenceRows: rows,
+    noteArtifacts
+  });
+  assert.match(survey.markdown, /Related Work Survey/);
+  assert.match(survey.markdown, /Verified Agent Benchmark/);
+  assert.doesNotMatch(survey.markdown, /Metadata Only Benchmark/);
+  assert.equal(survey.reviewerExpectedBaselines.length, 1);
+  assert.equal(survey.reviewerExpectedDatasets.length, 1);
+  assert.equal(survey.reviewerExpectedMetrics.length, 1);
+  const agentOnlySignals = buildRelatedWorkSurvey({
+    ideaBrief: sampleIdeaBrief(),
+    searchPlan: sampleSearchPlan(),
+    candidates: [candidates[0]!],
+    evidenceRows: [evidence("paper1", "This paper describes agent evaluation without scoring keywords.")],
+    noteArtifacts: {
+      "docs/reference/paper_notes/paper1.md": "evidence_status = verified\n"
+    },
+    agentRelatedWork: {
+      reviewer_expected_baselines: ["Agent-proposed baseline must not count"],
+      evaluation_conventions: ["Agent-proposed metric must not count"]
+    } as any
+  });
+  assert.deepEqual(agentOnlySignals.reviewerExpectedBaselines, []);
+  assert.deepEqual(agentOnlySignals.reviewerExpectedMetrics, []);
+  const metadataOnlySurvey = buildRelatedWorkSurvey({
+    ideaBrief: sampleIdeaBrief(),
+    searchPlan: sampleSearchPlan(),
+    candidates,
+    evidenceRows: [rows[1]!],
+    noteArtifacts: {
+      "docs/reference/paper_notes/paper2.md": "evidence_status = unverified\n"
+    }
+  });
+  assert.equal(metadataOnlySurvey.verifiedPaperCount, 0);
+  assert.doesNotMatch(metadataOnlySurvey.markdown, /Metadata Only Benchmark/);
+
+  const novelty = assessNovelty("agent benchmark baseline dataset accuracy metric", [candidates[0]!], [rows[0]!]);
+  const ideaVsPrior = buildIdeaVsPriorWork({
+    idea: "agent benchmark baseline dataset accuracy metric",
+    candidates,
+    evidenceRows: rows,
+    novelty,
+    noteArtifacts
+  });
+  assert.match(ideaVsPrior.markdown, /Idea vs Prior Work/);
+  assert.match(ideaVsPrior.markdown, /Verified Agent Benchmark/);
+  assert.doesNotMatch(ideaVsPrior.markdown, /Metadata Only Benchmark/);
+  assert.equal(ideaVsPrior.collisionRisk, "high");
+  const metadataOnlyPrior = buildIdeaVsPriorWork({
+    idea: "agent benchmark baseline dataset accuracy metric",
+    candidates,
+    evidenceRows: [rows[1]!],
+    novelty,
+    noteArtifacts: {
+      "docs/reference/paper_notes/paper2.md": "evidence_status = unverified\n"
+    }
+  });
+  assert.equal(metadataOnlyPrior.rows.length, 0);
+  assert.doesNotMatch(metadataOnlyPrior.markdown, /Metadata Only Benchmark/);
+});
+
 test("strict CCF-A score applies all evidence cap rules", () => {
   const cases: Array<[string, Parameters<typeof strictCcfAScore>[0], number, string]> = [
     ["No verified related work", { pdfReadCount: 1, corePaperCount: 5, hasStrongBaseline: true, hasDatasetOrBenchmark: true, hasMetric: true, hasExecutableExperimentPlan: true }, 45, "No verified related work"],
@@ -207,6 +310,12 @@ test("papers analyze score and refine CLI write analysis artifacts", async () =>
     assert.match(scorecard, /No verified related work/);
     assert.match(await readFile(join(output, "docs/proposal/revised_idea.md"), "utf8"), /Revised Idea/);
     assert.match(await readFile(join(output, "docs/relative_work/novelty_gap_matrix.md"), "utf8"), /Novelty Gap Matrix/);
+    const survey = await readFile(join(output, "docs/relative_work/survey.md"), "utf8");
+    assert.match(survey, /Related Work Survey/);
+    assert.doesNotMatch(survey, /^\s*\{/m);
+    const ideaVsPrior = await readFile(join(output, "docs/relative_work/idea_vs_prior_work.md"), "utf8");
+    assert.match(ideaVsPrior, /Idea vs Prior Work/);
+    assert.doesNotMatch(ideaVsPrior, /^\s*\{/m);
     assert.match(await readFile(join(output, "docs/relative_work/related_work_matrix.csv"), "utf8"), /evidence_page,evidence_quote,evidence_chunk_id/);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -262,6 +371,8 @@ test("papers analyze creates metadata-only notes for candidates without PDFs", a
     assert.match(note, /chunk_id: missing/);
     assert.doesNotMatch(await readFile(join(output, "docs/reference/claim_evidence_matrix.csv"), "utf8"), /Metadata Only Agent Benchmark/);
     assert.doesNotMatch(await readFile(join(output, "docs/relative_work/related_work_matrix.csv"), "utf8"), /Metadata Only Agent Benchmark/);
+    assert.doesNotMatch(await readFile(join(output, "docs/relative_work/survey.md"), "utf8"), /Metadata Only Agent Benchmark/);
+    assert.doesNotMatch(await readFile(join(output, "docs/relative_work/idea_vs_prior_work.md"), "utf8"), /Metadata Only Agent Benchmark/);
     assert.equal(await main(["score", "--output", output, "--strict-ccf-a"]), 0);
     assert.match(await readFile(join(output, "docs/diagnosis/ccf_a_strict_scorecard.md"), "utf8"), /No verified related work/);
   } finally {
@@ -394,5 +505,36 @@ function evidence(paperId: string, quote = "verified quote") {
     quote,
     chunk_id: "p1-c1",
     confidence: 0.6
+  };
+}
+
+function sampleIdeaBrief() {
+  return {
+    idea_summary: "Build an LLM agent benchmark.",
+    problem: "agent evaluation",
+    target_domain: "AI / LLM Agent",
+    target_venues: ["NeurIPS"],
+    method_keywords: ["agent"],
+    task_keywords: ["benchmark"],
+    evaluation_keywords: ["baseline", "dataset", "metric"],
+    resource_constraints: ["single researcher"],
+    missing_information: [],
+    assumptions: ["test"],
+    search_seed_terms: ["agent", "benchmark"]
+  };
+}
+
+function sampleSearchPlan() {
+  const query = (value: string) => ({ query: value, source_hints: ["openalex"], purpose: "test" });
+  return {
+    core_concepts: ["agent", "benchmark"],
+    synonyms: ["agent evaluation"],
+    precision_queries: [query("agent benchmark precision")],
+    recall_queries: [query("agent benchmark recall")],
+    baseline_queries: [query("baseline")],
+    dataset_metric_queries: [query("dataset metric")],
+    venue_queries: [query("NeurIPS agent benchmark")],
+    collision_queries: [query("agent benchmark prior work")],
+    stop_condition: "enough candidates"
   };
 }

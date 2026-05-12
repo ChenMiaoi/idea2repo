@@ -38,8 +38,10 @@ import { exists } from "../state.js";
 import { evidenceRowsCsv, evidenceText, extractEvidenceRows, trustedEvidenceRows, type ClaimEvidenceRow } from "../skills/analysis/evidence-extract.js";
 import { strictScoreMarkdown, type StrictScoreInput, type StrictScoreResult } from "../skills/analysis/ccf-a-score.js";
 import { experimentPlanMarkdown, feasibilityMarkdown, revisedIdeaMarkdown } from "../skills/analysis/idea-refine.js";
+import { buildIdeaVsPriorWork, type IdeaVsPriorWork } from "../skills/analysis/idea-vs-prior.js";
 import { assessNovelty, noveltyMatrixMarkdown } from "../skills/analysis/novelty-matrix.js";
 import { relatedWorkMatrixCsv, topicClustersMarkdown } from "../skills/analysis/related-work-matrix.js";
+import { buildRelatedWorkSurvey, type RelatedWorkSurvey } from "../skills/analysis/survey.js";
 import type { LiteratureSource, PaperCandidate } from "../skills/literature/types.js";
 import { enrichCandidates, isCcfACoreCandidate } from "../skills/literature/venue.js";
 import type { PdfChunkIndexEntry } from "../skills/pdf/chunk.js";
@@ -629,16 +631,44 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
 
   const verifiedPaperCount = verifiedEvidencePaperCount(evidenceRows);
   const verifiedCcfACorePaperCount = verifiedQualifiedCcfACorePaperCount(candidates, evidenceRows);
+  const survey = buildRelatedWorkSurvey({
+    ideaBrief,
+    searchPlan,
+    candidates,
+    evidenceRows,
+    chunks,
+    noteArtifacts,
+    agentRelatedWork
+  });
+  const ideaVsPriorWork = buildIdeaVsPriorWork({
+    idea,
+    candidates,
+    evidenceRows,
+    chunks,
+    novelty,
+    noteArtifacts
+  });
+  await emitRuntimeEvent({
+    type: "survey.updated",
+    run_id: runId,
+    path: "docs/relative_work/survey.md",
+    verified_papers: survey.verifiedPaperCount,
+    clusters: survey.clusterCount,
+    baselines: survey.reviewerExpectedBaselines.length,
+    datasets: survey.reviewerExpectedDatasets.length,
+    metrics: survey.reviewerExpectedMetrics.length,
+    timestamp: runtimeTimestamp()
+  });
   const evidence = evidenceText(evidenceRows);
   const scoreInput: StrictScoreInput = {
     verifiedRelatedWorkCount: verifiedPaperCount,
     pdfReadCount: new Set(chunks.map((chunk) => chunk.paper_id)).size,
     corePaperCount: verifiedCcfACorePaperCount,
     evidenceRefs: evidenceItems.map((item) => item.id),
-    hasStrongBaseline: evidence.includes("baseline"),
-    hasDatasetOrBenchmark: evidence.includes("dataset") || evidence.includes("benchmark"),
-    hasMetric: evidence.includes("metric") || evidence.includes("accuracy") || evidence.includes("latency"),
-    highPriorWorkCollision: novelty.collision_risk === "high",
+    hasStrongBaseline: survey.reviewerExpectedBaselines.length > 0,
+    hasDatasetOrBenchmark: survey.reviewerExpectedDatasets.length > 0,
+    hasMetric: survey.reviewerExpectedMetrics.length > 0,
+    highPriorWorkCollision: ideaVsPriorWork.collisionRisk === "high",
     hasScientificHypothesis: /\bhypothesis\b|\bclaim\b/.test(evidence),
     hasExecutableExperimentPlan: evidence.includes("experiment") && evidence.includes("baseline") && evidence.includes("metric"),
     singlePersonTwelveWeekInfeasible: (options.resources ?? []).some((resource) => /single|solo|one/i.test(resource)) && (options.timelineWeeks ?? 12) <= 12,
@@ -821,10 +851,9 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     await preserveStageArtifacts("feasibility_review");
   }
 
-  const verifiedEvidence = evidenceText(evidenceRows.filter((row) => row.status === "verified" && row.page && row.quote && row.chunk_id));
-  const baselineRecommendations = verifiedEvidence.includes("baseline") ? ["Verified PDF evidence mentions baseline comparison; inspect paper notes before selecting the final baseline."] : [];
-  const datasetRecommendations = verifiedEvidence.includes("dataset") || verifiedEvidence.includes("benchmark") ? ["Verified PDF evidence mentions dataset or benchmark usage; inspect paper notes before selecting data."] : [];
-  const metricRecommendations = verifiedEvidence.includes("metric") || verifiedEvidence.includes("accuracy") || verifiedEvidence.includes("latency") ? ["Verified PDF evidence mentions metrics; inspect paper notes before selecting primary and secondary metrics."] : [];
+  const baselineRecommendations = survey.reviewerExpectedBaselines;
+  const datasetRecommendations = survey.reviewerExpectedDatasets;
+  const metricRecommendations = survey.reviewerExpectedMetrics;
   const claimEvidenceRows = evidenceRows.length ? evidenceRows : [
     {
       claim: "Main contribution improves over verified baselines.",
@@ -902,6 +931,8 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     chunks,
     evidenceRows,
     noteArtifacts,
+    survey,
+    ideaVsPriorWork,
     novelty,
     score,
     clarificationQuestions,
@@ -1008,6 +1039,8 @@ function pipelineArtifacts(input: {
   chunks: Array<{ paper_id: string; chunk_id: string; page: number; text: string }>;
   evidenceRows: ReturnType<typeof extractEvidenceRows>;
   noteArtifacts: Record<string, string>;
+  survey: RelatedWorkSurvey;
+  ideaVsPriorWork: IdeaVsPriorWork;
   novelty: ReturnType<typeof assessNovelty>;
   score: StrictScoreResult;
   clarificationQuestions: ClarificationQuestion[];
@@ -1064,6 +1097,8 @@ function pipelineArtifacts(input: {
     "docs/relative_work/candidates.md": candidatesMarkdown(input.candidates, input.ccfVenueGate),
     "docs/relative_work/candidates.json": JSON.stringify(input.candidates, null, 2) + "\n",
     "docs/relative_work/triage_report.md": triageReport(evidenceBackedCandidates),
+    "docs/relative_work/survey.md": input.survey.markdown,
+    "docs/relative_work/idea_vs_prior_work.md": input.ideaVsPriorWork.markdown,
     "docs/reference/pdf_manifest.json": JSON.stringify(input.manifest, null, 2) + "\n",
     "docs/reference/paper_notes/README.md": paperNotesReadme(input.noteArtifacts),
     ...input.noteArtifacts,
@@ -1433,6 +1468,8 @@ async function legacyResumeArtifactExists(outputRoot: string, id: Parameters<typ
     if (id === "idea_intake" && relativePath === "docs/idea/idea_brief.json") return "docs/idea/idea_brief.md";
     if (id === "search_planning" && relativePath === "docs/relative_work/search_plan.md") return "docs/relative_work/search_plan.json";
     if (id === "literature_search" && relativePath === "docs/relative_work/candidates.md") return "docs/relative_work/candidates.json";
+    if (id === "related_work_analysis" && relativePath === "docs/relative_work/survey.md") return "docs/relative_work/topic_clusters.md";
+    if (id === "novelty_analysis" && relativePath === "docs/relative_work/idea_vs_prior_work.md") return "docs/relative_work/novelty_gap_matrix.md";
     if (id === "artifact_writing" && relativePath === "reports/final_ccf_a_report.md") return "reports/ccf_a_readiness_report.md";
     return null;
   })();

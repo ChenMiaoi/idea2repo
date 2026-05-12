@@ -2800,6 +2800,13 @@ function runtimeActivityForEvent(event: Idea2RepoEvent): TuiActivity | null {
         stage: "analysis",
         tone: event.status === "verified" ? "success" : "warning"
       };
+    case "survey.updated":
+      return {
+        title: "Related work survey updated",
+        detail: compactText(`${event.verified_papers} papers, ${event.clusters} clusters, ${event.baselines}/${event.datasets}/${event.metrics} baseline/dataset/metric signals`, 90),
+        stage: "analysis",
+        tone: event.verified_papers ? "success" : "warning"
+      };
     case "question.asked":
       return {
         title: "Clarification question",
