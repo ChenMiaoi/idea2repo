@@ -70,6 +70,7 @@ export function generateReviewerLoop(input: {
   evidenceRows: ClaimEvidenceRow[];
   noteArtifacts: Record<string, string>;
   ccfVenueGate: LiteratureSearchResult["ccf_gate"];
+  agentReports?: ReviewerReport[];
   timestamp?: string;
 }): ReviewerLoop {
   const timestamp = input.timestamp ?? runtimeTimestamp();
@@ -83,7 +84,7 @@ export function generateReviewerLoop(input: {
     ...reviewerTwoTasks(input.runId, timestamp, caps, evidenceRefs),
     ...reviewerThreeTasks(input.runId, timestamp, caps, input.score, input.ccfVenueGate)
   ];
-  const reviewers = [
+  const deterministicReviewers = [
     reviewerReport("R1", verdictFor(input.score.total, tasks.some((task) => task.reviewer_id === "R1" && task.status === "open")), [
       "Novelty and related-work claims are not acceptable until every core comparison is grounded in paper notes.",
       input.ccfVenueGate.preliminary_only ? "The verified CCF-A path is blocked by insufficient qualified core papers." : "The CCF-A core-paper gate is satisfied."
@@ -97,6 +98,9 @@ export function generateReviewerLoop(input: {
       input.ccfVenueGate.preliminary_only ? "Venue fit remains preliminary until the CCF-A core set is complete." : "Venue gate evidence is available."
     ], tasks, input.score)
   ].map((report) => validateReviewerReport(report));
+  const reviewers = deterministicReviewers.map((report) =>
+    mergeReviewerReport(report, input.agentReports?.find((agentReport) => agentReport.reviewer_id === report.reviewer_id), tasks)
+  );
   return { reviewers, tasks };
 }
 
@@ -185,10 +189,10 @@ export async function resolveRebuttalTask(
   return { task: resolved, tasks: finalTasks, score, score_snapshot: snapshot };
 }
 
-export function reviewerReportMarkdown(report: ReviewerReport): string {
+export function reviewerReportMarkdown(report: ReviewerReport, tasks: RebuttalTask[] = []): string {
   return `# Reviewer ${report.reviewer_id}: ${report.role}
 
-## Score
+## Verdict
 
 ${report.verdict}
 
@@ -208,13 +212,17 @@ ${markdownList(report.minor_concerns)}
 
 ${markdownList(report.required_evidence)}
 
-## Questions to Authors
+## Questions
 
 ${markdownList(report.questions_to_authors)}
 
-## What Would Change My Score
+## Score-changing Conditions
 
 ${markdownList(report.what_would_change_my_score)}
+
+## Actionable Tasks
+
+${markdownList(tasks.filter((taskItem) => taskItem.reviewer_id === report.reviewer_id).map((taskItem) => `${taskItem.id}: ${taskItem.title} (binding: ${taskItem.binding.type}:${taskItem.binding.ref})`))}
 `;
 }
 
@@ -349,6 +357,33 @@ function reviewerReport(
   };
 }
 
+function mergeReviewerReport(deterministic: ReviewerReport, agentReport: ReviewerReport | undefined, tasks: RebuttalTask[]): ReviewerReport {
+  if (!agentReport || agentReport.role !== deterministic.role) return deterministic;
+  const reviewerTasks = tasks.filter((taskItem) => taskItem.reviewer_id === deterministic.reviewer_id);
+  return validateReviewerReport({
+    reviewer_id: deterministic.reviewer_id,
+    role: deterministic.role,
+    verdict: stricterVerdict(deterministic.verdict, agentReport.verdict, reviewerTasks.length > 0),
+    summary: `${agentReport.summary.trim() || deterministic.summary}\n\nDeterministic mandatory tasks remain binding: ${reviewerTasks.map((taskItem) => taskItem.id).join(", ") || "none"}.`,
+    major_concerns: unique([...agentReport.major_concerns, ...deterministic.major_concerns]),
+    minor_concerns: unique([...agentReport.minor_concerns, ...deterministic.minor_concerns]),
+    required_evidence: unique([...agentReport.required_evidence, ...deterministic.required_evidence]),
+    questions_to_authors: unique([...agentReport.questions_to_authors, ...deterministic.questions_to_authors]),
+    what_would_change_my_score: unique([...agentReport.what_would_change_my_score, ...deterministic.what_would_change_my_score])
+  });
+}
+
+function stricterVerdict(deterministic: ReviewerReport["verdict"], agent: ReviewerReport["verdict"], hasOpenTasks: boolean): ReviewerReport["verdict"] {
+  if (hasOpenTasks && deterministic === "Weak reject") return "Weak reject";
+  return severityRank(agent) < severityRank(deterministic) ? deterministic : agent;
+}
+
+function severityRank(verdict: ReviewerReport["verdict"]): number {
+  if (verdict === "Weak reject") return 0;
+  if (verdict === "Borderline") return 1;
+  return 2;
+}
+
 function scoreInputFromRebuttalTasks(tasks: RebuttalTask[]): StrictScoreInput {
   const openCaps = new Set(tasks.filter((taskItem) => taskItem.status !== "resolved").map((taskItem) => taskItem.cap_reason).filter(Boolean) as string[]);
   const evidenceRefs = [...new Set(tasks.flatMap((taskItem) => taskItem.evidence_refs))];
@@ -402,6 +437,10 @@ async function writeRebuttalTaskRecords(path: string, tasks: RebuttalTask[]): Pr
 
 function markdownList(items: string[]): string {
   return items.length ? items.map((item) => `- ${item}`).join("\n") : "- None";
+}
+
+function unique(items: string[]): string[] {
+  return [...new Set(items.map((item) => item.trim()).filter(Boolean))];
 }
 
 function stableHash(value: string): string {

@@ -29,7 +29,9 @@ import {
   type ResearchStrategy,
   type SearchPlan,
   type StrictCcfAReview,
-  type ReviewerReport
+  type ReviewerReport,
+  validateReviewerReport,
+  ReviewerReportSchema
 } from "../agents/schemas.js";
 import { CodexOAuthClient } from "../auth/codex-oauth.js";
 import { paperCandidateToRecord, referencesBib, type LiteratureSearchOptions, type LiteratureSearchResult, type PaperRecord } from "../literature.js";
@@ -81,7 +83,7 @@ import { researchStages, stageDefinition, type ResearchStageId } from "./stages.
 export type StagedResearchAgent = Pick<
   CodexOAuthClient,
   "intakeIdea" | "planLiteratureSearch" | "triagePaperCandidates" | "readPaperPdf" | "analyzeRelatedWork" | "analyzeNovelty" | "scoreCcfA" | "reviewFeasibility" | "refineIdea"
->;
+> & Partial<Pick<CodexOAuthClient, "reviewNoveltyRelatedWork" | "reviewMethodExperiment" | "reviewVenueStory">>;
 
 type PipelineTemplatePackage = {
   files: Record<string, string>;
@@ -778,13 +780,28 @@ export async function runResearchPipeline(idea: string, options: ResearchPipelin
     await setStage("clarification_dialogue", generatedQuestions.length ? "completed" : "skipped", generatedQuestions.length ? undefined : "No active clarification question required.");
   }
 
+  const canRunAgentReviewers = hasVerifiedPdfEvidence || agentPaperNotes.length > 0 || evidenceRows.some((row) => row.status === "verified" && row.page && row.quote && row.chunk_id);
+  const agentReviewerReports = canRunAgentReviewers
+    ? await collectAgentReviewerReports(agent, idea, {
+        score,
+        scoreInput,
+        scorecard: strictScoreMarkdown(score),
+        survey: survey.markdown,
+        idea_vs_prior_work: ideaVsPriorWork.markdown,
+        novelty,
+        ccfVenueGate,
+        evidence_rows: evidenceRows,
+        paper_notes: Object.keys(noteArtifacts)
+      }, warnings, options.progress, options.signal)
+    : [];
   const reviewerLoop = generateReviewerLoop({
     runId,
     score,
     scoreInput,
     evidenceRows,
     noteArtifacts,
-    ccfVenueGate
+    ccfVenueGate,
+    agentReports: agentReviewerReports
   });
   if (options.outputRoot) await replaceRebuttalTasks(outputRoot, { runId }, reviewerLoop.tasks);
   for (const reviewer of reviewerLoop.reviewers) {
@@ -1113,9 +1130,9 @@ function pipelineArtifacts(input: {
     "docs/reference/pdf_chunks.json": JSON.stringify(input.chunks, null, 2) + "\n",
     "docs/diagnosis/feasibility_report.md": feasibilityReport,
     "docs/diagnosis/reviewer_panel.md": agentReviewerPanelMarkdown(input.agentRelatedWork, input.agentNovelty, input.agentScore, input.agentFeasibility),
-    "docs/diagnosis/reviewer_1.md": reviewerReportMarkdown(input.reviewerReports.find((reviewer) => reviewer.reviewer_id === "R1") ?? fallbackReviewerReport("R1")),
-    "docs/diagnosis/reviewer_2.md": reviewerReportMarkdown(input.reviewerReports.find((reviewer) => reviewer.reviewer_id === "R2") ?? fallbackReviewerReport("R2")),
-    "docs/diagnosis/reviewer_3.md": reviewerReportMarkdown(input.reviewerReports.find((reviewer) => reviewer.reviewer_id === "R3") ?? fallbackReviewerReport("R3")),
+    "docs/diagnosis/reviewer_1.md": reviewerReportMarkdown(input.reviewerReports.find((reviewer) => reviewer.reviewer_id === "R1") ?? fallbackReviewerReport("R1"), input.rebuttalTasks),
+    "docs/diagnosis/reviewer_2.md": reviewerReportMarkdown(input.reviewerReports.find((reviewer) => reviewer.reviewer_id === "R2") ?? fallbackReviewerReport("R2"), input.rebuttalTasks),
+    "docs/diagnosis/reviewer_3.md": reviewerReportMarkdown(input.reviewerReports.find((reviewer) => reviewer.reviewer_id === "R3") ?? fallbackReviewerReport("R3"), input.rebuttalTasks),
     "docs/diagnosis/rebuttal_tasks.md": rebuttalTasksMarkdown(input.rebuttalTasks),
     "docs/proposal/experiment_plan.md": experimentPlan,
     "docs/execution_plan/12_week_plan.md": executionPlan,
@@ -2061,6 +2078,47 @@ function createStagedAgent(options: ResearchPipelineOptions): StagedResearchAgen
   return new AdapterStagedResearchAgent(createProviderAdapter(provider), options);
 }
 
+async function collectAgentReviewerReports(
+  agent: StagedResearchAgent | null,
+  idea: string,
+  reviewContext: unknown,
+  warnings: string[],
+  progress?: (message: string) => void,
+  signal?: AbortSignal
+): Promise<ReviewerReport[]> {
+  if (!agent) return [];
+  const specs: Array<{
+    label: string;
+    reviewerId: ReviewerReport["reviewer_id"];
+    role: ReviewerReport["role"];
+    run?: (idea: string, context: unknown, progress?: (message: string) => void) => Promise<{ reviewer_report: ReviewerReport }>;
+  }> = [
+    { label: "reviewer novelty related work", reviewerId: "R1", role: "Novelty / Related Work", run: agent.reviewNoveltyRelatedWork?.bind(agent) },
+    { label: "reviewer method experiment", reviewerId: "R2", role: "Method / Experiment", run: agent.reviewMethodExperiment?.bind(agent) },
+    { label: "reviewer venue story", reviewerId: "R3", role: "Venue / Story", run: agent.reviewVenueStory?.bind(agent) }
+  ];
+  const reports: ReviewerReport[] = [];
+  for (const spec of specs) {
+    const report = await stagedOrFallback(
+      () => spec.run?.(idea, reviewContext, progress).then((result) => validateAgentReviewerReport(result.reviewer_report, spec.reviewerId, spec.role)),
+      () => null,
+      warnings,
+      spec.label,
+      signal
+    );
+    if (report) reports.push(report);
+  }
+  return reports;
+}
+
+function validateAgentReviewerReport(report: ReviewerReport, reviewerId: ReviewerReport["reviewer_id"], role: ReviewerReport["role"]): ReviewerReport {
+  const validated = validateReviewerReport(report);
+  if (validated.reviewer_id !== reviewerId || validated.role !== role) {
+    throw new Error(`reviewer report identity mismatch: expected ${reviewerId} ${role}, got ${validated.reviewer_id} ${validated.role}`);
+  }
+  return validated;
+}
+
 class AdapterStagedResearchAgent implements StagedResearchAgent {
   constructor(
     private readonly adapter: ProviderAdapter,
@@ -2147,6 +2205,33 @@ class AdapterStagedResearchAgent implements StagedResearchAgent {
   ): Promise<{ strategy: ResearchStrategy; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
     const strategy = await this.structured("ResearchStrategy", ResearchStrategySchema, validateResearchStrategy, "08_research_strategist.md", "Propose a revised defensible research direction after strict review.", { idea, review_context: reviewContext }, progress);
     return this.result({ strategy });
+  }
+
+  async reviewNoveltyRelatedWork(
+    idea: string,
+    reviewContext: unknown,
+    progress?: (message: string) => void
+  ): Promise<{ reviewer_report: ReviewerReport; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const reviewerReport = await this.structured("ReviewerReport", ReviewerReportSchema, validateReviewerReport, "09_reviewer_novelty_related_work.md", "Write Reviewer R1 novelty and related-work feedback.", { idea, review_context: reviewContext }, progress);
+    return this.result({ reviewer_report: reviewerReport });
+  }
+
+  async reviewMethodExperiment(
+    idea: string,
+    reviewContext: unknown,
+    progress?: (message: string) => void
+  ): Promise<{ reviewer_report: ReviewerReport; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const reviewerReport = await this.structured("ReviewerReport", ReviewerReportSchema, validateReviewerReport, "10_reviewer_method_experiment.md", "Write Reviewer R2 method and experiment feedback.", { idea, review_context: reviewContext }, progress);
+    return this.result({ reviewer_report: reviewerReport });
+  }
+
+  async reviewVenueStory(
+    idea: string,
+    reviewContext: unknown,
+    progress?: (message: string) => void
+  ): Promise<{ reviewer_report: ReviewerReport; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const reviewerReport = await this.structured("ReviewerReport", ReviewerReportSchema, validateReviewerReport, "11_reviewer_venue_story.md", "Write Reviewer R3 venue and story feedback.", { idea, review_context: reviewContext }, progress);
+    return this.result({ reviewer_report: reviewerReport });
   }
 
   private async structured<T>(

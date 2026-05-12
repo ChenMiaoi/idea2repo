@@ -1376,6 +1376,9 @@ test("research pipeline persists new staged PDF reader notes", async () => {
           }
         }),
       scoreCcfA: async () => withAgentMeta({ scorecard: { total: 65, dimensions: sampleStrictCcfADimensions(), cap_reasons: [], evidence_warnings: [], recommendations: [] } }),
+      reviewNoveltyRelatedWork: async () => withAgentMeta({ reviewer_report: sampleReviewerReport("R1", "Novelty / Related Work", "UNIQUE_R1_AGENT_REVIEW") }),
+      reviewMethodExperiment: async () => withAgentMeta({ reviewer_report: sampleReviewerReport("R2", "Method / Experiment", "UNIQUE_R2_AGENT_REVIEW") }),
+      reviewVenueStory: async () => withAgentMeta({ reviewer_report: sampleReviewerReport("R3", "Venue / Story", "UNIQUE_R3_AGENT_REVIEW") }),
       refineIdea: async () =>
         withAgentMeta({
           strategy: {
@@ -1407,6 +1410,11 @@ test("research pipeline persists new staged PDF reader notes", async () => {
     assert.match(result.artifacts["docs/reference/paper_notes/paper-1.md"] ?? "", /How This Paper Affects Our Idea/);
     assert.match(result.artifacts["docs/reference/paper_notes/paper-1.md"] ?? "", /Chunk: p1-c2/);
     assert.match(result.artifacts["docs/reference/paper_notes/paper-1.md"] ?? "", /chunk_id: p1-c2/);
+    assert.match(result.artifacts["docs/diagnosis/reviewer_1.md"] ?? "", /UNIQUE_R1_AGENT_REVIEW/);
+    assert.match(result.artifacts["docs/diagnosis/reviewer_1.md"] ?? "", /## Actionable Tasks/);
+    assert.match(result.artifacts["docs/diagnosis/reviewer_1.md"] ?? "", /R1-M/);
+    assert.match(result.artifacts["docs/diagnosis/reviewer_2.md"] ?? "", /UNIQUE_R2_AGENT_REVIEW/);
+    assert.match(result.artifacts["docs/diagnosis/reviewer_3.md"] ?? "", /UNIQUE_R3_AGENT_REVIEW/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1488,6 +1496,20 @@ function sampleStrictCcfADimensions() {
     related_work: 4,
     feasibility_reproducibility: 4,
     venue_story: 3
+  };
+}
+
+function sampleReviewerReport(reviewerId: "R1" | "R2" | "R3", role: "Novelty / Related Work" | "Method / Experiment" | "Venue / Story", marker: string) {
+  return {
+    reviewer_id: reviewerId,
+    role,
+    verdict: "Weak accept" as const,
+    summary: `${marker} summary`,
+    major_concerns: [`${marker} major concern`],
+    minor_concerns: [`${marker} minor concern`],
+    required_evidence: [`${marker} evidence`],
+    questions_to_authors: [`${marker} question`],
+    what_would_change_my_score: [`${marker} condition`]
   };
 }
 

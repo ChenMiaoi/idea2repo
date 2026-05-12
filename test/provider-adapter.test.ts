@@ -9,6 +9,7 @@ import { CodexCliAdapter, OpenAICodexOAuthAdapter, OfflineAdapter, createProvide
 import { runResearchPipeline } from "../src/pipeline/research-pipeline.js";
 import { validateResearchAnalysis, type ResearchAnalysis } from "../src/types.js";
 import type { ProviderAdapter, StructuredRequest } from "../src/providers/adapter.js";
+import { validateReviewerReport } from "../src/agents/schemas.js";
 
 test("offline provider adapter returns schema-valid deterministic research analysis", async () => {
   const adapter = new OfflineAdapter();
@@ -65,6 +66,53 @@ test("Codex OAuth adapter delegates structured ResearchAnalysis requests to the 
     reasoningEffort: "low"
   });
   assert.equal(analysis.idea_summary, "Adapter test");
+});
+
+test("Codex OAuth adapter routes staged reviewer report prompts", async () => {
+  const calls: string[] = [];
+  const makeReport = (reviewer_id: "R1" | "R2" | "R3", role: "Novelty / Related Work" | "Method / Experiment" | "Venue / Story") => ({
+    reviewer_id,
+    role,
+    verdict: "Weak reject" as const,
+    summary: `${role} needs evidence.`,
+    major_concerns: ["missing evidence"],
+    minor_concerns: [],
+    required_evidence: ["verified artifacts"],
+    questions_to_authors: ["Which artifact resolves this?"],
+    what_would_change_my_score: ["verified resolution"]
+  });
+  const adapter = new OpenAICodexOAuthAdapter(() => ({
+    reviewNoveltyRelatedWork: async () => {
+      calls.push("reviewNoveltyRelatedWork");
+      return { reviewer_report: makeReport("R1", "Novelty / Related Work"), provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: "openai-codex-responses", codex_model: "test", events: [] };
+    },
+    reviewMethodExperiment: async () => {
+      calls.push("reviewMethodExperiment");
+      return { reviewer_report: makeReport("R2", "Method / Experiment"), provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: "openai-codex-responses", codex_model: "test", events: [] };
+    },
+    reviewVenueStory: async () => {
+      calls.push("reviewVenueStory");
+      return { reviewer_report: makeReport("R3", "Venue / Story"), provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: "openai-codex-responses", codex_model: "test", events: [] };
+    }
+  } as any));
+  const routes = [
+    ["09_reviewer_novelty_related_work.md", "R1", "Novelty / Related Work", "reviewNoveltyRelatedWork"],
+    ["10_reviewer_method_experiment.md", "R2", "Method / Experiment", "reviewMethodExperiment"],
+    ["11_reviewer_venue_story.md", "R3", "Venue / Story", "reviewVenueStory"]
+  ] as const;
+  for (const [promptFile, reviewerId, role, method] of routes) {
+    const report = await adapter.structured({
+      task: "review",
+      schemaName: "ReviewerReport",
+      promptFile,
+      context: { idea: "Adapter reviewer test", review_context: {} },
+      validate: validateReviewerReport
+    });
+    assert.equal(report.reviewer_id, reviewerId);
+    assert.equal(report.role, role);
+    assert.equal(calls.at(-1), method);
+  }
+  assert.deepEqual(calls, routes.map((route) => route[3]));
 });
 
 test("research pipeline uses provider adapter for Codex CLI staged agents", async () => {

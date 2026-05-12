@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { generateReviewerLoop, readRebuttalTasks, replaceRebuttalTasks, resolveRebuttalTask } from "../src/runtime/rebuttal.js";
+import { generateReviewerLoop, readRebuttalTasks, replaceRebuttalTasks, resolveRebuttalTask, reviewerReportMarkdown } from "../src/runtime/rebuttal.js";
 import { strictCcfAScore, type StrictScoreInput } from "../src/skills/analysis/ccf-a-score.js";
 
 test("reviewer loop creates three reports and bound rebuttal tasks", () => {
@@ -29,6 +29,48 @@ test("reviewer loop creates three reports and bound rebuttal tasks", () => {
   assert.ok(loop.tasks.some((task) => task.reviewer_id === "R2" && task.score_dimension === "experimental_rigor"));
   assert.ok(loop.tasks.some((task) => task.reviewer_id === "R3" && task.score_dimension === "venue_story"));
   assert.equal(loop.tasks.every((task) => Boolean(task.binding.type && task.binding.ref)), true);
+  const markdown = reviewerReportMarkdown(loop.reviewers[0]!, loop.tasks);
+  for (const heading of ["Verdict", "Summary", "Major Concerns", "Required Evidence", "Questions", "Score-changing Conditions", "Actionable Tasks"]) {
+    assert.match(markdown, new RegExp(`## ${heading}`));
+  }
+  assert.match(markdown, /R1-M/);
+});
+
+test("agent reviewer reports cannot remove deterministic cap-derived tasks", () => {
+  const scoreInput: StrictScoreInput = {
+    verifiedRelatedWorkCount: 0,
+    pdfReadCount: 0,
+    corePaperCount: 0,
+    hasExecutableExperimentPlan: false
+  };
+  const loop = generateReviewerLoop({
+    runId: "run-1",
+    score: strictCcfAScore(scoreInput),
+    scoreInput,
+    evidenceRows: [],
+    noteArtifacts: {},
+    ccfVenueGate: { eligible_core_count: 0, required_core_count: 8, preliminary_only: true },
+    agentReports: [
+      {
+        reviewer_id: "R1",
+        role: "Novelty / Related Work",
+        verdict: "Weak accept",
+        summary: "Agent believes the related work is fine.",
+        major_concerns: ["Agent-only concern"],
+        minor_concerns: [],
+        required_evidence: ["Agent-only evidence"],
+        questions_to_authors: ["Agent-only question?"],
+        what_would_change_my_score: ["Agent-only condition"]
+      }
+    ]
+  });
+  const r1 = loop.reviewers.find((reviewer) => reviewer.reviewer_id === "R1");
+  assert.ok(r1);
+  assert.equal(r1.verdict, "Weak reject");
+  assert.ok(r1.major_concerns.some((concern) => /Agent-only concern/.test(concern)));
+  assert.ok(r1.major_concerns.some((concern) => /^R1-M/.test(concern)));
+  assert.ok(loop.tasks.some((task) => task.reviewer_id === "R1" && task.status === "open"));
+  assert.match(reviewerReportMarkdown(r1, loop.tasks), /Actionable Tasks[\s\S]*R1-M/);
 });
 
 test("resolving a rebuttal task reruns score and records a new snapshot", async () => {

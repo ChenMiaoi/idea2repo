@@ -198,6 +198,21 @@ test("strict CCF-A reviewer prompt and schema use the canonical rubric", async (
   );
 });
 
+test("staged reviewer prompts enforce reviewer identities and mandatory task limits", async () => {
+  const prompts = [
+    ["09_reviewer_novelty_related_work.md", "R1", "Novelty / Related Work"],
+    ["10_reviewer_method_experiment.md", "R2", "Method / Experiment"],
+    ["11_reviewer_venue_story.md", "R3", "Venue / Story"]
+  ] as const;
+  for (const [file, reviewerId, role] of prompts) {
+    const prompt = await loadAgentPrompt(file);
+    assert.match(prompt, new RegExp(`reviewer_id.*${reviewerId}|${reviewerId}.*reviewer_id`, "i"));
+    assert.match(prompt, new RegExp(role.replace("/", "\\/")));
+    assert.match(prompt, /Do not change deterministic score caps or remove required tasks/i);
+    assert.match(prompt, /verdict, summary, major concerns, required evidence, questions/i);
+  }
+});
+
 test("CodexOAuthClient rethrows cancellation during JSON body reads", async () => {
   const home = await mkdtemp(join(tmpdir(), "idea2repo-oauth-cancel-"));
   const previous = process.env.IDEA2REPO_HOME;

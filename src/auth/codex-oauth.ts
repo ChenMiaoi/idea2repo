@@ -15,6 +15,7 @@ import {
   validatePdfPaperNote,
   validateRelatedWorkAnalysis,
   validateResearchStrategy,
+  validateReviewerReport,
   validateSearchPlan,
   validateStrictCcfAReview,
   type CandidateTriage,
@@ -24,6 +25,7 @@ import {
   type PdfPaperNote,
   type RelatedWorkAnalysis,
   type ResearchStrategy,
+  type ReviewerReport,
   type SearchPlan,
   type StrictCcfAReview
 } from "../agents/schemas.js";
@@ -424,6 +426,33 @@ export class CodexOAuthClient {
   ): Promise<{ strategy: ResearchStrategy; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
     const { parsed, events } = await this.runStagedAgent("08_research_strategist.md", "Propose a revised defensible research direction after strict review.", { idea, review_context: reviewContext }, validateResearchStrategy, "ResearchStrategy", progress);
     return { strategy: parsed, provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: OPENAI_CODEX_API_SHAPE, codex_model: this.model(), events };
+  }
+
+  async reviewNoveltyRelatedWork(
+    idea: string,
+    reviewContext: unknown,
+    progress?: (message: string) => void
+  ): Promise<{ reviewer_report: ReviewerReport; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const { parsed, events } = await this.runStagedAgent("09_reviewer_novelty_related_work.md", "Write Reviewer R1 novelty and related-work feedback.", { idea, review_context: reviewContext }, validateReviewerReport, "ReviewerReport", progress);
+    return { reviewer_report: parsed, provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: OPENAI_CODEX_API_SHAPE, codex_model: this.model(), events };
+  }
+
+  async reviewMethodExperiment(
+    idea: string,
+    reviewContext: unknown,
+    progress?: (message: string) => void
+  ): Promise<{ reviewer_report: ReviewerReport; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const { parsed, events } = await this.runStagedAgent("10_reviewer_method_experiment.md", "Write Reviewer R2 method and experiment feedback.", { idea, review_context: reviewContext }, validateReviewerReport, "ReviewerReport", progress);
+    return { reviewer_report: parsed, provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: OPENAI_CODEX_API_SHAPE, codex_model: this.model(), events };
+  }
+
+  async reviewVenueStory(
+    idea: string,
+    reviewContext: unknown,
+    progress?: (message: string) => void
+  ): Promise<{ reviewer_report: ReviewerReport; provider_id: string; api_shape: string; codex_model: string; events: unknown[] }> {
+    const { parsed, events } = await this.runStagedAgent("11_reviewer_venue_story.md", "Write Reviewer R3 venue and story feedback.", { idea, review_context: reviewContext }, validateReviewerReport, "ReviewerReport", progress);
+    return { reviewer_report: parsed, provider_id: OPENAI_CODEX_PROVIDER_ID, api_shape: OPENAI_CODEX_API_SHAPE, codex_model: this.model(), events };
   }
 
   async discussIdea(

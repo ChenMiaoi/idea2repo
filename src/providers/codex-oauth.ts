@@ -3,7 +3,7 @@ import { OPENAI_CODEX_PROVIDER_ID, apiShapeForProvider } from "../providers.js";
 import { throwIfAborted } from "../runtime/abort.js";
 import type { ResearchAnalysis } from "../types.js";
 import type { ProviderAdapter, StructuredRequest } from "./adapter.js";
-import type { IdeaBrief, SearchPlan, CandidateTriage, PdfPaperNote, RelatedWorkAnalysis, NoveltyGapAnalysis, StrictCcfAReview, FeasibilityReview, ResearchStrategy } from "../agents/schemas.js";
+import type { IdeaBrief, SearchPlan, CandidateTriage, PdfPaperNote, RelatedWorkAnalysis, NoveltyGapAnalysis, StrictCcfAReview, FeasibilityReview, ResearchStrategy, ReviewerReport } from "../agents/schemas.js";
 
 export class OpenAICodexOAuthAdapter implements ProviderAdapter {
   readonly id = OPENAI_CODEX_PROVIDER_ID;
@@ -86,6 +86,11 @@ async function runStagedStructured<T>(client: CodexOAuthClient, request: Structu
       return request.validate((await client.reviewFeasibility(idea, context.constraints, request.progress)).feasibility as FeasibilityReview);
     case "ResearchStrategy":
       return request.validate((await client.refineIdea(idea, context.review_context, request.progress)).strategy as ResearchStrategy);
+    case "ReviewerReport":
+      if (request.promptFile === "09_reviewer_novelty_related_work.md") return request.validate((await client.reviewNoveltyRelatedWork(idea, context.review_context, request.progress)).reviewer_report as ReviewerReport);
+      if (request.promptFile === "10_reviewer_method_experiment.md") return request.validate((await client.reviewMethodExperiment(idea, context.review_context, request.progress)).reviewer_report as ReviewerReport);
+      if (request.promptFile === "11_reviewer_venue_story.md") return request.validate((await client.reviewVenueStory(idea, context.review_context, request.progress)).reviewer_report as ReviewerReport);
+      throw new Error(`Codex OAuth adapter cannot route reviewer prompt: ${request.promptFile ?? "(missing)"}`);
     default:
       throw new Error(`Codex OAuth adapter cannot satisfy structured schema: ${request.schemaName}`);
   }
