@@ -175,11 +175,7 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
   const initialModel = modelCatalog.default_model;
   const initialReasoning = selectedModelReasoning(modelCatalog.models, initialModel);
   const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "system",
-      title: "Ready",
-      text: "Type an idea, run /research, or use /help. Commands with choices open selectable menus."
-    }
+    initialResearchAgentMessage()
   ]);
   const [workflowSteps, setWorkflowSteps] = useState<TuiWorkflowStep[]>(() => createWorkflowSteps("idea_intake"));
   const [activities, setActivities] = useState<TuiActivity[]>([]);
@@ -287,7 +283,7 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
       pageBudgetForLayout(layout, {
         pinnedLimits: showPinnedLimits,
         mode: pageMode,
-        optionCount: activeDirectoryPicker?.options.length ?? (activeApprovalDialog ? 2 : activeSelect?.options.length ?? slashSuggestions.length)
+        optionCount: activeDirectoryPicker?.options.length ?? (activeApprovalDialog ? approvalDialogChoices(activeApprovalDialog.record).length : activeSelect?.options.length ?? slashSuggestions.length)
       }),
     [activeApprovalDialog, activeDirectoryPicker, activeSelect, layout, pageMode, showPinnedLimits, slashSuggestions.length]
   );
@@ -302,17 +298,22 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
         append({ role: "assistant", title: "Approval left pending", text: activeApprovalDialog.record.action });
         return;
       }
+      const choices = approvalDialogChoices(activeApprovalDialog.record);
       if (key.leftArrow || key.upArrow) {
-        setActiveApprovalDialog((current) => (current ? { ...current, selectedDecision: "approved" } : current));
+        setActiveApprovalDialog((current) => (current ? { ...current, selectedDecision: previousApprovalChoice(choices, current.selectedDecision) } : current));
         return;
       }
       if (key.rightArrow || key.downArrow || key.tab) {
-        setActiveApprovalDialog((current) => (current ? { ...current, selectedDecision: current.selectedDecision === "approved" ? "denied" : "approved" } : current));
+        setActiveApprovalDialog((current) => (current ? { ...current, selectedDecision: nextApprovalChoice(choices, current.selectedDecision) } : current));
         return;
       }
       const normalized = _input.toLowerCase();
       if (normalized === "a" || normalized === "y") {
         void resolveActiveApprovalDialog("approved");
+        return;
+      }
+      if (normalized === "s" && choices.includes("selected")) {
+        void resolveActiveApprovalDialog("selected");
         return;
       }
       if (normalized === "d" || normalized === "n") {
@@ -523,14 +524,15 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
         });
         return;
       case "/trace":
+        setInspectorTab("debug");
         await runBusy(async () => {
           const live = currentRuntimeSnapshot(output);
           if (live) {
-            append({ role: "assistant", title: "Runtime trace", text: `${live.events.length} live event${live.events.length === 1 ? "" : "s"} recorded.`, details: live.events.slice(-8).map((event) => `${event.timestamp} ${event.type}`) });
+            append({ role: "assistant", title: "Debug opened", text: `Debug tab contains ${live.events.length} live event${live.events.length === 1 ? "" : "s"}.`, details: ["Raw runtime trace is shown only in the Debug tab."] });
             return;
           }
           const events = await readJsonlEvents(resolve(output, ".idea2repo", "trace.jsonl"));
-          append({ role: "assistant", title: "Runtime trace", text: `${events.length} event${events.length === 1 ? "" : "s"} recorded.`, details: events.slice(-8).map((event) => `${event.timestamp} ${event.type}`) });
+          append({ role: "assistant", title: "Debug opened", text: `${events.length} stored event${events.length === 1 ? "" : "s"} are available in .idea2repo/trace.jsonl.`, details: ["Raw runtime trace is shown only in the Debug tab during live runs."] });
         });
         return;
       case "/decisions":
@@ -1341,15 +1343,26 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
     const dialog = activeApprovalDialog;
     if (!dialog) return;
     setActiveApprovalDialog(null);
+    const selectedPaperIds = decision === "selected" ? parseSelectedPaperIds(await promptForInput("Paper IDs to download:", {
+      submittedMessage: "submitted selected paper IDs",
+      historyEnabled: true,
+      initialValue: dialog.record.paper_options?.slice(0, 3).map((paper) => paper.id).join(", ") ?? ""
+    })) : [];
+    if (decision === "selected" && !selectedPaperIds.length) {
+      append({ role: "assistant", title: "Approval left pending", text: "No paper IDs were selected for PDF download." });
+      return;
+    }
     await runBusy(async () => {
-      await resolveApproval(dialog.outputRoot, dialog.record.id, decision);
+      await resolveApproval(dialog.outputRoot, dialog.record.id, decision, selectedPaperIds);
     });
   }
 
-  async function resolveApproval(root: string, approvalId: string, decision: ApprovalDialogDecision): Promise<void> {
+  async function resolveApproval(root: string, approvalId: string, decision: ApprovalDialogDecision, selectedPaperIds: string[] = []): Promise<void> {
     const outputRoot = resolve(root);
-    const record = await resolveApprovalRecord(outputRoot, approvalId, decision, {
-      reason: decision === "approved" ? "Approved from TUI." : "Denied from TUI.",
+    const approvalDecision = decision === "denied" ? "denied" : "approved";
+    const record = await resolveApprovalRecord(outputRoot, approvalId, approvalDecision, {
+      reason: decision === "selected" ? `Selected PDF papers from TUI: ${selectedPaperIds.join(", ")}` : decision === "approved" ? "Approved from TUI." : "Denied from TUI.",
+      selectedPaperIds,
       events: {
         emit: (event) => {
           recordRuntimeEvent(event.run_id, outputRoot, event);
@@ -1358,9 +1371,9 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
     });
     append({
       role: "assistant",
-      title: decision === "approved" ? "Approval granted" : "Approval denied",
+      title: decision === "selected" ? "PDF selection approved" : decision === "approved" ? "Approval granted" : "Approval denied",
       text: record.action,
-      details: [`Approval: ${record.id}`, `Risk: ${record.risk.join(", ")}`]
+      details: [`Approval: ${record.id}`, `Risk: ${record.risk.join(", ")}`, selectedPaperIds.length ? `Selected papers: ${selectedPaperIds.join(", ")}` : ""].filter(Boolean)
     });
   }
 
@@ -1646,6 +1659,7 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
           approvalId={activeApprovalDialog.record.id}
           action={activeApprovalDialog.record.action}
           risk={activeApprovalDialog.record.risk.join(", ")}
+          paperOptions={activeApprovalDialog.record.paper_options}
           selectedDecision={activeApprovalDialog.selectedDecision}
           height={pageBudget.insightRows}
           width={layout.columns}
@@ -1707,6 +1721,14 @@ function readTerminalSize(): TerminalSize {
   return {
     columns: process.stdout.columns ?? 100,
     rows: process.stdout.rows ?? 36
+  };
+}
+
+function initialResearchAgentMessage(): Message {
+  return {
+    role: "system",
+    title: "Idea2Repo Research Agent",
+    text: "Auth: checking · Mode: Research · Output: not selected"
   };
 }
 
@@ -2299,7 +2321,7 @@ function ComposerPanel({
     });
     push(<Text key="slash-help" color={theme.dim}>{compactText("Up/Down selects. Tab completes. Enter runs or opens a selector.", width)}</Text>);
   } else {
-    push(<Text key="normal-help" color={theme.muted}>{compactText("Type / for commands. Up/Down recalls history. Enter captures an idea.", width)}</Text>);
+    push(<Text key="normal-help" color={theme.muted}>{compactText("Enter your research idea. Use / only when you need settings or runtime actions.", width)}</Text>);
   }
 
   return (
@@ -2315,7 +2337,7 @@ function ComposerPanel({
               <SingleLineTextInput
                 key={inputVersion}
                 value={input}
-                placeholder={activePrompt ? "paste redirect URL or code" : ""}
+                placeholder={activePrompt ? "paste redirect URL or code" : "Enter your research idea..."}
                 focus={!activeSelect}
                 onChange={onChange}
                 onSubmit={onSubmit}
@@ -2639,7 +2661,7 @@ function recentActivityForStep(activities: TuiActivity[], step?: TuiWorkflowStep
 
 function thinkingFallbackText(steps: TuiWorkflowStep[], busy: boolean): string {
   const step = activeWorkflowStep(steps);
-  return `${step?.label ?? "Agent"} ${busy ? "thinking..." : "waiting for the next command."}`;
+  return `${step?.label ?? "Agent"} ${busy ? "thinking..." : "waiting for a research idea."}`;
 }
 
 function thinkingStatus(step: TuiWorkflowStep | undefined, busy: boolean): string {
@@ -2651,7 +2673,7 @@ function thinkingStatus(step: TuiWorkflowStep | undefined, busy: boolean): strin
 
 function thinkingFocus(step: TuiWorkflowStep | undefined, recent?: TuiActivity): string {
   if (recent?.detail) return recent.detail;
-  if (!step) return "Waiting for an idea or slash command.";
+  if (!step) return "Waiting for a research idea.";
   switch (step.id) {
     case "idea_intake":
       return "Reading the idea and looking for missing research context.";
@@ -2713,9 +2735,9 @@ function executionPlaceholder(step: TuiWorkflowStep | undefined, busy: boolean):
 }
 
 function placeholderDetail(step: TuiWorkflowStep | undefined, busy: boolean): string {
-  if (!step) return busy ? "Preparing the next visible operation." : "Waiting for an idea or slash command.";
+  if (!step) return busy ? "Preparing the next visible operation." : "Waiting for a research idea.";
   if (busy) return `${step.label} stage thinking; waiting for provider or file-operation events.`;
-  if (step.status === "active") return `${step.label} stage is ready; run the next command when appropriate.`;
+  if (step.status === "active") return `${step.label} stage is ready for the next research action.`;
   if (step.status === "done") return `${step.label} stage is complete.`;
   return `${step.label} stage is queued.`;
 }
@@ -3049,11 +3071,39 @@ function composerBorderColor(activeSelect: ActiveSelect | null, activePrompt: Ac
 
 function nextActionForState(state: { busy: boolean; authStatus: string; hasIdea: boolean; activities: TuiActivity[] }): { command: string; reason: string } {
   if (state.busy) return { command: "wait", reason: "A run is already in progress; the visible plan will advance as events arrive." };
-  if (!state.hasIdea) return { command: "type idea", reason: "Start with a research idea, or run /research and enter one when prompted." };
+  if (!state.hasIdea) return { command: "enter idea", reason: "Start with a research idea; the Codex intake brief and project-name flow run first." };
   const completed = state.activities.some((activity) => activity.title === "Generation complete");
-  if (completed) return { command: "/validate", reason: "Check the manifest and generated artifacts, then use /status or /github as needed." };
-  if (!state.authStatus.startsWith("logged in")) return { command: "/login", reason: "Codex OAuth is not signed in. Use /provider if you want offline mode instead." };
-  return { command: "/research", reason: "The idea is captured. Research and generate the repository scaffold when the settings look right." };
+  if (completed) return { command: "review score", reason: "Check the manifest, scorecard, reviewer tasks, and generated proposal artifacts." };
+  if (!state.authStatus.startsWith("logged in")) return { command: "sign in", reason: "Codex OAuth is not signed in; offline mode remains available from settings." };
+  return { command: "start research", reason: "The idea is captured; confirm the name and parent directory to generate the repository." };
+}
+
+function isPdfApprovalRecord(record: ApprovalRecord): boolean {
+  return /pdf\.acquire/i.test(record.action) || record.risk.includes("pdf_download");
+}
+
+function approvalDialogChoices(record: ApprovalRecord): ApprovalDialogDecision[] {
+  return isPdfApprovalRecord(record) ? ["approved", "selected", "denied"] : ["approved", "denied"];
+}
+
+function nextApprovalChoice(choices: ApprovalDialogDecision[], current: ApprovalDialogDecision): ApprovalDialogDecision {
+  return choices[wrapSelectIndex(choices.indexOf(current) + 1, choices.length)] ?? choices[0] ?? "approved";
+}
+
+function previousApprovalChoice(choices: ApprovalDialogDecision[], current: ApprovalDialogDecision): ApprovalDialogDecision {
+  return choices[wrapSelectIndex(choices.indexOf(current) - 1, choices.length)] ?? choices[0] ?? "approved";
+}
+
+export function parseSelectedPaperIds(value: string): string[] {
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const raw of value.split(/[\s,;]+/)) {
+    const id = raw.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
 }
 
 function lastUserIdea(messages: Message[]): string {
@@ -3146,6 +3196,7 @@ export function approvalRecordFromRequestedEvent(event: Idea2RepoEvent, mode: Ru
     risk: event.risk.split(",").map((item) => item.trim()).filter(Boolean) as ApprovalRecord["risk"],
     mode,
     status: "pending",
+    ...(event.paper_options?.length ? { paper_options: event.paper_options } : {}),
     created_at: event.timestamp
   };
 }
@@ -3165,6 +3216,7 @@ export function cockpitShortcutForInput(input: string, options: { ctrl?: boolean
   const normalized = input.toLowerCase();
   if (normalized === "[") return { type: "previous_tab" };
   if (normalized === "]") return { type: "next_tab" };
+  if (!options.ctrl && normalized === "d") return { type: "tab", tab: "debug" };
   if (/^[1-9]$/.test(normalized)) {
     const tab = INSPECTOR_TABS[Number(normalized) - 1];
     return tab ? { type: "tab", tab } : null;

@@ -259,6 +259,7 @@ async function route(request: IncomingMessage, response: ServerResponse, runMana
       if (!decision) throw new HttpError(400, "decision must be approved or denied");
       const record = await resolveApprovalRecord(run.output_root, decodeURIComponent(approvalAction[1]!), decision, {
         reason: stringOrNull(body.reason) ?? undefined,
+        selectedPaperIds: decision === "approved" ? stringArray(body.selected_paper_ids) : [],
         events: runControlEvents(runManager, run)
       });
       sendJson(response, 200, record as unknown as Record<string, unknown>);

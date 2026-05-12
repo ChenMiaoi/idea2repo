@@ -76,8 +76,8 @@ test("CLI research writes canonical runtime and report artifacts", async () => {
     assert.match(await readFile(join(output, "reports", "evidence_ledger.md"), "utf8"), /Evidence Ledger/);
     assert.match(await readFile(join(output, "plans", "12_week_execution_plan.md"), "utf8"), /12 Week Execution Plan/);
     assert.match(await readFile(join(output, "plans", "experiment_plan.md"), "utf8"), /Experiment Plan/);
-    assert.match(await readFile(join(output, "docs", "proposal", "strict_execution_plan.md"), "utf8"), /12-Week Execution Table/);
-    assert.match(await readFile(join(output, "docs", "proposal", "solution_design.md"), "utf8"), /Solution Design/);
+    assert.match(await readFile(join(output, "docs", "proposal", "strict_execution_plan.md"), "utf8"), /12-Week Execution Plan/);
+    assert.match(await readFile(join(output, "docs", "proposal", "solution_design.md"), "utf8"), /Feasible Solution Design/);
     assert.match(await readFile(join(output, "paper", "abstract.md"), "utf8"), /Abstract Draft/);
     assert.match(await readFile(join(output, "paper", "related_work.md"), "utf8"), /Related Work Draft/);
     assert.match(await readFile(join(output, "papers", "papers.bib"), "utf8"), /Do not invent paper titles/);

@@ -143,6 +143,7 @@ export type StageControlResponse = StageControlResult;
 export type ApprovalResolutionRequest = {
   decision: "approved" | "denied";
   reason?: string;
+  selected_paper_ids?: string[];
 };
 
 export type ApprovalResolutionResponse = ApprovalRecord;

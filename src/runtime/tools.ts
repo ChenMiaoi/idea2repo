@@ -112,9 +112,15 @@ export class ToolRegistry {
     await ctx.toolCalls?.record(started);
     await ctx.events.emit({ type: "tool.started", run_id: ctx.runId, tool_call_id: toolCallId, tool_name: spec.name, timestamp: startedAt });
     try {
-      await enforceApproval(
+      const approval = await enforceApproval(
         ctx.permissions,
-        { run_id: ctx.runId, stage_id: currentStageId(ctx), action: `tool:${spec.name}`, risk: approvalRisks(risk) },
+        {
+          run_id: ctx.runId,
+          stage_id: currentStageId(ctx),
+          action: `tool:${spec.name}`,
+          risk: approvalRisks(risk),
+          ...approvalRequestMetadata(spec.name, input)
+        },
         ctx.approvals,
         {
           waitForResolution: ctx.approvalMode === "block",
@@ -124,7 +130,8 @@ export class ToolRegistry {
         }
       );
       throwIfAborted(ctx.signal);
-      const output = await spec.handler(input, ctx);
+      const approvedInput = applyApprovalSelection(spec.name, input, approval);
+      const output = await spec.handler(approvedInput, ctx);
       throwIfAborted(ctx.signal);
       const summary = spec.summarizeOutput?.(output) ?? `${spec.name} completed`;
       const completedAt = runtimeTimestamp();
@@ -422,6 +429,41 @@ export type TemplateCheckInput = {
 
 function approvalRisks(risk: ToolRisk[]): ApprovalRisk[] {
   return [...new Set(risk.map((item) => (item === "write-state" ? "write" : item)))];
+}
+
+function approvalRequestMetadata(name: string, input: unknown): { paper_options?: Array<{ id: string; title: string }> } {
+  if (name !== "pdf.acquire" || !isPdfAcquireInput(input)) return {};
+  return {
+    paper_options: input.candidates.map((candidate) => ({
+      id: paperCandidateApprovalId(candidate),
+      title: candidate.title
+    }))
+  };
+}
+
+function applyApprovalSelection<Input>(name: string, input: Input, approval: ApprovalRecord | null): Input {
+  if (name !== "pdf.acquire" || !isPdfAcquireInput(input) || !approval?.selected_paper_ids?.length) return input;
+  const selected = new Set(approval.selected_paper_ids.map((id) => normalizePaperSelectionId(id)));
+  return {
+    ...input,
+    candidates: input.candidates.filter((candidate) => selected.has(normalizePaperSelectionId(paperCandidateApprovalId(candidate))))
+  } as Input;
+}
+
+function isPdfAcquireInput(value: unknown): value is PdfAcquireToolInput {
+  return Boolean(value && typeof value === "object" && Array.isArray((value as PdfAcquireToolInput).candidates));
+}
+
+function paperCandidateApprovalId(candidate: PaperCandidate): string {
+  return safePaperSelectionId(candidate.candidate_id || candidate.title);
+}
+
+function safePaperSelectionId(value: string): string {
+  return normalizePaperSelectionId(value).slice(0, 80) || "paper";
+}
+
+function normalizePaperSelectionId(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 function currentStageId(ctx: ToolContext): string | undefined {

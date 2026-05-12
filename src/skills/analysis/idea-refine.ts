@@ -41,143 +41,53 @@ export function strictRevisedIdeaMarkdown(input: StrictProposalInput): string {
 
 ${context.claim}
 
-## Hypothesis
+## Central Hypothesis
 
 ${context.hypothesis}
 
-## Prior-Work Delta
+## Why This Is Different From Prior Work
 
 ${context.priorWorkDelta}
+
+## What Must Be Proven
+
+${markdownList(context.proofObligations, "No proof obligation has been cleared; keep claims preliminary until evidence is verified.")}
 
 ## Target Venue
 
 ${context.targetVenue}
 
-## Contribution Type
+## Expected Contribution Type
 
 ${context.contributionType}
-
-## Revised Direction
-
-${context.revisedIdea}
-
-## Proof Obligations
-
-${markdownList(context.proofObligations, "No proof obligation has been cleared; keep claims preliminary until evidence is verified.")}
-
-## Baselines
-
-${markdownList(context.baselines, "Blocked until verified notes identify reviewer-expected baselines.")}
-
-## Datasets
-
-${markdownList(context.datasets, "Blocked until verified notes identify datasets or benchmarks.")}
-
-## Metrics
-
-${markdownList(context.metrics, "Blocked until verified notes identify reviewer-facing metrics.")}
-
-## Score Constraints To Resolve
-
-${markdownList(context.scoreConstraints, "No active deterministic score caps.")}
 `;
 }
 
 export function strictExecutionPlanMarkdown(input: StrictProposalInput): string {
   const context = proposalContext(input);
-  return `# Strict Execution Plan
+  return `# 12-Week Execution Plan
 
-## One-Sentence Claim
-
-${context.claim}
-
-## Hypothesis
-
-${context.hypothesis}
-
-## Prior-Work Delta
-
-${context.priorWorkDelta}
-
-## Target Venue
-
-${context.targetVenue}
-
-## Contribution Type
-
-${context.contributionType}
-
-## Proof Obligations
-
-${markdownList(context.proofObligations, "No proof obligation has been cleared; keep claims preliminary until evidence is verified.")}
-
-## 12-Week Execution Table
-
-| Week | Focus | Exit Evidence |
-| --- | --- | --- |
+| Week | Goal | Tasks | Deliverables | Acceptance Criteria | Risks |
+| ---: | ---- | ----- | ------------ | ------------------- | ----- |
 ${twelveWeekRows(context)}
-
-## Baselines
-
-${markdownList(context.baselines, "Blocked until verified notes identify reviewer-expected baselines.")}
-
-## Datasets
-
-${markdownList(context.datasets, "Blocked until verified notes identify datasets or benchmarks.")}
-
-## Metrics
-
-${markdownList(context.metrics, "Blocked until verified notes identify reviewer-facing metrics.")}
-
-## Ablations
-
-${markdownList(context.ablations, "Define component-removal ablations before claiming method gains.")}
-
-## Failure Cases
-
-${markdownList(context.failureCases, "Collect negative examples and boundary conditions during the first experimental pass.")}
-
-## Reproducibility Commands / Paths
-
-${markdownList(context.reproducibility, "Record commands, seeds, configs, and output paths before experiments begin.")}
 `;
 }
 
 export function solutionDesignMarkdown(input: StrictProposalInput): string {
   const context = proposalContext(input);
-  return `# Solution Design
+  return `# Feasible Solution Design
 
-## One-Sentence Claim
-
-${context.claim}
-
-## Hypothesis
-
-${context.hypothesis}
-
-## Prior-Work Delta
-
-${context.priorWorkDelta}
-
-## Target Venue
-
-${context.targetVenue}
-
-## Contribution Type
-
-${context.contributionType}
-
-## Proposed Solution
+## System / Method Overview
 
 ${context.revisedIdea}
 
-## Method Components
+Target venue: ${context.targetVenue}
+
+Contribution type: ${context.contributionType}
+
+## Algorithm / Pipeline
 
 ${markdownList(context.methodComponents, "Keep the solution scoped to a minimal method or benchmark change until evidence justifies expansion.")}
-
-## Proof Obligations
-
-${markdownList(context.proofObligations, "No proof obligation has been cleared; keep claims preliminary until evidence is verified.")}
 
 ## Baselines
 
@@ -199,7 +109,7 @@ ${markdownList(context.ablations, "Define component-removal ablations before cla
 
 ${markdownList(context.failureCases, "Collect negative examples and boundary conditions during the first experimental pass.")}
 
-## Reproducibility Commands / Paths
+## Reproducibility Plan
 
 ${markdownList(context.reproducibility, "Record commands, seeds, configs, and output paths before experiments begin.")}
 `;
@@ -319,21 +229,21 @@ function proposalContext(input: StrictProposalInput): ProposalContext {
 }
 
 function twelveWeekRows(context: ProposalContext): string {
-  const weeks = [
-    ["1", context.firstFourWeekPlan[0] ?? "Finalize search plan, core candidate set, and PDF provenance.", "docs/relative_work/search_plan.md; docs/reference/pdf_manifest.json"],
-    ["2", context.firstFourWeekPlan[1] ?? "Write verified paper notes for selected/core papers.", "docs/reference/paper_notes/ with page, quote, and chunk ids"],
-    ["3", context.firstFourWeekPlan[2] ?? "Synthesize related-work survey and idea-vs-prior comparison.", "docs/relative_work/survey.md; docs/relative_work/idea_vs_prior_work.md"],
-    ["4", context.firstFourWeekPlan[3] ?? "Lock hypothesis, baselines, datasets, metrics, ablations, and failure cases.", "docs/proposal/revised_idea.md; docs/proposal/strict_execution_plan.md"],
-    ["5", "Reproduce the strongest baseline and document setup friction.", "src/baselines/; configs/; results/baseline/"],
-    ["6", "Implement the minimal method or benchmark change.", "src/method/; src/evaluation/"],
-    ["7", "Run main experiments on the selected dataset or benchmark.", "experiments/main/; results/main/"],
-    ["8", "Run ablations and sensitivity checks.", "experiments/ablations/; results/ablations/"],
-    ["9", "Collect failure cases and boundary-condition analysis.", "experiments/failure_cases/; results/failure_cases/"],
-    ["10", "Refresh scorecard and reviewer tasks from produced evidence.", "docs/diagnosis/ccf_a_strict_scorecard.md; docs/diagnosis/rebuttal_tasks.md"],
-    ["11", "Draft paper sections from evidence-backed claims only.", "paper/sections/; paper/main.tex"],
-    ["12", "Run reproducibility, packaging, and venue-compliance checks.", "paper/submission/; docs/submission/"]
+  const weeks: Array<[string, string, string, string, string, string]> = [
+    ["1", "Evidence scope", context.firstFourWeekPlan[0] ?? "Finalize search plan, core candidate set, and PDF provenance.", "docs/relative_work/search_plan.md; docs/reference/pdf_manifest.json", "Core CCF-A candidates and public PDF availability are explicit.", "Insufficient CCF-A main/full papers."],
+    ["2", "Verified notes", context.firstFourWeekPlan[1] ?? "Write verified paper notes for selected/core papers.", "docs/reference/paper_notes/ with page, quote, and chunk ids", "Every selected/core PDF has a verified note or explicit metadata-only note.", "Weak extraction or missing PDFs."],
+    ["3", "Prior-work synthesis", context.firstFourWeekPlan[2] ?? "Synthesize related-work survey and idea-vs-prior comparison.", "docs/relative_work/survey.md; docs/relative_work/idea_vs_prior_work.md", "Baselines, datasets, metrics, and collision risks come from verified notes.", "Survey remains metadata-only."],
+    ["4", "Claim lock", context.firstFourWeekPlan[3] ?? "Lock hypothesis, baselines, datasets, metrics, ablations, and failure cases.", "docs/proposal/revised_idea.md; docs/proposal/strict_execution_plan.md; docs/proposal/solution_design.md", "Claim and proof obligations fit the active score caps.", "Scope remains too broad."],
+    ["5", "Baseline reproduction", "Reproduce the strongest baseline and document setup friction.", "src/baselines/; configs/; results/baseline/", "Baseline command, seed, config, and result path are recorded.", "Baseline code unavailable or incompatible."],
+    ["6", "Minimal method", "Implement the minimal method or benchmark change.", "src/method/; src/evaluation/", "Method runs end-to-end on a small documented split.", "Implementation grows beyond 12-week scope."],
+    ["7", "Main experiments", "Run main experiments on the selected dataset or benchmark.", "experiments/main/; results/main/", "Primary metric and secondary checks are logged with configs.", "Compute or data access blocks repeatability."],
+    ["8", "Ablations", "Run ablations and sensitivity checks.", "experiments/ablations/; results/ablations/", "Each claimed component has a removal or sensitivity result.", "Ablations do not isolate the claimed mechanism."],
+    ["9", "Failure analysis", "Collect failure cases and boundary-condition analysis.", "experiments/failure_cases/; results/failure_cases/", "Negative examples map to limitations and threat discussion.", "Failures undermine the central claim."],
+    ["10", "Score refresh", "Refresh scorecard and reviewer tasks from produced evidence.", "docs/diagnosis/ccf_a_strict_scorecard.md; docs/diagnosis/rebuttal_tasks.md", "Deterministic caps and reviewer tasks reflect new evidence.", "Open mandatory tasks keep the score capped."],
+    ["11", "Paper story", "Draft paper sections from evidence-backed claims only.", "paper/sections/; paper/main.tex", "Introduction, related work, method, results, and limitations cite artifacts.", "Narrative claims exceed evidence."],
+    ["12", "Submission package", "Run reproducibility, packaging, and venue-compliance checks.", "paper/submission/; docs/submission/", "Reproduction and template checks pass with recorded commands.", "Packaging exposes missing files or anonymization issues."]
   ];
-  return weeks.map(([week, focus, evidence]) => `| ${week} | ${focus} | ${evidence} |`).join("\n");
+  return weeks.map(([week, goal, tasks, deliverables, acceptance, risks]) => `| ${week} | ${goal} | ${tasks} | ${deliverables} | ${acceptance} | ${risks} |`).join("\n");
 }
 
 function methodComponents(revisedIdea: string, contributionType: string): string[] {

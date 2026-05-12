@@ -67,7 +67,7 @@ export type Idea2RepoEvent =
     }
   | { type: "tool.started"; run_id: string; tool_call_id: string; tool_name: string; timestamp: string }
   | { type: "tool.completed"; run_id: string; tool_call_id: string; success: boolean; summary: string; timestamp: string }
-  | { type: "approval.requested"; run_id: string; approval_id: string; stage_id?: string; action: string; risk: string; timestamp: string }
+  | { type: "approval.requested"; run_id: string; approval_id: string; stage_id?: string; action: string; risk: string; paper_options?: Array<{ id: string; title: string }>; timestamp: string }
   | { type: "approval.resolved"; run_id: string; approval_id: string; decision: "approved" | "denied"; timestamp: string }
   | {
       type: "paper.found";

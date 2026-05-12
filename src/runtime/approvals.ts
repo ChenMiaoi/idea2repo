@@ -32,6 +32,8 @@ export type ApprovalRecord = {
   mode: RuntimeMode;
   status: ApprovalRecordStatus;
   reason?: string;
+  paper_options?: Array<{ id: string; title: string }>;
+  selected_paper_ids?: string[];
   created_at: string;
   resolved_at?: string;
 };
@@ -42,6 +44,8 @@ export type ApprovalRequestInput = {
   action: string;
   risk: ApprovalRisk[];
   reason?: string;
+  paper_options?: Array<{ id: string; title: string }>;
+  selected_paper_ids?: string[];
 };
 
 export type ApprovalWaitOptions = {
@@ -122,6 +126,7 @@ export class ApprovalRecorder {
       ...(record.stage_id ? { stage_id: record.stage_id } : {}),
       action: record.action,
       risk: record.risk.join(", "),
+      ...(record.paper_options?.length ? { paper_options: record.paper_options } : {}),
       timestamp: record.created_at
     });
     if (record.stage_id) {
@@ -223,6 +228,8 @@ export class ApprovalRecorder {
       mode: this.policy.mode,
       status,
       reason: input.reason,
+      ...(input.paper_options?.length ? { paper_options: input.paper_options } : {}),
+      ...(input.selected_paper_ids?.length ? { selected_paper_ids: input.selected_paper_ids } : {}),
       created_at: now,
       ...(resolvedAt ? { resolved_at: resolvedAt } : {})
     };
@@ -277,7 +284,7 @@ export async function resolveApprovalRecord(
   root: string,
   approvalId: string,
   decision: "approved" | "denied",
-  options: { reason?: string; events?: EventSink } = {}
+  options: { reason?: string; events?: EventSink; selectedPaperIds?: string[] } = {}
 ): Promise<ApprovalRecord> {
   const records = await readApprovalRecords(root);
   const current = [...records].reverse().find((record) => record.id === approvalId);
@@ -287,6 +294,7 @@ export async function resolveApprovalRecord(
     ...current,
     status: decision,
     reason: options.reason ?? current.reason,
+    ...(options.selectedPaperIds?.length ? { selected_paper_ids: options.selectedPaperIds } : {}),
     resolved_at: now
   };
   const path = join(root, APPROVALS_PATH);

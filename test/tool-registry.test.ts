@@ -7,6 +7,7 @@ import { generateResearchRepo } from "../src/generator.js";
 import { ApprovalRecorder, ApprovalRequiredError, approvalPolicyForMode, readApprovalRecords, resolveApprovalRecord } from "../src/runtime/approvals.js";
 import { EventBus, type Idea2RepoEvent } from "../src/runtime/events.js";
 import { ToolRegistry, createCoreToolRegistry, createToolContext, readToolCallRecords } from "../src/runtime/tools.js";
+import type { PdfManifestRecord } from "../src/skills/pdf/provenance.js";
 
 test("core tool registry exposes plan-required tool names", () => {
   const names = createCoreToolRegistry().list().map((tool) => tool.name);
@@ -142,7 +143,7 @@ test("pdf acquisition requires first-class PDF download approval", async () => {
     stageId: "pdf_acquisition"
   });
   try {
-    const pending = registry.execute("pdf.acquire", {
+    const pending = registry.execute<unknown, PdfManifestRecord[]>("pdf.acquire", {
       outputRoot: root,
       allowNetwork: true,
       downloadPdfs: true,
@@ -161,6 +162,17 @@ test("pdf acquisition requires first-class PDF download approval", async () => {
           retrieval_sources: ["test"],
           retrieval_queries: ["pdf approval"],
           confidence: "high"
+        },
+        {
+          candidate_id: "paper-2",
+          title: "Selected PDF Approval Paper",
+          authors: ["B. Researcher"],
+          year: 2026,
+          source_urls: ["https://arxiv.org/abs/2345.6789"],
+          pdf_urls: ["https://arxiv.org/pdf/2345.6789"],
+          retrieval_sources: ["test"],
+          retrieval_queries: ["pdf approval"],
+          confidence: "high"
         }
       ]
     }, ctx);
@@ -168,12 +180,15 @@ test("pdf acquisition requires first-class PDF download approval", async () => {
     assert.equal(fetches, 0);
     assert.equal(request.stage_id, "pdf_acquisition");
     assert.ok(request.risk.includes("pdf_download"));
+    assert.deepEqual(request.paper_options?.map((paper) => paper.id), ["paper-1", "paper-2"]);
     assert.ok(events.some((event) => event.type === "stage.blocked" && event.stage_id === "pdf_acquisition"));
 
-    await resolveApprovalRecord(root, request.id, "approved", { events: bus });
+    await resolveApprovalRecord(root, request.id, "approved", { events: bus, selectedPaperIds: ["paper-2"] });
     const manifest = await pending;
     assert.equal(fetches, 1);
     assert.equal(Array.isArray(manifest), true);
+    assert.equal(manifest.length, 1);
+    assert.equal(manifest[0]?.paper_id, "paper-2");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

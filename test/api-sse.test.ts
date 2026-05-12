@@ -185,6 +185,19 @@ test("runtime API starts runs and streams shared runtime events over SSE", async
     });
     const approval = await postJson(`${server.url}/runs/${started.run_id}/approvals/${pending.id}`, { decision: "denied", reason: "API fanout test." });
     assert.equal(approval.status, "denied");
+    const pdfPending = await new ApprovalRecorder(output, approvalPolicyForMode("research")).request({
+      run_id: String(started.run_id),
+      stage_id: "pdf_acquisition",
+      action: "tool:pdf.acquire",
+      risk: ["pdf_download"],
+      paper_options: [
+        { id: "paper-1", title: "First Paper" },
+        { id: "paper-2", title: "Second Paper" }
+      ]
+    });
+    const pdfApproval = await postJson(`${server.url}/runs/${started.run_id}/approvals/${pdfPending.id}`, { decision: "approved", selected_paper_ids: ["paper-2"] });
+    assert.equal(pdfApproval.status, "approved");
+    assert.deepEqual(pdfApproval.selected_paper_ids, ["paper-2"]);
     const controlEventsText = await (await fetch(`${server.url}/runs/${started.run_id}/events`)).text();
     assert.match(controlEventsText, /event: stage\.skipped/);
     assert.match(controlEventsText, /event: plan\.updated/);

@@ -1569,147 +1569,54 @@ function generatorRevisedIdea(diagnosis: Diagnosis): string {
 
 ${claim}
 
-## Hypothesis
+## Central Hypothesis
 
 ${generatorHypothesis(diagnosis)}
 
-## Prior-Work Delta
+## Why This Is Different From Prior Work
 
 ${diagnosis.revised_plan_text}
+
+## What Must Be Proven
+
+${markdownList(generatorProofObligations(diagnosis))}
 
 ## Target Venue
 
 ${route.domain.primary_venues[0] ?? route.domain.label}
 
-## Contribution Type
+## Expected Contribution Type
 
 ${generatorContributionType(diagnosis)}
-
-## Revised Direction
-
-${diagnosis.revised_plan_text}
-
-## Proof Obligations
-
-${markdownList(generatorProofObligations(diagnosis))}
-
-## Baselines
-
-- Identify reviewer-expected baselines from verified paper notes.
-
-## Datasets
-
-- Lock at least one documented dataset or benchmark.
-
-## Metrics
-
-- Define primary and secondary reviewer-facing metrics.
 `;
 }
 
-function generatorStrictExecutionPlan(diagnosis: Diagnosis, weeks: number, resources: string[]): string {
-  const route = diagnosis.routes[0]!;
-  return `# Strict Execution Plan
+function generatorStrictExecutionPlan(diagnosis: Diagnosis, _weeks: number, _resources: string[]): string {
+  return `# 12-Week Execution Plan
 
-## One-Sentence Claim
-
-${generatorOneSentenceClaim(diagnosis)}
-
-## Hypothesis
-
-${generatorHypothesis(diagnosis)}
-
-## Prior-Work Delta
-
-${diagnosis.revised_plan_text}
-
-## Target Venue
-
-${route.domain.primary_venues[0] ?? route.domain.label}
-
-## Contribution Type
-
-${generatorContributionType(diagnosis)}
-
-## Proof Obligations
-
-${markdownList(generatorProofObligations(diagnosis))}
-
-## 12-Week Execution Table
-
-| Week | Focus | Exit Evidence |
-| --- | --- | --- |
+| Week | Goal | Tasks | Deliverables | Acceptance Criteria | Risks |
+| ---: | ---- | ----- | ------------ | ------------------- | ----- |
 ${Array.from({ length: 12 }, (_, index) => generatorExecutionWeekRow(index + 1)).join("\n")}
-
-## Baselines
-
-- Identify reviewer-expected baselines from verified paper notes.
-
-## Datasets
-
-- Lock at least one documented dataset or benchmark.
-
-## Metrics
-
-- Define primary and secondary reviewer-facing metrics.
-
-## Ablations
-
-- Remove each claimed method component.
-
-## Failure Cases
-
-- Collect negative examples and boundary conditions.
-
-## Reproducibility Commands / Paths
-
-- Command: npm run typecheck
-- Command: npm test
-- Path: docs/reference/paper_notes/
-- Path: docs/reference/claim_evidence_matrix.csv
-- Path: docs/diagnosis/ccf_a_strict_scorecard.md
-- Timeline: ${weeks} weeks
-- Resources: ${resources.join("; ") || "unspecified"}
 `;
 }
 
 function generatorSolutionDesign(diagnosis: Diagnosis): string {
   const route = diagnosis.routes[0]!;
-  return `# Solution Design
+  return `# Feasible Solution Design
 
-## One-Sentence Claim
-
-${generatorOneSentenceClaim(diagnosis)}
-
-## Hypothesis
-
-${generatorHypothesis(diagnosis)}
-
-## Prior-Work Delta
+## System / Method Overview
 
 ${diagnosis.revised_plan_text}
 
-## Target Venue
+Target venue: ${route.domain.primary_venues[0] ?? route.domain.label}
 
-${route.domain.primary_venues[0] ?? route.domain.label}
+Contribution type: ${generatorContributionType(diagnosis)}
 
-## Contribution Type
-
-${generatorContributionType(diagnosis)}
-
-## Proposed Solution
-
-${diagnosis.revised_plan_text}
-
-## Method Components
+## Algorithm / Pipeline
 
 - Scope: ${generatorContributionType(diagnosis)}
 - Input contract: verified related-work evidence, datasets or benchmarks, and baseline definitions.
 - Output contract: reproducible results, ablations, failure cases, and scorecard updates tied to artifact paths.
-
-## Proof Obligations
-
-${markdownList(generatorProofObligations(diagnosis))}
 
 ## Baselines
 
@@ -1731,7 +1638,7 @@ ${markdownList(generatorProofObligations(diagnosis))}
 
 - Collect negative examples and boundary conditions.
 
-## Reproducibility Commands / Paths
+## Reproducibility Plan
 
 - Command: npm run typecheck
 - Command: npm test
@@ -1787,21 +1694,21 @@ function generatorProofObligations(diagnosis: Diagnosis): string[] {
 
 function generatorExecutionWeekRow(week: number): string {
   const rows = [
-    ["Finalize search plan, candidate set, and PDF provenance.", "docs/relative_work/search_plan.md; docs/reference/pdf_manifest.json"],
-    ["Write verified paper notes.", "docs/reference/paper_notes/"],
-    ["Synthesize related work and novelty delta.", "docs/relative_work/survey.md; docs/relative_work/idea_vs_prior_work.md"],
-    ["Lock strict proposal artifacts.", "docs/proposal/revised_idea.md; docs/proposal/strict_execution_plan.md; docs/proposal/solution_design.md"],
-    ["Reproduce strongest baseline.", "src/baselines/; results/baseline/"],
-    ["Implement minimal method or benchmark change.", "src/method/; src/evaluation/"],
-    ["Run main experiments.", "experiments/main/; results/main/"],
-    ["Run ablations.", "experiments/ablations/; results/ablations/"],
-    ["Collect failure cases.", "experiments/failure_cases/; results/failure_cases/"],
-    ["Refresh scorecard and reviewer tasks.", "docs/diagnosis/ccf_a_strict_scorecard.md; docs/diagnosis/rebuttal_tasks.md"],
-    ["Draft paper sections from evidence-backed claims.", "paper/sections/"],
-    ["Run reproducibility and submission packaging checks.", "paper/submission/; docs/submission/"]
+    ["Evidence scope", "Finalize search plan, candidate set, and PDF provenance.", "docs/relative_work/search_plan.md; docs/reference/pdf_manifest.json", "Core CCF-A candidates and public PDF availability are explicit.", "Insufficient CCF-A main/full papers."],
+    ["Verified notes", "Write verified paper notes.", "docs/reference/paper_notes/", "Every selected/core PDF has a verified note or explicit metadata-only note.", "Weak extraction or missing PDFs."],
+    ["Prior-work synthesis", "Synthesize related work and novelty delta.", "docs/relative_work/survey.md; docs/relative_work/idea_vs_prior_work.md", "Baselines, datasets, metrics, and collision risks come from verified notes.", "Survey remains metadata-only."],
+    ["Claim lock", "Lock strict proposal artifacts.", "docs/proposal/revised_idea.md; docs/proposal/strict_execution_plan.md; docs/proposal/solution_design.md", "Claim and proof obligations fit active score caps.", "Scope remains too broad."],
+    ["Baseline reproduction", "Reproduce strongest baseline.", "src/baselines/; results/baseline/", "Baseline command, seed, config, and result path are recorded.", "Baseline code unavailable or incompatible."],
+    ["Minimal method", "Implement minimal method or benchmark change.", "src/method/; src/evaluation/", "Method runs end-to-end on a small documented split.", "Implementation grows beyond 12-week scope."],
+    ["Main experiments", "Run main experiments.", "experiments/main/; results/main/", "Primary metric and secondary checks are logged with configs.", "Compute or data access blocks repeatability."],
+    ["Ablations", "Run ablations.", "experiments/ablations/; results/ablations/", "Each claimed component has a removal or sensitivity result.", "Ablations do not isolate the claimed mechanism."],
+    ["Failure analysis", "Collect failure cases.", "experiments/failure_cases/; results/failure_cases/", "Negative examples map to limitations and threat discussion.", "Failures undermine the central claim."],
+    ["Score refresh", "Refresh scorecard and reviewer tasks.", "docs/diagnosis/ccf_a_strict_scorecard.md; docs/diagnosis/rebuttal_tasks.md", "Deterministic caps and reviewer tasks reflect new evidence.", "Open mandatory tasks keep the score capped."],
+    ["Paper story", "Draft paper sections from evidence-backed claims.", "paper/sections/", "Paper sections cite artifacts and verified evidence.", "Narrative claims exceed evidence."],
+    ["Submission package", "Run reproducibility and submission packaging checks.", "paper/submission/; docs/submission/", "Reproduction and template checks pass with recorded commands.", "Packaging exposes missing files or anonymization issues."]
   ];
-  const [focus, evidence] = rows[week - 1] ?? rows.at(-1)!;
-  return `| ${week} | ${focus} | ${evidence} |`;
+  const [goal, tasks, deliverables, acceptance, risks] = rows[week - 1] ?? rows.at(-1)!;
+  return `| ${week} | ${goal} | ${tasks} | ${deliverables} | ${acceptance} | ${risks} |`;
 }
 
 function milestones(): string {

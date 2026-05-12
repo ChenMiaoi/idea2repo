@@ -3,7 +3,7 @@ import { test } from "node:test";
 import React from "react";
 import { ApprovalDialog } from "../src/tui/ApprovalDialog.js";
 import { ArtifactPanel } from "../src/tui/ArtifactPanel.js";
-import { approvalRecordFromRequestedEvent, cockpitMutationBlocker, cockpitOpenArtifactPath, cockpitOpenFallbackMessage, cockpitShortcutForInput, cockpitStageTarget, isBusySubmissionAllowed, researchApprovalPolicy, researchDownloadPdfsDefault } from "../src/tui/App.js";
+import { approvalRecordFromRequestedEvent, cockpitMutationBlocker, cockpitOpenArtifactPath, cockpitOpenFallbackMessage, cockpitShortcutForInput, cockpitStageTarget, isBusySubmissionAllowed, parseSelectedPaperIds, researchApprovalPolicy, researchDownloadPdfsDefault } from "../src/tui/App.js";
 import { PlanPanel } from "../src/tui/PlanPanel.js";
 import { cockpitActionLine, nextInspectorTab, ResearchCockpit } from "../src/tui/ResearchCockpit.js";
 import { TracePanel } from "../src/tui/TracePanel.js";
@@ -46,6 +46,25 @@ test("runtime TUI panels render as React elements", () => {
   assert.equal(React.isValidElement(TracePanel({ events })), true);
   assert.equal(React.isValidElement(ArtifactPanel({ artifacts: [{ path: "docs/idea.md", bytes: 12, text: true }] })), true);
   assert.equal(React.isValidElement(ApprovalDialog({ approvalId: "approval-1", action: "publish", risk: "network", selectedDecision: "denied" })), true);
+});
+
+test("PDF approval dialog supports all or selected public PDFs", () => {
+  const text = textContent(
+    ApprovalDialog({
+      approvalId: "approval-1",
+      action: "tool:pdf.acquire",
+      risk: "network, pdf_download",
+      selectedDecision: "selected",
+      paperOptions: [
+        { id: "paper-1", title: "First Paper" },
+        { id: "paper-2", title: "Second Paper" }
+      ]
+    })
+  );
+  assert.match(text, /approve all/);
+  assert.match(text, /select papers/);
+  assert.match(text, /Public PDFs: 2/);
+  assert.deepEqual(parseSelectedPaperIds("Paper-1, paper-2; paper_2"), ["paper-1", "paper-2"]);
 });
 
 test("TUI offline provider suppresses research network defaults", () => {
@@ -304,6 +323,7 @@ test("TUI keeps approval commands available while a run is busy", () => {
       stage_id: "pdf_acquisition",
       action: "tool:pdf.acquire",
       risk: "network, pdf_download",
+      paper_options: [{ id: "paper-1", title: "PDF Approval Paper" }],
       timestamp: "2026-01-01T00:00:01Z"
     },
     "research"
@@ -311,6 +331,7 @@ test("TUI keeps approval commands available while a run is busy", () => {
   assert.equal(record?.id, "approval-1");
   assert.equal(record?.stage_id, "pdf_acquisition");
   assert.deepEqual(record?.risk, ["network", "pdf_download"]);
+  assert.deepEqual(record?.paper_options, [{ id: "paper-1", title: "PDF Approval Paper" }]);
   assert.equal(record?.mode, "research");
   assert.equal(record?.status, "pending");
 });
@@ -354,6 +375,7 @@ test("research cockpit exposes direct actions for inspector cards and stages", (
   assert.equal(cockpitStageTarget(snapshot), "pdf_acquisition");
   assert.deepEqual(cockpitShortcutForInput("1"), { type: "tab", tab: "idea_score" });
   assert.deepEqual(cockpitShortcutForInput("8"), { type: "tab", tab: "debug" });
+  assert.deepEqual(cockpitShortcutForInput("d"), { type: "tab", tab: "debug" });
   assert.equal(cockpitShortcutForInput("9"), null);
   assert.deepEqual(cockpitShortcutForInput("o", { ctrl: true }), { type: "open" });
   assert.deepEqual(cockpitShortcutForInput("a", { ctrl: true }), { type: "approve" });

@@ -61,10 +61,10 @@ test("offline research pipeline returns resumable stage state and core artifacts
   assert.ok(result.artifacts["docs/diagnosis/feasibility_report.md"]);
   assert.ok(result.artifacts["docs/proposal/revised_idea.md"]);
   assert.match(result.artifacts["docs/proposal/revised_idea.md"] ?? "", /One-Sentence Claim/);
-  assert.match(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /12-Week Execution Table/);
-  assert.match(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /Reproducibility Commands \/ Paths/);
-  assert.match(result.artifacts["docs/proposal/solution_design.md"] ?? "", /Solution Design/);
-  assert.match(result.artifacts["docs/proposal/solution_design.md"] ?? "", /Proof Obligations/);
+  assert.match(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /12-Week Execution Plan/);
+  assert.match(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /Week \| Goal \| Tasks \| Deliverables \| Acceptance Criteria \| Risks/);
+  assert.match(result.artifacts["docs/proposal/solution_design.md"] ?? "", /Feasible Solution Design/);
+  assert.match(result.artifacts["docs/proposal/solution_design.md"] ?? "", /System \/ Method Overview/);
   assert.doesNotMatch(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /^\s*\{/m);
   assert.ok(result.artifacts["docs/submission/template_compliance_report.md"]?.includes("Status: passed"));
   assert.notEqual(result.artifacts["docs/submission/venue_template_profile.json"], "{}\n");
@@ -1245,8 +1245,8 @@ test("research pipeline rejects old strategy snapshots missing current artifacts
     });
     assert.doesNotMatch(result.artifacts["docs/proposal/revised_idea.md"] ?? "", /STALE_OLD_STRATEGY/);
     assert.doesNotMatch(result.artifacts["docs/proposal/experiment_plan.md"] ?? "", /STALE_OLD_EXPERIMENT/);
-    assert.match(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /Strict Execution Plan/);
-    assert.match(result.artifacts["docs/proposal/solution_design.md"] ?? "", /Solution Design/);
+    assert.match(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /12-Week Execution Plan/);
+    assert.match(result.artifacts["docs/proposal/solution_design.md"] ?? "", /Feasible Solution Design/);
     assert.equal(result.state.stages.find((stage) => stage.id === "better_idea_synthesis")?.status, "skipped");
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -1428,8 +1428,8 @@ test("research pipeline persists new staged PDF reader notes", async () => {
     assert.match(result.artifacts["docs/diagnosis/reviewer_2.md"] ?? "", /UNIQUE_R2_AGENT_REVIEW/);
     assert.match(result.artifacts["docs/diagnosis/reviewer_3.md"] ?? "", /UNIQUE_R3_AGENT_REVIEW/);
     assert.match(result.artifacts["docs/proposal/revised_idea.md"] ?? "", /One-Sentence Claim/);
-    assert.match(result.artifacts["docs/proposal/revised_idea.md"] ?? "", /Hypothesis/);
-    assert.match(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /12-Week Execution Table/);
+    assert.match(result.artifacts["docs/proposal/revised_idea.md"] ?? "", /Central Hypothesis/);
+    assert.match(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /12-Week Execution Plan/);
     assert.match(result.artifacts["docs/proposal/strict_execution_plan.md"] ?? "", /baseline/);
     assert.match(result.artifacts["docs/proposal/solution_design.md"] ?? "", /ablation/);
     assert.match(result.artifacts["docs/proposal/solution_design.md"] ?? "", /failure/);

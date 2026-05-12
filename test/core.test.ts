@@ -125,8 +125,8 @@ test("research generation wires pipeline artifacts and venue-aware paper package
     assert.match(await readFile(join(output, "docs/relative_work/search_plan.json"), "utf8"), /precision_queries/);
     assert.match(await readFile(join(output, "docs/diagnosis/ccf_a_strict_scorecard.md"), "utf8"), /Strict mode: preliminary-only \(CCF-A venue gate blocked\)/);
     assert.match(await readFile(join(output, "docs/proposal/revised_idea.md"), "utf8"), /One-Sentence Claim/);
-    assert.match(await readFile(join(output, "docs/proposal/strict_execution_plan.md"), "utf8"), /12-Week Execution Table/);
-    assert.match(await readFile(join(output, "docs/proposal/solution_design.md"), "utf8"), /Solution Design/);
+    assert.match(await readFile(join(output, "docs/proposal/strict_execution_plan.md"), "utf8"), /12-Week Execution Plan/);
+    assert.match(await readFile(join(output, "docs/proposal/solution_design.md"), "utf8"), /Feasible Solution Design/);
     assert.match(await readFile(join(output, "docs/proposal/paper_story.md"), "utf8"), /Paper Story/);
     assert.match(await readFile(join(output, "docs/submission/venue_template_profile.json"), "utf8"), /acm-sigconf/);
     assert.match(await readFile(join(output, "paper/main.tex"), "utf8"), /\\documentclass\[sigconf,review,anonymous\]\{acmart\}/);
