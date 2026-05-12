@@ -59,6 +59,8 @@ export type GenerateOptions = {
   model?: string | null;
   reasoningEffort?: string | null;
   derivedConfig?: Record<string, unknown>;
+  projectName?: string;
+  outputParent?: string;
   projectNameSource?: string;
   discussionAssumptions?: string[];
   progressCallback?: (message: string) => void;
@@ -107,10 +109,13 @@ type ProviderAnalysis = {
   selectedProvider: ProviderMode;
   selectedApiShape: string;
   fallbackReason: string;
+  analysisSource?: GeneratedProject["analysis_source"];
+  codexAvailable?: boolean;
+  codexLoggedIn?: boolean;
 };
 
 export async function generateResearchRepo(idea: string, output: string, options: GenerateOptions = {}): Promise<GeneratedProject> {
-  const root = resolve(output);
+  const root = resolveGenerationRoot(output, options);
   const runId = options.runId ?? randomUUID();
   const traceEvents = (options.jsonlEvents || options.runResearchPipeline) ? new JsonlEventSink(join(root, ".idea2repo", "trace.jsonl")) : undefined;
   const baseEvents = combineEventSinks(traceEvents, options.eventSink);
@@ -242,7 +247,8 @@ export async function generateResearchRepo(idea: string, output: string, options
   if (analysis) diagnosis = diagnosisFromAnalysis(diagnosis, analysis);
 
   const artifactIdea = safeSecurityReframe(idea, diagnosis.security_assessment);
-  const projectName = slugify(root.split(/[\\/]/).pop() || idea);
+  const projectName = options.projectName ? slugify(options.projectName) : slugify(root.split(/[\\/]/).pop() || idea);
+  const projectNameSource = projectNameSourceFor(options);
   const workspace = inspectWorkspace();
   const providerReport = providerConfigReport({
     analysis,
@@ -352,7 +358,7 @@ export async function generateResearchRepo(idea: string, output: string, options
       selectedApiShape: providerAnalysis.selectedApiShape,
       model: options.model ?? null,
       reasoningEffort: options.reasoningEffort ?? null,
-      projectNameSource: options.projectNameSource ?? (stringCell(options.derivedConfig?.project_name_source) || "output_basename"),
+      projectNameSource,
       derivedConfig: options.derivedConfig,
       discussionAssumptions: options.discussionAssumptions,
       pipeline,
@@ -368,13 +374,13 @@ export async function generateResearchRepo(idea: string, output: string, options
     project_name: projectName,
     files: written,
     diagnosis,
-    analysis_source: analysis ? "codex" : "offline_fallback",
+    analysis_source: providerAnalysis.analysisSource ?? (analysis ? "codex" : "offline_fallback"),
     provider_id: providerAnalysis.selectedProvider,
     api_shape: providerAnalysis.selectedApiShape,
     model: options.model ?? null,
     reasoning_effort: options.reasoningEffort ?? null,
-    codex_available: Boolean(analysis),
-    codex_logged_in: Boolean(analysis),
+    codex_available: providerAnalysis.codexAvailable ?? Boolean(analysis),
+    codex_logged_in: providerAnalysis.codexLoggedIn ?? Boolean(analysis),
     fallback_reason: providerAnalysis.fallbackReason,
     research_analysis: analysis,
     research_pipeline: pipeline,
@@ -408,6 +414,17 @@ function abortReason(signal: AbortSignal | undefined, error?: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string" && error) return error;
   return "run cancelled";
+}
+
+function resolveGenerationRoot(output: string, options: Pick<GenerateOptions, "projectName" | "outputParent">): string {
+  if (options.outputParent?.trim() && options.projectName?.trim()) {
+    return resolve(options.outputParent, slugify(options.projectName));
+  }
+  return resolve(output);
+}
+
+function projectNameSourceFor(options: Pick<GenerateOptions, "projectName" | "projectNameSource" | "derivedConfig">): string {
+  return options.projectNameSource ?? (stringCell(options.derivedConfig?.project_name_source) || (options.projectName ? "option_project_name" : "output_basename"));
 }
 
 async function writeGeneratedArtifact(registry: ToolRegistry, ctx: ToolContext, relativePath: string, content: string): Promise<string> {
@@ -625,11 +642,28 @@ async function analyzeWithProvider(
 function providerAnalysisFromPipeline(options: GenerateOptions, pipeline: ResearchPipelineResult | null): ProviderAnalysis {
   const selectedProvider = canonicalProvider(options.provider, Boolean(options.offline));
   const selectedApiShape = apiShapeForProvider(selectedProvider);
+  if (selectedProvider === OFFLINE_PROVIDER_ID) {
+    return {
+      analysis: null,
+      selectedProvider,
+      selectedApiShape,
+      fallbackReason: "offline mode requested",
+      analysisSource: "offline_fallback",
+      codexAvailable: false,
+      codexLoggedIn: false
+    };
+  }
   const fallbackReason =
-    selectedProvider === OFFLINE_PROVIDER_ID
-      ? "offline mode requested"
-      : pipeline?.warnings.find((warning) => warning.includes("Staged agent")) ?? "research pipeline used staged agents with deterministic fallbacks where needed";
-  return { analysis: null, selectedProvider, selectedApiShape, fallbackReason };
+    pipeline?.warnings.find((warning) => warning.includes("Staged agent")) ?? "research pipeline used staged agents with deterministic fallbacks where needed";
+  return {
+    analysis: null,
+    selectedProvider,
+    selectedApiShape,
+    fallbackReason,
+    analysisSource: "codex",
+    codexAvailable: true,
+    codexLoggedIn: true
+  };
 }
 
 function diagnosisFromAnalysis(diagnosis: Diagnosis, analysis: ResearchAnalysis): Diagnosis {

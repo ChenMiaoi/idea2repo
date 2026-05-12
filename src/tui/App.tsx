@@ -42,6 +42,11 @@ type Message = {
   details?: string[];
 };
 
+type ProjectNameSelection = {
+  name: string;
+  source: string;
+};
+
 type AppProps = {
   defaultOutput?: string;
 };
@@ -688,7 +693,11 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
     }
   }
 
-  async function runGenerate(idea: string, outputOverride = output): Promise<void> {
+  async function runGenerate(
+    idea: string,
+    outputOverride = output,
+    naming?: { projectName?: string; outputParent?: string; projectNameSource?: string }
+  ): Promise<void> {
     if (!idea.trim()) {
       append({ role: "error", title: "Missing idea", text: "Use /research, then enter an idea when prompted." });
       return;
@@ -714,14 +723,16 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
         offline: provider === OFFLINE_PROVIDER_ID,
         model,
         reasoningEffort: reasoning,
+        projectName: naming?.projectName,
+        outputParent: naming?.outputParent,
         progressCallback: recordProgress,
         runResearchPipeline: true,
         jsonlEvents: true,
         runId,
         derivedConfig: {
-          project_name_source: "tui_selected_candidate"
+          project_name_source: naming?.projectNameSource ?? "output_basename"
         },
-        projectNameSource: "tui_selected_candidate",
+        projectNameSource: naming?.projectNameSource,
         eventSink: runtimeEvents,
         approvalMode: "block",
         allowNetwork: policy.allowNetwork,
@@ -788,10 +799,16 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
     }
     captureIdea(trimmedIdea);
     const expansion = await prepareIdeaExpansion(trimmedIdea);
-    const suggestedName = await suggestProjectName(expansion.optimizedDirection);
-    const candidates = projectNameCandidatesForIdea(trimmedIdea, expansion.optimizedDirection, suggestedName);
-    const projectName = await chooseProjectName(candidates);
-    if (!projectName) return;
+    let suggestedName = await suggestProjectName(expansion.optimizedDirection);
+    let candidates = projectNameCandidatesForIdea(trimmedIdea, expansion.optimizedDirection, suggestedName);
+    let selection = await chooseProjectName(candidates, suggestedName);
+    while (selection?.source === "regenerated") {
+      suggestedName = await suggestProjectName(expansion.optimizedDirection);
+      candidates = projectNameCandidatesForIdea(trimmedIdea, expansion.optimizedDirection, suggestedName);
+      selection = await chooseProjectName(candidates, suggestedName);
+    }
+    if (!selection) return;
+    const projectName = selection.name;
     const parent = await promptForDirectoryParent(join(outputBase, projectName));
     if (!parent) {
       append({ role: "assistant", title: "Research run cancelled", text: "No output parent directory was selected." });
@@ -809,7 +826,11 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
         "Raw idea and optimized direction will be written under docs/idea/."
       ]
     });
-    await runGenerate(trimmedIdea, finalOutputPath);
+    await runGenerate(trimmedIdea, finalOutputPath, {
+      projectName,
+      outputParent: parent,
+      projectNameSource: selection.source
+    });
   }
 
   async function prepareIdeaExpansion(idea: string): Promise<{ ideaBrief: IdeaBrief; optimizedDirection: string }> {
@@ -841,11 +862,14 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
     }
   }
 
-  async function chooseProjectName(candidates: string[]): Promise<string> {
+  async function chooseProjectName(candidates: string[], suggestedName?: string): Promise<ProjectNameSelection | null> {
     const editOption = { label: "Edit", value: "__edit__", description: "Type a custom repository name." };
+    const regenerateOption = { label: "Regenerate", value: "__regenerate__", description: "Ask Codex for another repository name." };
+    const preferred = slugify(suggestedName ?? "");
     const options = [
       ...candidates.map((candidate, index) => ({ label: candidate, value: candidate, description: index === 0 ? "Recommended project name." : "Alternative project name." })),
-      editOption
+      editOption,
+      regenerateOption
     ];
     return new Promise((resolveName) => {
       openSelect("Choose project name", options, async (option) => {
@@ -855,11 +879,20 @@ export function App({ defaultOutput = "idea2repo-runs" }: AppProps): React.React
             historyEnabled: true,
             initialValue: candidates[0] ?? "idea2repo-project"
           });
-          resolveName(slugify(custom));
+          const name = slugify(custom).slice(0, 48);
+          resolveName(name ? { name, source: "user_edited" } : null);
           return;
         }
-        resolveName(slugify(option.value));
-      }, () => resolveName(""));
+        if (option.value === "__regenerate__") {
+          resolveName({ name: "", source: "regenerated" });
+          return;
+        }
+        const name = slugify(option.value).slice(0, 48);
+        resolveName({
+          name,
+          source: preferred && name === preferred.slice(0, 48) ? "codex_suggested" : "tui_selected_candidate"
+        });
+      }, () => resolveName(null));
     });
   }
 
@@ -1725,7 +1758,7 @@ export function projectNameCandidatesForIdea(idea: string, optimizedDirection: s
   ];
   const seen = new Set<string>();
   return seeds
-    .map((value) => slugify(value).slice(0, 64))
+    .map((value) => slugify(value).slice(0, 48))
     .filter((value) => {
       if (!value || value === "idea2repo-project" || seen.has(value)) return false;
       seen.add(value);

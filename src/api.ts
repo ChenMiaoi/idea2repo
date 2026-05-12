@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { buildGithubExportPlan } from "./github-export.js";
-import { generateResearchRepo, resumeResearchRepo, type GenerateOptions } from "./generator.js";
+import { generateResearchRepo, resumeResearchRepo, slugify, type GenerateOptions } from "./generator.js";
 import { paperCandidateToRecord, searchLiteratureAsync } from "./literature.js";
 import { safeProviderReport, providerSchema } from "./providers.js";
 import { diagnoseIdea } from "./scoring.js";
@@ -159,7 +159,7 @@ async function route(request: IncomingMessage, response: ServerResponse, runMana
   const body = (await readJson(request)) as Record<string, unknown>;
   if (path === "/runs") {
     const idea = requiredString(body.idea, "idea");
-    const output = resolve(requiredString(body.output, "output"));
+    const output = outputRootFromBody(body);
     const mode = runtimeModeFromBody(body);
     const run = runManager.start({ idea, outputRoot: output }, async ({ runId, events, signal }) => {
       const result = await generateResearchRepo(idea, output, {
@@ -267,7 +267,8 @@ async function route(request: IncomingMessage, response: ServerResponse, runMana
   }
   if (path === "/generate") {
     const mode = runtimeModeFromBody(body);
-    const result = await generateResearchRepo(requiredString(body.idea, "idea"), requiredString(body.output, "output"), {
+    const output = outputRootFromBody(body);
+    const result = await generateResearchRepo(requiredString(body.idea, "idea"), output, {
       ...generateOptionsFromBody(body, mode),
       permissionPolicy: permissionPolicyFromBody(body, mode)
     });
@@ -530,6 +531,9 @@ function generateOptionsFromBody(body: Record<string, unknown>, mode = runtimeMo
     provider: stringOrNull(body.provider),
     model: stringOrNull(body.model),
     reasoningEffort: stringOrNull(body.reasoning_effort),
+    projectName: stringOrNull(body.project_name) ?? undefined,
+    outputParent: stringOrNull(body.output_parent) ?? undefined,
+    projectNameSource: stringOrNull(body.project_name) ? "api_project_name" : undefined,
     runResearchPipeline: Boolean(body.run_research_pipeline),
     allowNetwork: allowNetworkFromBody(body, mode),
     downloadPdfs: downloadPdfsFromBody(body, mode),
@@ -546,6 +550,13 @@ function generateOptionsFromBody(body: Record<string, unknown>, mode = runtimeMo
     packageOverleaf: Boolean(body.package_overleaf),
     approvalRuntimeMode: approvalRuntimeModeFromSelection(mode)
   };
+}
+
+function outputRootFromBody(body: Record<string, unknown>): string {
+  const projectName = stringOrNull(body.project_name);
+  const outputParent = stringOrNull(body.output_parent);
+  if (projectName && outputParent) return resolve(outputParent, slugify(projectName));
+  return resolve(requiredString(body.output, "output"));
 }
 
 function runtimeModeFromBody(body: Record<string, unknown>): RuntimeModeSelection {

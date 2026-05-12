@@ -427,6 +427,9 @@ async function commandGenerate(argv: string[], researchMode = false): Promise<nu
     provider,
     model: stringFlag(parsed, "model"),
     reasoningEffort: stringFlag(parsed, "reasoning"),
+    projectName: stringFlag(parsed, "project-name") ?? undefined,
+    outputParent: stringFlag(parsed, "output-parent") ?? undefined,
+    projectNameSource: stringFlag(parsed, "project-name") ? "cli_project_name" : undefined,
     runResearchPipeline: researchMode || hasFlag(parsed, "run-research-pipeline"),
     allowNetwork: hasFlag(parsed, "allow-network"),
     downloadPdfs: hasFlag(parsed, "download-pdfs"),
@@ -1034,6 +1037,8 @@ Options:
   --weeks 8|12|16|24  Execution timeline
   --resource value     Resource constraint; repeatable
   --force              Allow overwrite of non-empty output
+  --project-name name  Repository directory name when paired with --output-parent
+  --output-parent dir  Parent directory for --project-name
   --offline            Use deterministic local fallback
   --provider id        openai-codex, openai-codex-oauth, openai-codex-cli, offline
   --model id           Codex model id

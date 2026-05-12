@@ -65,6 +65,27 @@ test("resume restores missing generated artifacts without overwriting existing f
   }
 });
 
+test("generation can derive output root from parent and project name", async () => {
+  const root = await mkdtemp(join(tmpdir(), "idea2repo-named-output-"));
+  try {
+    const result = await generateResearchRepo("Build a named research repo.", join(root, "ignored-output"), {
+      offline: true,
+      provider: "offline",
+      projectName: "Evidence Guided Agent Memory",
+      outputParent: root,
+      projectNameSource: "test_project_name"
+    });
+    const output = join(root, "evidence-guided-agent-memory");
+    assert.equal(result.root, output);
+    assert.equal(result.project_name, "evidence-guided-agent-memory");
+    const manifest = await readManifest(output);
+    assert.equal(manifest.project_name, "evidence-guided-agent-memory");
+    assert.equal(manifest.generation.project_name_source, "test_project_name");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("research generation wires pipeline artifacts and venue-aware paper package", async () => {
   const root = await mkdtemp(join(tmpdir(), "idea2repo-generate-pipeline-"));
   const output = join(root, "project");

@@ -11,7 +11,9 @@ export type RuntimeLegacyMode = "plan" | "generate" | "publish" | "danger-full-a
 
 export type GenerateRequest = {
   idea: string;
-  output: string;
+  output?: string;
+  project_name?: string;
+  output_parent?: string;
   mode?: RuntimeProductMode | RuntimeLegacyMode;
   domains?: string[];
   weeks?: number;
